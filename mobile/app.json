@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "The Living Olive",
+    "slug": "the-living-olive",
+    "scheme": "livingolive",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.livingolive.app"
+    },
+    "android": {
+      "package": "com.livingolive.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F4EFE6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#5B7553"
+        }
+      ]
+    ]
+  }
+}

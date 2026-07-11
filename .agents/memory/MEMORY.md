@@ -1,0 +1,3 @@
+- [Expo on Replit workflows](expo-on-replit.md) — tunnel mode needs `@expo/ngrok` preinstalled or it blocks on an interactive prompt; use console output on a supported port, not 8081.
+- [No Supabase/OpenAI Replit connectors](supabase-openai-no-connector.md) — searchIntegrations returns nothing for these; request raw secrets instead of looking for a connector.
+- [Public-domain Bible/hymn content sources](public-domain-religious-content.md) — `bible-kjv` npm package ships full KJV text; only KJV (not NIV/NLT/ESV/NABRE) is legally embeddable without a paid license.
