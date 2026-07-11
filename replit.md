@@ -71,6 +71,17 @@ Two workflows start automatically:
 
 The Expo workflow uses a hard-coded `EXPO_PUBLIC_API_URL` pointing at this repl's backend. If the repl URL changes, update the workflow command.
 
+## Building an APK/IPA with EAS
+
+`npm run build:preview` / `build:dev` / `build:prod` / `build:ios` (in `mobile/`) wrap `eas build`.
+They also neutralize a container-specific bug: EAS CLI's local packaging step can fail with
+`Failed to upload the project tarball to EAS Build ... EACCES ... .cache/dotslash/...` because a
+DotSlash-cached native binary gets fetched (as a side effect of RN's dev tooling) into a read-only
+cache folder inside EAS's temp clone dir, which EAS's own cleanup can't delete. The `prebuild:*`
+scripts and a `NODE_OPTIONS`-injected fs patch (`mobile/scripts/patch-fs-permissions.cjs`) work
+around this by chmod'ing any read-only path before deletion. Always build via these npm scripts,
+not by calling `eas build` directly, so the workaround is applied.
+
 ## Deploying backend to Railway
 
 1. In Railway → **Settings → Source**, set **Root Directory** to `server`

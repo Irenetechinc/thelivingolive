@@ -3,3 +3,4 @@
 - [Public-domain Bible/hymn content sources](public-domain-religious-content.md) — `bible-kjv` npm package ships full KJV text; only KJV (not NIV/NLT/ESV/NABRE) is legally embeddable without a paid license.
 - [Railway deploy needs public-registry lockfile](railway-deploy-lockfile.md) — package-lock.json with Replit's internal firewall URLs makes `npm ci` fail off-Replit; regenerate against registry.npmjs.org before deploying elsewhere.
 - [Don't bundle large static data in Expo/RN apps](mobile-bundle-size-large-data.md) — multi-MB JSON via static require() inflates the JS bundle and can break Expo Go tunnel downloads; serve it from the backend on demand instead.
+- [EAS build dotslash EACCES on tarball upload](eas-build-dotslash-permission-bug.md) — local `eas build` upload fails EACCES/rmdir on `.cache/dotslash/...`; fix via a Node fs-preload patch (NODE_OPTIONS), not env vars or node_modules edits.
