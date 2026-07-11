@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,15 +7,22 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
+  Animated,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import { generateDevotion } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
-import { colors, radii, spacing, typography } from "../../theme/theme";
+import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 
 type Duration = "daily" | "weekly" | "monthly" | "yearly";
-const durations: Duration[] = ["daily", "weekly", "monthly", "yearly"];
+const durations: { id: Duration; label: string; icon: string }[] = [
+  { id: "daily", label: "Daily", icon: "☀" },
+  { id: "weekly", label: "Weekly", icon: "◎" },
+  { id: "monthly", label: "Monthly", icon: "◐" },
+  { id: "yearly", label: "Yearly", icon: "✦" },
+];
 
 type DevotionEntry = {
   id: string;
@@ -27,6 +34,56 @@ type DevotionEntry = {
   created_at: string;
 };
 
+function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(anim, {
+      toValue: 1,
+      tension: 60,
+      friction: 9,
+      delay: index * 60,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+  return (
+    <Animated.View
+      style={{
+        opacity: anim,
+        transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+      }}
+    >
+      <View style={styles.card}>
+        {entry.scripture_reference ? (
+          <View style={styles.scriptureTag}>
+            <Text style={styles.scriptureTagText}>{entry.scripture_reference}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.cardTitle}>{entry.title}</Text>
+        {entry.scripture_text ? (
+          <View style={styles.scriptureQuote}>
+            <View style={styles.quoteBar} />
+            <Text style={styles.scriptureText}>{entry.scripture_text}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.cardBody} numberOfLines={4}>{entry.body}</Text>
+        {entry.closing_prayer ? (
+          <View style={styles.prayerWrap}>
+            <Text style={styles.prayerLabel}>CLOSING PRAYER</Text>
+            <Text style={styles.prayerText}>{entry.closing_prayer}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.cardDate}>
+          {new Date(entry.created_at).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function DevotionsScreen() {
   const [goal, setGoal] = useState("");
   const [duration, setDuration] = useState<Duration>("daily");
@@ -36,6 +93,18 @@ export default function DevotionsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<DevotionEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const spinAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (busy) {
+      Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 1400, useNativeDriver: true })
+      ).start();
+    } else {
+      spinAnim.stopAnimation();
+      spinAnim.setValue(0);
+    }
+  }, [busy]);
 
   useFocusEffect(
     useCallback(() => {
@@ -52,65 +121,44 @@ export default function DevotionsScreen() {
           setLoadingEntries(false);
         }
       })();
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
     }, [])
   );
 
   async function handleGenerate() {
     setError(null);
-    if (!goal.trim()) {
-      setError("Describe your spiritual goal first.");
-      return;
-    }
+    if (!goal.trim()) { setError("Describe your spiritual goal first."); return; }
     const h = parseInt(hour, 10);
     const m = parseInt(minute, 10);
     if (Number.isNaN(h) || h < 0 || h > 23 || Number.isNaN(m) || m < 0 || m > 59) {
-      setError("Enter a valid time (hour 0-23, minute 0-59).");
-      return;
+      setError("Enter a valid time (hour 0-23, minute 0-59)."); return;
     }
-
     setBusy(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not signed in");
-
       const { data: plan, error: planError } = await supabase
         .from("devotion_plans")
         .insert({ user_id: userData.user.id, goal: goal.trim(), duration, preferred_time: `${hour}:${minute}:00` })
-        .select()
-        .single();
+        .select().single();
       if (planError) throw planError;
-
       const result = await generateDevotion({ goal: goal.trim(), duration });
-
       const { data: entry, error: entryError } = await supabase
         .from("devotion_entries")
         .insert({
-          plan_id: plan.id,
-          user_id: userData.user.id,
-          title: result.title,
-          scripture_reference: result.scriptureReference,
-          scripture_text: result.scriptureText,
-          body: result.body,
-          closing_prayer: result.closingPrayer,
+          plan_id: plan.id, user_id: userData.user.id,
+          title: result.title, scripture_reference: result.scriptureReference,
+          scripture_text: result.scriptureText, body: result.body, closing_prayer: result.closingPrayer,
         })
-        .select()
-        .single();
+        .select().single();
       if (entryError) throw entryError;
-
       setEntries((prev) => [entry, ...prev]);
-
       await scheduleRecurringReminder({
         identifier: `devotion-${plan.id}`,
         title: "Time for your devotion 🌿",
         body: result.title,
-        hour: h,
-        minute: m,
-        frequency: duration,
+        hour: h, minute: m, frequency: duration,
       });
-
       setGoal("");
     } catch (e: any) {
       setError(e.message ?? "Couldn't generate your devotion. Try again.");
@@ -120,117 +168,237 @@ export default function DevotionsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing.lg }}>
-      <Text style={styles.sectionTitle}>New devotion plan</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Your spiritual goal (e.g. growing in patience)"
-        placeholderTextColor={colors.inkSoft}
-        value={goal}
-        onChangeText={setGoal}
-        multiline
-      />
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      {/* Header */}
+      <LinearGradient
+        colors={["#5B4010", "#8A6A10", "#C9A227", "#E2C060"]}
+        locations={[0, 0.35, 0.7, 1]}
+        style={styles.header}
+      >
+        <Text style={styles.headerEyebrow}>AI-GUIDED</Text>
+        <Text style={styles.headerTitle}>Daily Devotions</Text>
+        <Text style={styles.headerSub}>Scripture-rooted reflections for your spiritual journey</Text>
+      </LinearGradient>
 
-      <View style={styles.row}>
-        {durations.map((d) => (
+      <View style={styles.body}>
+        {/* Form card */}
+        <View style={styles.formCard}>
+          <Text style={styles.formTitle}>New devotion</Text>
+
+          <Text style={styles.fieldLabel}>SPIRITUAL GOAL</Text>
+          <TextInput
+            style={styles.textarea}
+            placeholder="e.g. Growing in patience during trials, deepening my prayer life…"
+            placeholderTextColor={colors.inkFaint}
+            multiline
+            value={goal}
+            onChangeText={setGoal}
+            textAlignVertical="top"
+          />
+
+          <Text style={styles.fieldLabel}>FREQUENCY</Text>
+          <View style={styles.chipRow}>
+            {durations.map((d) => (
+              <Pressable
+                key={d.id}
+                style={[styles.chip, duration === d.id && styles.chipActive]}
+                onPress={() => setDuration(d.id)}
+              >
+                <Text style={[styles.chipIcon, duration === d.id && styles.chipIconActive]}>
+                  {d.icon}
+                </Text>
+                <Text style={[styles.chipText, duration === d.id && styles.chipTextActive]}>
+                  {d.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.fieldLabel}>REMINDER TIME</Text>
+          <View style={styles.timeRow}>
+            <TextInput
+              style={styles.timeInput}
+              value={hour}
+              onChangeText={setHour}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="06"
+              placeholderTextColor={colors.inkFaint}
+            />
+            <Text style={styles.timeSep}>:</Text>
+            <TextInput
+              style={styles.timeInput}
+              value={minute}
+              onChangeText={setMinute}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="30"
+              placeholderTextColor={colors.inkFaint}
+            />
+            <Text style={styles.timeNote}>24-hour format</Text>
+          </View>
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
           <Pressable
-            key={d}
-            style={[styles.chip, duration === d && styles.chipActive]}
-            onPress={() => setDuration(d)}
+            style={({ pressed }) => [styles.generateBtn, pressed && styles.generateBtnPressed, busy && styles.generateBtnBusy]}
+            onPress={handleGenerate}
+            disabled={busy}
           >
-            <Text style={[styles.chipText, duration === d && styles.chipTextActive]}>{d}</Text>
+            <LinearGradient
+              colors={busy ? [colors.inkFaint, colors.inkSoft] : ["#5B4010", "#C9A227"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.generateBtnGrad}
+            >
+              {busy ? (
+                <>
+                  <ActivityIndicator color={colors.parchment} size="small" />
+                  <Text style={styles.generateBtnText}>Generating devotion…</Text>
+                </>
+              ) : (
+                <Text style={styles.generateBtnText}>Generate devotion ✦</Text>
+              )}
+            </LinearGradient>
           </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.timeRow}>
-        <Text style={styles.label}>Preferred time</Text>
-        <TextInput style={styles.timeInput} keyboardType="number-pad" value={hour} onChangeText={setHour} maxLength={2} />
-        <Text style={styles.timeSeparator}>:</Text>
-        <TextInput style={styles.timeInput} keyboardType="number-pad" value={minute} onChangeText={setMinute} maxLength={2} />
-      </View>
-
-      {error && <Text style={styles.error}>{error}</Text>}
-
-      <Pressable style={styles.primaryButton} onPress={handleGenerate} disabled={busy}>
-        {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonText}>Generate devotion</Text>}
-      </Pressable>
-
-      <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>Your devotions</Text>
-      {loadingEntries && <ActivityIndicator color={colors.olive} />}
-      {entries.map((entry) => (
-        <View key={entry.id} style={styles.card}>
-          <Text style={styles.cardTitle}>{entry.title}</Text>
-          {entry.scripture_reference && (
-            <Text style={styles.scriptureRef}>
-              {entry.scripture_reference}
-              {entry.scripture_text ? ` — "${entry.scripture_text}"` : ""}
-            </Text>
-          )}
-          <Text style={styles.cardBody}>{entry.body}</Text>
-          {entry.closing_prayer && <Text style={styles.closingPrayer}>{entry.closing_prayer}</Text>}
         </View>
-      ))}
+
+        {/* Entries */}
+        {loadingEntries ? (
+          <ActivityIndicator color={colors.gold} style={{ marginTop: spacing.xl }} />
+        ) : entries.length > 0 ? (
+          <View style={styles.historySection}>
+            <View style={styles.sectionHeadRow}>
+              <View style={styles.sectionLine} />
+              <Text style={styles.sectionHeadLabel}>PAST DEVOTIONS</Text>
+              <View style={styles.sectionLine} />
+            </View>
+            {entries.map((e, i) => (
+              <EntryCard key={e.id} entry={e} index={i} />
+            ))}
+          </View>
+        ) : null}
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
-  sectionTitle: { ...typography.title, color: colors.oliveDark, marginBottom: spacing.md },
-  input: {
+  header: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl + 8,
+  },
+  headerEyebrow: { ...typography.micro, color: "rgba(255,255,255,0.55)", letterSpacing: 2, marginBottom: 4 },
+  headerTitle: { fontSize: 26, fontWeight: "700", color: colors.white, letterSpacing: -0.4, marginBottom: 4 },
+  headerSub: { ...typography.caption, color: "rgba(255,255,255,0.6)" },
+  body: { padding: spacing.lg },
+  formCard: {
     backgroundColor: colors.white,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-    borderWidth: 1,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    ...shadows.card,
+    marginBottom: spacing.lg,
+  },
+  formTitle: { ...typography.title, color: colors.oliveDark, marginBottom: spacing.lg },
+  fieldLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.sm },
+  textarea: {
+    borderWidth: 1.5,
     borderColor: colors.parchmentDark,
-    marginBottom: spacing.md,
-    minHeight: 60,
-    color: colors.ink,
-  },
-  row: { flexDirection: "row", flexWrap: "wrap", marginBottom: spacing.md },
-  chip: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.pill,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.parchmentDark,
-    marginRight: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  chipActive: { backgroundColor: colors.olive, borderColor: colors.olive },
-  chipText: { color: colors.ink, textTransform: "capitalize" },
-  chipTextActive: { color: colors.white, fontWeight: "700" },
-  timeRow: { flexDirection: "row", alignItems: "center", marginBottom: spacing.md },
-  label: { ...typography.body, color: colors.ink, marginRight: spacing.md },
-  timeInput: {
-    backgroundColor: colors.white,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.parchmentDark,
-    padding: spacing.sm,
-    width: 48,
-    textAlign: "center",
-    color: colors.ink,
-  },
-  timeSeparator: { marginHorizontal: spacing.xs, color: colors.ink, fontWeight: "700" },
-  primaryButton: {
-    backgroundColor: colors.olive,
-    borderRadius: radii.sm,
-    paddingVertical: spacing.md,
-    alignItems: "center",
-  },
-  primaryButtonText: { color: colors.white, fontWeight: "700", fontSize: 16 },
-  error: { color: colors.danger, marginBottom: spacing.sm },
-  card: {
-    backgroundColor: colors.white,
     borderRadius: radii.md,
     padding: spacing.md,
-    marginBottom: spacing.md,
+    fontSize: 15,
+    color: colors.ink,
+    backgroundColor: colors.parchment,
+    minHeight: 80,
+    marginBottom: spacing.lg,
+    lineHeight: 22,
   },
-  cardTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: spacing.xs },
-  scriptureRef: { ...typography.caption, color: colors.terracotta, marginBottom: spacing.sm, fontStyle: "italic" },
-  cardBody: { ...typography.body, color: colors.ink },
-  closingPrayer: { ...typography.body, color: colors.inkSoft, marginTop: spacing.sm, fontStyle: "italic" },
+  chipRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg, flexWrap: "wrap" },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    backgroundColor: colors.parchment,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  chipActive: { backgroundColor: colors.oliveDark, borderColor: colors.oliveDark },
+  chipIcon: { fontSize: 14, color: colors.inkSoft },
+  chipIconActive: { color: colors.goldLight },
+  chipText: { ...typography.caption, color: colors.inkSoft, textTransform: "capitalize" },
+  chipTextActive: { color: colors.parchment, fontWeight: "700" },
+  timeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.lg },
+  timeInput: {
+    backgroundColor: colors.parchment,
+    borderRadius: radii.sm,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    width: 52,
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  timeSep: { fontSize: 22, fontWeight: "700", color: colors.ink },
+  timeNote: { ...typography.caption, color: colors.inkFaint, marginLeft: spacing.xs },
+  errorText: { color: colors.danger, fontSize: 14, marginBottom: spacing.sm, fontWeight: "500" },
+  generateBtn: { borderRadius: radii.md, overflow: "hidden", ...shadows.card },
+  generateBtnPressed: { opacity: 0.88, transform: [{ scale: 0.98 }] },
+  generateBtnBusy: {},
+  generateBtnGrad: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.md + 2,
+    gap: spacing.sm,
+  },
+  generateBtnText: { color: colors.parchment, fontWeight: "700", fontSize: 16, letterSpacing: 0.2 },
+  historySection: { marginBottom: spacing.xxl },
+  sectionHeadRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.lg },
+  sectionLine: { flex: 1, height: 1, backgroundColor: colors.parchmentDark },
+  sectionHeadLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2 },
+  card: {
+    backgroundColor: colors.white,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.subtle,
+  },
+  scriptureTag: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.terracotta,
+    borderRadius: radii.pill,
+    paddingVertical: 3,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  scriptureTagText: { ...typography.micro, color: colors.white, letterSpacing: 0.5 },
+  cardTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: spacing.sm },
+  scriptureQuote: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    backgroundColor: colors.parchment,
+    borderRadius: radii.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  quoteBar: { width: 3, borderRadius: 2, backgroundColor: colors.gold },
+  scriptureText: { ...typography.bodySmall, color: colors.inkSoft, flex: 1, fontStyle: "italic", lineHeight: 20 },
+  cardBody: { ...typography.bodySmall, color: colors.ink, lineHeight: 22 },
+  prayerWrap: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.parchmentMid,
+  },
+  prayerLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: 4 },
+  prayerText: { ...typography.bodySmall, color: colors.inkSoft, fontStyle: "italic", lineHeight: 20 },
+  cardDate: { ...typography.micro, color: colors.inkFaint, marginTop: spacing.sm, textAlign: "right" },
 });
