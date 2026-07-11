@@ -32,7 +32,11 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:preview": "eas build --platform android --profile preview --non-interactive",
+    "build:dev": "eas build --platform android --profile development --non-interactive",
+    "build:prod": "eas build --platform android --profile production --non-interactive",
+    "build:ios": "eas build --platform ios --profile production --non-interactive"
   },
   "private": true
 }
