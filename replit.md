@@ -72,9 +72,22 @@ To test on your phone:
 ## Deploying to Railway (production backend)
 
 The original spec calls for Railway hosting for the backend, separate from
-Supabase. When ready: push `server/` to Railway, set the same four
-environment variables there, and point `EXPO_PUBLIC_API_URL` (in the mobile
-build) at the Railway URL instead of the Replit dev domain.
+Supabase. This is a monorepo (`mobile/` + `server/`), so Railway's build
+detector (Railpack) needs to be told the backend lives in `server/`, not the
+repo root:
+
+1. In the Railway service → **Settings → Source**, set **Root Directory** to
+   `server`. Without this, Railpack scans the repo root, sees only
+   `README.md`, and fails with "could not determine how to build the app."
+2. In **Settings → Variables**, add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+   and `OPENAI_API_KEY` (the backend doesn't need the anon key).
+3. Railway will then find `server/package.json` and use its `start` script
+   (`node src/index.js`); `server/railway.json` and `server/Procfile` are
+   already set up as a fallback config.
+4. Once deployed, copy the Railway-issued URL and set
+   `EXPO_PUBLIC_API_URL` to it wherever you build the mobile app for
+   production (the "Mobile (Expo)" dev workflow still points at this Replit
+   repl's own backend for local testing).
 
 ## User preferences
 
