@@ -33,9 +33,13 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "prebuild:preview": "chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
     "build:preview": "eas build --platform android --profile preview --non-interactive",
+    "prebuild:dev": "chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
     "build:dev": "eas build --platform android --profile development --non-interactive",
+    "prebuild:prod": "chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
     "build:prod": "eas build --platform android --profile production --non-interactive",
+    "prebuild:ios": "chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
     "build:ios": "eas build --platform ios --profile production --non-interactive"
   },
   "private": true
