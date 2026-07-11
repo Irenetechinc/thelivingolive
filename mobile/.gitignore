@@ -21,6 +21,9 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
+# React Native DevTools / dotslash cache
+.cache/
+
 # debug
 npm-debug.*
 yarn-debug.*
