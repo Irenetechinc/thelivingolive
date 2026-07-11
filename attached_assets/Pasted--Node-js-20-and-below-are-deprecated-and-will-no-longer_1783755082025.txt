@@ -1,0 +1,37 @@
+ Node.js 20 and below are deprecated and will no longer be supported in future versions of @supabase/supabase-js. Please upgrade to Node.js 22 or later. For more information, visit: https://github.com/orgs/supabase/discussions/45715
+/app/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js:86
+        throw new Error(errorMessage);
+              ^
+Error: Node.js detected but native WebSocket not found.
+Suggested solution: Ensure you are running Node.js 22+ or provide a WebSocket implementation via the transport option.
+    at WebSocketFactory.getWebSocketConstructor (/app/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js:86:15)
+    at RealtimeClient._initializeOptions (/app/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:630:164)
+    at new RealtimeClient (/app/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:184:43)
+    at SupabaseClient._initRealtimeClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:840:10)
+    at new SupabaseClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:675:24)
+    at createClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:873:9)
+    at file:///app/src/index.js:44:23
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2
+npm warn config production Use `--omit=dev` instead.
+> living-olive-server@1.0.0 start
+> node src/index.js
+⚠️  Node.js 20 and below are deprecated and will no longer be supported in future versions of @supabase/supabase-js. Please upgrade to Node.js 22 or later. For more information, visit: https://github.com/orgs/supabase/discussions/45715
+/app/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js:86
+        throw new Error(errorMessage);
+              ^
+Error: Node.js detected but native WebSocket not found.
+Suggested solution: Ensure you are running Node.js 22+ or provide a WebSocket implementation via the transport option.
+    at WebSocketFactory.getWebSocketConstructor (/app/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js:86:15)
+    at RealtimeClient._initializeOptions (/app/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:630:164)
+    at new RealtimeClient (/app/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js:184:43)
+    at SupabaseClient._initRealtimeClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:840:10)
+    at new SupabaseClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:675:24)
+    at createClient (file:///app/node_modules/@supabase/supabase-js/dist/index.mjs:873:9)
+    at file:///app/src/index.js:44:23
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Node.js v20.20.2

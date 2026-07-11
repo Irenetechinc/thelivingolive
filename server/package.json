@@ -1,6 +1,6 @@
 {
   "name": "living-olive-server",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "version": "1.0.0",
   "private": true,
   "type": "module",
