@@ -3,6 +3,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../context/AuthContext";
 import { colors } from "../theme/theme";
+import type { BibleVersion } from "../screens/bible/BibleHomeScreen";
 
 import HomeScreen from "../screens/HomeScreen";
 import AuthScreen from "../screens/AuthScreen";
@@ -18,8 +19,8 @@ import PrayerScreen from "../screens/prayer/PrayerScreen";
 export type RootStackParamList = {
   Home: undefined;
   BibleHome: undefined;
-  BookPicker: { versesMode?: boolean } | undefined;
-  ChapterReader: { bookId: number; bookName: string; chapter: number };
+  BookPicker: { version?: BibleVersion } | undefined;
+  ChapterReader: { bookId: number; bookName: string; chapter: number; version?: BibleVersion };
   Notes: undefined;
   HymnsList: undefined;
   HymnDetail: { hymnId: string };
@@ -50,11 +51,17 @@ export default function AppNavigator() {
           <>
             <Stack.Screen name="Home" component={HomeScreen} options={{ title: "The Living Olive" }} />
             <Stack.Screen name="BibleHome" component={BibleHomeScreen} options={{ title: "Bible" }} />
-            <Stack.Screen name="BookPicker" component={BookPickerScreen} options={{ title: "Books" }} />
+            <Stack.Screen
+              name="BookPicker"
+              component={BookPickerScreen}
+              options={{ title: "Books" }}
+            />
             <Stack.Screen
               name="ChapterReader"
               component={ChapterReaderScreen}
-              options={({ route }) => ({ title: `${route.params.bookName} ${route.params.chapter}` })}
+              options={({ route }) => ({
+                title: `${route.params.bookName} ${route.params.chapter}`,
+              })}
             />
             <Stack.Screen name="Notes" component={NotesScreen} options={{ title: "My Notes" }} />
             <Stack.Screen name="HymnsList" component={HymnsListScreen} options={{ title: "Hymns" }} />

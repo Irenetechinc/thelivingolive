@@ -80,6 +80,18 @@ create table if not exists public.prayer_entries (
   created_at timestamptz not null default now()
 );
 
+-- Expo push tokens for server-driven notifications
+create table if not exists public.push_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  token text not null,
+  platform text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, token)
+);
+create index if not exists push_tokens_user_idx on public.push_tokens(user_id);
+
 -- Row Level Security: every table is scoped to the owning user
 alter table public.highlights enable row level security;
 alter table public.notes enable row level security;
@@ -87,13 +99,15 @@ alter table public.devotion_plans enable row level security;
 alter table public.devotion_entries enable row level security;
 alter table public.prayer_plans enable row level security;
 alter table public.prayer_entries enable row level security;
+alter table public.push_tokens enable row level security;
 
 do $$
 declare
   t text;
 begin
   for t in select unnest(array[
-    'highlights','notes','devotion_plans','devotion_entries','prayer_plans','prayer_entries'
+    'highlights','notes','devotion_plans','devotion_entries',
+    'prayer_plans','prayer_entries','push_tokens'
   ])
   loop
     execute format('drop policy if exists "owner_all" on public.%I', t);

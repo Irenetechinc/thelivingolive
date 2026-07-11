@@ -4,12 +4,12 @@ import { fetchBibleBooks, fetchBibleChapter, type BibleBookMeta } from "../lib/a
 export type { BibleBookMeta };
 
 const BOOKS_CACHE_KEY = "bible:books";
-const chapterCacheKey = (bookId: number, chapter: number) => `bible:chapter:${bookId}:${chapter}`;
+const chapterCacheKey = (bookId: number, chapter: number, version: string) =>
+  `bible:chapter:${version}:${bookId}:${chapter}`;
 
 let booksPromise: Promise<BibleBookMeta[]> | null = null;
 
-// Book list rarely changes, so cache it in AsyncStorage after the first
-// successful fetch and fall back to that cache if the network is slow/down.
+// Book list rarely changes — cache in AsyncStorage after first fetch.
 export async function loadBibleBooks(): Promise<BibleBookMeta[]> {
   if (booksPromise) return booksPromise;
   booksPromise = (async () => {
@@ -26,14 +26,26 @@ export async function loadBibleBooks(): Promise<BibleBookMeta[]> {
   return booksPromise;
 }
 
-// Each chapter is cached locally after first load, so re-reading a chapter
-// (or reopening the app) doesn't re-download it.
-export async function loadChapterVerses(bookId: number, chapter: number): Promise<string[]> {
-  const cacheKey = chapterCacheKey(bookId, chapter);
+// Each chapter is cached locally after first load.
+export async function loadChapterVerses(
+  bookId: number,
+  chapter: number,
+  version = "KJV"
+): Promise<{ verses: string[]; version: string; fallback?: boolean; fallbackReason?: string }> {
+  const cacheKey = chapterCacheKey(bookId, chapter, version);
   const cached = await AsyncStorage.getItem(cacheKey);
-  if (cached) return JSON.parse(cached) as string[];
+  if (cached) return JSON.parse(cached);
 
-  const result = await fetchBibleChapter(bookId, chapter);
-  await AsyncStorage.setItem(cacheKey, JSON.stringify(result.verses));
-  return result.verses;
+  const result = await fetchBibleChapter(bookId, chapter, version);
+  const payload = {
+    verses: result.verses,
+    version: result.version,
+    fallback: result.fallback,
+    fallbackReason: result.fallbackReason,
+  };
+  // Don't cache fallback responses — retry on next open
+  if (!result.fallback) {
+    await AsyncStorage.setItem(cacheKey, JSON.stringify(payload));
+  }
+  return payload;
 }

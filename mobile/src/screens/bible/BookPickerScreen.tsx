@@ -4,10 +4,12 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { loadBibleBooks, type BibleBookMeta } from "../../data/bibleLoader";
 import { colors, radii, spacing, typography } from "../../theme/theme";
+import type { BibleVersion } from "./BibleHomeScreen";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BookPicker">;
 
-export default function BookPickerScreen({ navigation }: Props) {
+export default function BookPickerScreen({ navigation, route }: Props) {
+  const version: BibleVersion = route.params?.version ?? "KJV";
   const [query, setQuery] = useState("");
   const [selectedBook, setSelectedBook] = useState<number | null>(null);
   const [bibleBooks, setBibleBooks] = useState<BibleBookMeta[]>([]);
@@ -61,6 +63,7 @@ export default function BookPickerScreen({ navigation }: Props) {
                   bookId: activeBook.id,
                   bookName: activeBook.name,
                   chapter: item,
+                  version,
                 })
               }
             >
@@ -74,6 +77,9 @@ export default function BookPickerScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.versionBadge}>
+        <Text style={styles.versionBadgeText}>Reading: {version}</Text>
+      </View>
       <TextInput
         style={styles.search}
         placeholder="Search books..."
@@ -98,6 +104,15 @@ export default function BookPickerScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment, padding: spacing.lg },
   centered: { alignItems: "center", justifyContent: "center" },
+  versionBadge: {
+    backgroundColor: colors.olive,
+    alignSelf: "flex-start",
+    borderRadius: radii.pill,
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  versionBadgeText: { color: colors.white, fontSize: 12, fontWeight: "700" },
   search: {
     backgroundColor: colors.white,
     borderRadius: radii.sm,
@@ -105,6 +120,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.parchmentDark,
+    color: colors.ink,
   },
   row: {
     flexDirection: "row",

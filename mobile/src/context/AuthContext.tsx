@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
+import { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import { getExpoPushToken } from "../lib/notifications";
+import { registerPushToken } from "../lib/api";
 
 type AuthContextValue = {
   session: Session | null;
@@ -11,7 +13,18 @@ type AuthContextValue = {
   signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+async function tryRegisterPush() {
+  try {
+    const token = await getExpoPushToken();
+    if (token) {
+      await registerPushToken(token, "expo");
+    }
+  } catch {
+    // Non-fatal: local notifications still work
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -22,10 +35,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
+      // Register push token for already-logged-in users on app open
+      if (data.session) tryRegisterPush();
     });
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
+      // Register push token on new sign-in
+      if (newSession && _event === "SIGNED_IN") tryRegisterPush();
     });
+
     return () => sub.subscription.unsubscribe();
   }, []);
 

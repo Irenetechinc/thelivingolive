@@ -1,35 +1,99 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { colors, radii, spacing, typography } from "../../theme/theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BibleHome">;
 
-export default function BibleHomeScreen({ navigation }: Props) {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.version}>Version: KJV (King James Version)</Text>
-      <Text style={styles.hint}>
-        NIV, NLT, ESV & NABRE require licensed text APIs and will be added once those
-        licenses are connected.
-      </Text>
+export type BibleVersion = "KJV" | "WEB" | "ASV";
 
-      <Pressable style={styles.primary} onPress={() => navigation.navigate("BookPicker")}>
-        <Text style={styles.primaryText}>Start reading</Text>
+const VERSIONS: { id: BibleVersion; label: string; description: string }[] = [
+  { id: "KJV", label: "KJV", description: "King James Version (1611)" },
+  { id: "WEB", label: "WEB", description: "World English Bible (modern)" },
+  { id: "ASV", label: "ASV", description: "American Standard Version (1901)" },
+];
+
+const VERSION_PREF_KEY = "bible:preferred_version";
+
+export default function BibleHomeScreen({ navigation }: Props) {
+  const [version, setVersion] = useState<BibleVersion>("KJV");
+
+  useEffect(() => {
+    AsyncStorage.getItem(VERSION_PREF_KEY).then((v) => {
+      if (v && VERSIONS.find((x) => x.id === v)) setVersion(v as BibleVersion);
+    });
+  }, []);
+
+  function selectVersion(v: BibleVersion) {
+    setVersion(v);
+    AsyncStorage.setItem(VERSION_PREF_KEY, v);
+  }
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing.lg }}>
+      <Text style={styles.sectionLabel}>Choose your Bible version</Text>
+      <View style={styles.versionList}>
+        {VERSIONS.map((v) => (
+          <Pressable
+            key={v.id}
+            style={[styles.versionRow, version === v.id && styles.versionRowActive]}
+            onPress={() => selectVersion(v.id)}
+          >
+            <View style={styles.versionRowText}>
+              <Text style={[styles.versionId, version === v.id && styles.versionIdActive]}>
+                {v.label}
+              </Text>
+              <Text style={styles.versionDesc}>{v.description}</Text>
+            </View>
+            {version === v.id && <Text style={styles.checkmark}>✓</Text>}
+          </Pressable>
+        ))}
+      </View>
+
+      <Pressable
+        style={styles.primary}
+        onPress={() => navigation.navigate("BookPicker", { version })}
+      >
+        <Text style={styles.primaryText}>Read the Bible ({version})</Text>
       </Pressable>
 
-      <Pressable style={styles.secondary} onPress={() => navigation.navigate("Notes")}>
+      <Pressable
+        style={styles.secondary}
+        onPress={() => navigation.navigate("Notes")}
+      >
         <Text style={styles.secondaryText}>My highlights & notes</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.parchment, padding: spacing.lg },
-  version: { ...typography.subtitle, color: colors.oliveDark, marginTop: spacing.md },
-  hint: { ...typography.caption, color: colors.inkSoft, marginTop: spacing.xs, marginBottom: spacing.lg },
+  container: { flex: 1, backgroundColor: colors.parchment },
+  sectionLabel: {
+    ...typography.caption,
+    color: colors.oliveLight,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  versionList: { marginBottom: spacing.lg },
+  versionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.white,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  versionRowActive: { borderColor: colors.olive },
+  versionRowText: { flex: 1 },
+  versionId: { ...typography.subtitle, color: colors.ink, fontSize: 16 },
+  versionIdActive: { color: colors.oliveDark, fontWeight: "700" },
+  versionDesc: { ...typography.caption, color: colors.inkSoft, marginTop: 2 },
+  checkmark: { color: colors.olive, fontSize: 20, fontWeight: "700" },
   primary: {
     backgroundColor: colors.olive,
     borderRadius: radii.sm,

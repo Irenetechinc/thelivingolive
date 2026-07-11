@@ -1,100 +1,92 @@
 # The Living Olive
 
-A mobile app for daily spiritual life: Bible reading with highlights/notes/AI
-explanations, a digital hymnbook, and AI-generated devotionals and prayers with
-scheduled reminders.
+A mobile app for daily spiritual life: Bible reading with highlights/notes/AI explanations, a digital hymnbook (55 hymns), and AI-generated devotionals and prayers with scheduled reminders.
 
 ## Architecture
 
-- **`mobile/`** — Expo (React Native + TypeScript) app. This is the actual product;
-  it is mobile-only (not a web app), per the original spec. Preview it with the
-  Expo Go app on a physical phone (see "Running the app" below).
-- **`server/`** — Node/Express API. Proxies OpenAI calls (verse explanations,
-  AI-generated devotions & prayers) so the OpenAI key never ships inside the
-  mobile bundle. Every route requires a valid Supabase session token. Designed to
-  be deployed to Railway in production, per the original spec; runs locally on
-  Replit during development.
-- **Supabase** — Auth (email OTP / magic link, no passwords) and Postgres
-  (highlights, notes, devotion/prayer plans and generated entries — see
-  `server/supabase/schema.sql`). Row Level Security scopes every table to its
-  owning user.
-- **OpenAI** — powers verse explanations, devotional generation, and prayer
-  generation (`gpt-4o-mini`, JSON-mode responses).
+- **`mobile/`** — Expo (React Native + TypeScript) app. Mobile-only (not a web app). Preview with Expo Go on a physical phone.
+- **`server/`** — Node/Express API on port 5000. Proxies OpenAI calls and serves Bible text. Designed for Railway in production.
+- **Supabase** — Auth (email OTP / magic link, no passwords) and Postgres. Row Level Security scopes every table to its owning user. Schema: `server/supabase/schema.sql`.
+- **OpenAI** — `gpt-4o-mini` for verse explanations, devotional generation, and prayer generation.
 
-## Bible text: KJV only, for now
+## Features implemented
 
-NIV, NLT, ESV, and NABRE are copyrighted and require paid licensed APIs
-(e.g. API.Bible, ESV API) to legally display their text. The app ships with the
-full King James Version (public domain), bundled locally in
-`mobile/src/data/bible/`. Add other versions once you have API credentials for
-them — see the follow-up task for this.
+### Bible Module
+- KJV served from the local server (fast, cached per chapter)
+- **WEB** (World English Bible) and **ASV** (American Standard Version) via bible-api.com proxy — selectable from the Bible home screen
+- Verse highlighting (persisted to Supabase)
+- Verse and chapter notes (persisted to Supabase)
+- AI verse explanation with supporting scriptures
+- Version badge shown in the reader; graceful fallback to KJV if external API is down
 
-## Hymns
+### Hymns Module
+- **55 public-domain hymns** (all pre-1929, copyright expired) with full, accurate lyrics
+- Searchable by title, author, or lyric content
 
-`mobile/src/data/hymns.ts` ships ~20 well-known public-domain hymns (pre-1929,
-copyright-expired) with real, accurate lyrics. This is a starter set, not the
-full historical hymnbook — expanding it is a good follow-up task.
+### Devotions Module
+- User sets spiritual goal + duration (daily/weekly/monthly/yearly) + preferred time
+- AI generates a full devotional with scripture reference and closing prayer
+- Saved to Supabase for history
+- Local reminder scheduled at preferred time (daily/weekly natively; monthly/yearly via date trigger)
+- **Server also sends a push notification** immediately when a new devotional is generated
 
-## Notifications
+### Prayer Module
+- User sets heart desires, prayer point count, prayer type (Warfare/Adoration/Intercession/Thanksgiving/Petition) + preferred time
+- AI generates Bible-rooted prayer points with scripture references
+- Saved to Supabase for history
+- Local reminder scheduled at preferred time
+- **Server also sends a push notification** immediately when new prayer points are generated
 
-Devotion and prayer reminders use `expo-notifications` local scheduled
-notifications (daily/weekly natively; monthly/yearly are approximated with a
-one-shot date trigger). This works without any server involvement, but **only
-on a physical device** — push/local notification scheduling is unreliable in
-Expo Go's simulator paths. Test on your phone via Expo Go.
+### Server-driven push notifications
+- Mobile registers an Expo push token with the server on every login (stored in `push_tokens` table)
+- Server endpoint `POST /api/push/register` — stores token
+- Server endpoint `POST /api/push/notify-scheduled` — checks active devotion/prayer plans by preferred time and sends push notifications. Call this from a cron service (e.g. cron-job.org) every minute. Protect with `CRON_SECRET` env var + `X-Cron-Secret` header.
+- On devotion/prayer generation, a push is also sent immediately to confirm delivery
 
-## Running the app
+### Authentication
+- Email-only (OTP/magic-link), no passwords
 
-Two workflows run automatically:
+## Required secrets
 
-- **Backend API** — Express server on port 5000 (proxied at the repl's public
-  dev URL).
-- **Mobile (Expo)** — Metro bundler with `--tunnel`, so it's reachable from a
-  physical phone over the internet (not just the same LAN as this repl).
+| Secret | Used by | Purpose |
+|--------|---------|---------|
+| `SUPABASE_URL` | server + mobile | Supabase project URL |
+| `SUPABASE_ANON_KEY` | mobile | Auth from the app |
+| `SUPABASE_SERVICE_ROLE_KEY` | server | Auth verification + push token storage |
+| `OPENAI_API_KEY` | server | AI features |
+| `EXPO_ACCESS_TOKEN` | server (optional) | Expo push service access token |
+| `CRON_SECRET` | server (optional) | Protect the scheduled-notify endpoint |
 
-To test on your phone:
-1. Install **Expo Go** from the App Store / Play Store.
-2. Open the "Mobile (Expo)" workflow console and scan the QR code (or open the
-   `exp://...exp.direct` link it prints).
+## One-time setup
 
-## One-time setup still required
+1. **Run the schema** in Supabase SQL Editor: `server/supabase/schema.sql`
+2. **Enable Email OTP** in Supabase Auth settings (magic-link, no password)
+3. Set the four required secrets above
 
-1. **Run the database schema.** In your Supabase project's SQL Editor, run
-   `server/supabase/schema.sql`. This creates the `highlights`, `notes`,
-   `devotion_plans`, `devotion_entries`, `prayer_plans`, and `prayer_entries`
-   tables with RLS policies.
-2. **Enable email OTP in Supabase.** In Supabase Auth settings, make sure
-   "Email" provider is on and password-based sign-in isn't required — the app
-   only uses `signInWithOtp` / `verifyOtp` (magic-code, no passwords).
-3. Secrets already configured: `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`.
+## Running in development
 
-## Deploying to Railway (production backend)
+Two workflows start automatically:
+- **Backend API** — Express on port 5000
+- **Mobile (Expo)** — Metro + ngrok tunnel (scan QR with Expo Go on your phone)
 
-The original spec calls for Railway hosting for the backend, separate from
-Supabase. This is a monorepo (`mobile/` + `server/`), so Railway's build
-detector (Railpack) needs to be told the backend lives in `server/`, not the
-repo root:
+The Expo workflow uses a hard-coded `EXPO_PUBLIC_API_URL` pointing at this repl's backend. If the repl URL changes, update the workflow command.
 
-1. In the Railway service → **Settings → Source**, set **Root Directory** to
-   `server`. Without this, Railpack scans the repo root, sees only
-   `README.md`, and fails with "could not determine how to build the app."
-2. In **Settings → Variables**, add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   and `OPENAI_API_KEY` (the backend doesn't need the anon key).
-3. Railway will then find `server/package.json` and use its `start` script
-   (`node src/index.js`); `server/railway.json` and `server/Procfile` are
-   already set up as a fallback config.
-4. Once deployed, copy the Railway-issued URL and set
-   `EXPO_PUBLIC_API_URL` to it wherever you build the mobile app for
-   production (the "Mobile (Expo)" dev workflow still points at this Replit
-   repl's own backend for local testing).
+## Deploying backend to Railway
+
+1. In Railway → **Settings → Source**, set **Root Directory** to `server`
+2. Add env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, optionally `EXPO_ACCESS_TOKEN` and `CRON_SECRET`
+3. Railway will detect `server/package.json` and use `npm start` (`node src/index.js`)
+4. Set `EXPO_PUBLIC_API_URL` in the Expo workflow and any production build to the Railway URL
+
+## Bible versions
+
+- **KJV** — served from local JSON data in `server/src/data/bible/` (fast, no external dependency)
+- **WEB** / **ASV** — proxied from bible-api.com (free, public domain, no API key needed)
+- NIV, NLT, ESV, NABRE are copyrighted and require a paid license (e.g. API.Bible)
 
 ## User preferences
 
-- Stack: React Native (Expo) mobile app only — no web version — with a Node
-  backend intended for Railway, and Supabase for auth/DB, per project spec.
-- Bible versions: launch with KJV only; add NIV/NLT/ESV/NABRE later via a
-  licensed API (API.Bible or similar) once the user has a license.
-- AI provider: OpenAI.
-- Testing: user tests on a physical device via Expo Go (Expo Go has some
-  limitations vs. a full dev build, per user's note).
+- Stack: React Native (Expo) mobile-only; Node backend for Railway; Supabase for auth/DB
+- No web version
+- AI provider: OpenAI
+- No dummy data or demo implementations
