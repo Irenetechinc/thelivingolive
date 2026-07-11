@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
-import { getChapterVerses } from "../../data/bibleLoader";
+import { loadChapterVerses } from "../../data/bibleLoader";
 import { supabase } from "../../lib/supabase";
 import { explainVerse } from "../../lib/api";
 import { colors, radii, spacing, typography } from "../../theme/theme";
@@ -20,7 +20,18 @@ type Props = NativeStackScreenProps<RootStackParamList, "ChapterReader">;
 
 export default function ChapterReaderScreen({ route }: Props) {
   const { bookId, bookName, chapter } = route.params;
-  const verses = useMemo(() => getChapterVerses(bookId, chapter), [bookId, chapter]);
+  const [verses, setVerses] = useState<string[]>([]);
+  const [loadingChapter, setLoadingChapter] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoadingChapter(true);
+    setLoadError(null);
+    loadChapterVerses(bookId, chapter)
+      .then(setVerses)
+      .catch((e) => setLoadError(e.message ?? "Couldn't load this chapter."))
+      .finally(() => setLoadingChapter(false));
+  }, [bookId, chapter]);
 
   const [selectedVerse, setSelectedVerse] = useState<number | null>(null);
   const [highlighted, setHighlighted] = useState<Record<number, boolean>>({});
@@ -103,6 +114,22 @@ export default function ChapterReaderScreen({ route }: Props) {
     } finally {
       setLoadingExplanation(false);
     }
+  }
+
+  if (loadingChapter) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator color={colors.olive} />
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={styles.error}>{loadError}</Text>
+      </View>
+    );
   }
 
   return (
@@ -191,6 +218,7 @@ export default function ChapterReaderScreen({ route }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
+  centered: { alignItems: "center", justifyContent: "center" },
   content: { padding: spacing.lg },
   verse: { ...typography.body, color: colors.ink, marginBottom: spacing.sm },
   verseHighlighted: { backgroundColor: "#F6E3A1" },

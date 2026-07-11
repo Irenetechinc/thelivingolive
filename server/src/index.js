@@ -2,6 +2,21 @@ import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const bibleDir = path.join(__dirname, "data", "bible");
+const bibleIndex = JSON.parse(readFileSync(path.join(bibleDir, "index.json"), "utf-8"));
+const bibleBookCache = new Map();
+function loadBibleBook(bookId) {
+  if (!bibleBookCache.has(bookId)) {
+    const filePath = path.join(bibleDir, `book-${bookId}.json`);
+    bibleBookCache.set(bookId, JSON.parse(readFileSync(filePath, "utf-8")));
+  }
+  return bibleBookCache.get(bookId);
+}
 
 const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
 for (const key of requiredEnv) {
@@ -55,6 +70,29 @@ app.get("/", (_req, res) => {
       </body>
     </html>
   `);
+});
+
+// Bible text (public domain KJV), served on demand so it doesn't bloat the
+// mobile app bundle/download.
+app.get("/api/bible/books", (_req, res) => {
+  res.json(bibleIndex);
+});
+
+app.get("/api/bible/:bookId/:chapter", (req, res) => {
+  const bookId = parseInt(req.params.bookId, 10);
+  const chapter = parseInt(req.params.chapter, 10);
+  const meta = bibleIndex.find((b) => b.id === bookId);
+  if (!meta) return res.status(404).json({ error: "Unknown book" });
+  try {
+    const chapters = loadBibleBook(bookId);
+    const verses = chapters[chapter - 1];
+    if (!verses) return res.status(404).json({ error: "Unknown chapter" });
+    res.set("Cache-Control", "public, max-age=86400");
+    res.json({ bookId, bookName: meta.name, chapter, verses });
+  } catch (err) {
+    console.error("bible chapter error:", err);
+    res.status(500).json({ error: "Failed to load chapter" });
+  }
 });
 
 // AI verse explanation with supporting scriptures

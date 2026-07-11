@@ -1,3 +1,5 @@
 - [Expo on Replit workflows](expo-on-replit.md) — tunnel mode needs `@expo/ngrok` preinstalled or it blocks on an interactive prompt; use console output on a supported port, not 8081.
 - [No Supabase/OpenAI Replit connectors](supabase-openai-no-connector.md) — searchIntegrations returns nothing for these; request raw secrets instead of looking for a connector.
 - [Public-domain Bible/hymn content sources](public-domain-religious-content.md) — `bible-kjv` npm package ships full KJV text; only KJV (not NIV/NLT/ESV/NABRE) is legally embeddable without a paid license.
+- [Railway deploy needs public-registry lockfile](railway-deploy-lockfile.md) — package-lock.json with Replit's internal firewall URLs makes `npm ci` fail off-Replit; regenerate against registry.npmjs.org before deploying elsewhere.
+- [Don't bundle large static data in Expo/RN apps](mobile-bundle-size-large-data.md) — multi-MB JSON via static require() inflates the JS bundle and can break Expo Go tunnel downloads; serve it from the backend on demand instead.

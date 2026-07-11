@@ -1,8 +1,8 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable, TextInput } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, FlatList, Pressable, TextInput, ActivityIndicator } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
-import { bibleBooks } from "../../data/bibleLoader";
+import { loadBibleBooks, type BibleBookMeta } from "../../data/bibleLoader";
 import { colors, radii, spacing, typography } from "../../theme/theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BookPicker">;
@@ -10,9 +10,35 @@ type Props = NativeStackScreenProps<RootStackParamList, "BookPicker">;
 export default function BookPickerScreen({ navigation }: Props) {
   const [query, setQuery] = useState("");
   const [selectedBook, setSelectedBook] = useState<number | null>(null);
+  const [bibleBooks, setBibleBooks] = useState<BibleBookMeta[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadBibleBooks()
+      .then(setBibleBooks)
+      .catch((e) => setError(e.message ?? "Couldn't load the Bible book list."))
+      .finally(() => setLoading(false));
+  }, []);
 
   const filtered = bibleBooks.filter((b) => b.name.toLowerCase().includes(query.toLowerCase()));
   const activeBook = bibleBooks.find((b) => b.id === selectedBook);
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator color={colors.olive} />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={styles.rowMeta}>{error}</Text>
+      </View>
+    );
+  }
 
   if (activeBook) {
     const chapters = Array.from({ length: activeBook.chapterCount }, (_, i) => i + 1);
@@ -71,6 +97,7 @@ export default function BookPickerScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment, padding: spacing.lg },
+  centered: { alignItems: "center", justifyContent: "center" },
   search: {
     backgroundColor: colors.white,
     borderRadius: radii.sm,

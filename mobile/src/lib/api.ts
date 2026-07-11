@@ -56,3 +56,33 @@ export type PrayerResult = {
 export function generatePrayer(input: { desires: string; count: number; type: string }) {
   return authedFetch("/api/ai/prayer", input) as Promise<PrayerResult>;
 }
+
+// Bible text is public (no auth needed) and fetched on demand from the
+// backend instead of being bundled into the app, since the full KJV text is
+// several megabytes and would make the JS bundle slow/unreliable to download
+// over Expo Go's tunnel.
+function requireApiUrl() {
+  if (!API_URL) {
+    throw new Error(
+      "EXPO_PUBLIC_API_URL is not set. Point it at the running backend server (see mobile/.env.example)."
+    );
+  }
+  return API_URL;
+}
+
+export type BibleBookMeta = { id: number; name: string; chapterCount: number };
+
+export async function fetchBibleBooks(): Promise<BibleBookMeta[]> {
+  const res = await fetch(`${requireApiUrl()}/api/bible/books`);
+  if (!res.ok) throw new Error(`Failed to load Bible books (${res.status})`);
+  return res.json();
+}
+
+export async function fetchBibleChapter(
+  bookId: number,
+  chapter: number
+): Promise<{ bookId: number; bookName: string; chapter: number; verses: string[] }> {
+  const res = await fetch(`${requireApiUrl()}/api/bible/${bookId}/${chapter}`);
+  if (!res.ok) throw new Error(`Failed to load chapter (${res.status})`);
+  return res.json();
+}
