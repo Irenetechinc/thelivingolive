@@ -40,6 +40,23 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "the-living-olive-api" });
 });
 
+app.get("/", (_req, res) => {
+  res.type("html").send(`
+    <html>
+      <head><title>The Living Olive API</title></head>
+      <body style="font-family: system-ui; padding: 2rem; max-width: 640px; margin: auto;">
+        <h1>🫒 The Living Olive — backend API</h1>
+        <p>This is the backend service (OpenAI proxy). There's no web UI here —
+        the actual app is <strong>The Living Olive</strong> mobile app, running
+        in the <strong>"Mobile (Expo)"</strong> workflow.</p>
+        <p>Open that workflow's console, scan the QR code with the
+        <strong>Expo Go</strong> app on your phone, and the app will load there.</p>
+        <p>Health check: <a href="/health">/health</a></p>
+      </body>
+    </html>
+  `);
+});
+
 // AI verse explanation with supporting scriptures
 app.post("/api/ai/explain-verse", requireUser, async (req, res) => {
   try {
