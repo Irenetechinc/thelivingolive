@@ -10,13 +10,15 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      }
+      },
+      "installCommand": "npm install --include=dev --legacy-peer-deps"
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      }
+      },
+      "installCommand": "npm install --include=dev --legacy-peer-deps"
     },
     "production": {
       "android": {
@@ -24,7 +26,8 @@
       },
       "ios": {
         "simulator": false
-      }
+      },
+      "installCommand": "npm install --include=dev --legacy-peer-deps"
     }
   },
   "submit": {
