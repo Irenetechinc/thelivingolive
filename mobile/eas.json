@@ -11,14 +11,18 @@
       "android": {
         "buildType": "apk"
       },
-      "installCommand": "npm install --include=dev --legacy-peer-deps"
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       },
-      "installCommand": "npm install --include=dev --legacy-peer-deps"
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
     },
     "production": {
       "android": {
@@ -27,7 +31,9 @@
       "ios": {
         "simulator": false
       },
-      "installCommand": "npm install --include=dev --legacy-peer-deps"
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
     }
   },
   "submit": {
