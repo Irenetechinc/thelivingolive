@@ -8,6 +8,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "node": "20.18.1",
       "android": {
         "buildType": "apk"
       },
@@ -17,6 +18,7 @@
     },
     "preview": {
       "distribution": "internal",
+      "node": "20.18.1",
       "android": {
         "buildType": "apk"
       },
@@ -25,6 +27,7 @@
       }
     },
     "production": {
+      "node": "20.18.1",
       "android": {
         "buildType": "app-bundle"
       },
