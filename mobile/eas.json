@@ -1,51 +1,25 @@
 {
   "cli": {
-    "version": ">= 14.0.0",
-    "appVersionSource": "remote",
-    "requireCommit": true
+    "version": ">= 7.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "node": "24.13.0",
-      "android": {
-        "buildType": "apk"
-      },
-      "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      "distribution": "internal"
       }
     },
     "preview": {
       "distribution": "internal",
-      "node": "24.13.0",
       "android": {
         "buildType": "apk"
       },
-      "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "NPM_CONFIG_CACHE": "/tmp/.npm"
-      }
     },
     "production": {
-      "node": "24.13.0",
-      "android": {
-        "buildType": "app-bundle"
-      },
-      "ios": {
-        "simulator": false
-      },
-      "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "NPM_CONFIG_CACHE": "/tmp/.npm"
-      }
+      "autoIncrement": true
     }
   },
   "submit": {
-    "production": {
-      "android": {
-        "track": "internal"
-      }
-    }
+    "production": {}
   }
 }
