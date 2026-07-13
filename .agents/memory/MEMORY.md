@@ -4,3 +4,5 @@
 - [Railway deploy needs public-registry lockfile](railway-deploy-lockfile.md) — package-lock.json with Replit's internal firewall URLs makes `npm ci` fail off-Replit; regenerate against registry.npmjs.org before deploying elsewhere.
 - [Don't bundle large static data in Expo/RN apps](mobile-bundle-size-large-data.md) — multi-MB JSON via static require() inflates the JS bundle and can break Expo Go tunnel downloads; serve it from the backend on demand instead.
 - [EAS build dotslash EACCES on tarball upload](eas-build-dotslash-permission-bug.md) — local `eas build` upload fails EACCES/rmdir on `.cache/dotslash/...`; fix via a Node fs-preload patch (NODE_OPTIONS), not env vars or node_modules edits.
+- [Verify Expo icon/splash assets visually](expo-icon-asset-verification.md) — a valid PNG wired into app.json can still be a broken/leftover design-tool file; view it, don't just check dimensions.
+- [EAS builds don't see Replit workflow env vars](eas-build-env-vars.md) — register EXPO_PUBLIC_* via `eas env:create` per build profile, or installed builds silently run with unconfigured Supabase/API URL.
