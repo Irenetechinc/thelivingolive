@@ -71,6 +71,22 @@ Two workflows start automatically:
 
 The Expo workflow uses a hard-coded `EXPO_PUBLIC_API_URL` pointing at this repl's backend. If the repl URL changes, update the workflow command.
 
+## Regenerating the lockfile inside Replit
+
+Replit routes all npm traffic through an internal package proxy (`package-firewall.replit.local`). If you run `npm install` inside Replit, the generated `package-lock.json` will contain that internal hostname, which EAS Build and Railway cannot reach.
+
+**The fix runs automatically** via the `postinstall` hook — after any `npm install` inside `mobile/` or `server/`, the script rewrites all internal URLs to `registry.npmjs.org` before you commit.
+
+If you ever need to run it manually:
+```sh
+cd mobile && npm run fix-lockfile
+cd server && npm run fix-lockfile
+```
+
+A pre-commit git hook will also block any commit that still contains `package-firewall.replit.local` in a lockfile.
+
+**Important:** always regenerate lockfiles with plain `npm install` (no `--legacy-peer-deps`). EAS runs `npm ci --include=dev` without that flag, and using `--legacy-peer-deps` can produce a lockfile that is out of sync (missing packages like `react-refresh@0.18.0`).
+
 ## Building an APK/IPA with EAS
 
 `npm run build:preview` / `build:dev` / `build:prod` / `build:ios` (in `mobile/`) wrap `eas build`.
