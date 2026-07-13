@@ -44,7 +44,9 @@ A mobile app for daily spiritual life: Bible reading with highlights/notes/AI ex
 - On devotion/prayer generation, a push is also sent immediately to confirm delivery
 
 ### Authentication
-- Email-only (OTP/magic-link), no passwords
+- Email-only sign-in link (magic link), no passwords, no codes to type
+- Session persists on-device (AsyncStorage + Supabase auto-refresh) — a signed-in user is never asked to re-verify unless they sign out or sign in from a different device/reinstall
+- See "Email sign-in link setup (Supabase dashboard)" below for the one-time dashboard configuration this requires
 
 ## Required secrets
 
@@ -62,6 +64,32 @@ A mobile app for daily spiritual life: Bible reading with highlights/notes/AI ex
 1. **Run the schema** in Supabase SQL Editor: `server/supabase/schema.sql`
 2. **Enable Email OTP** in Supabase Auth settings (magic-link, no password)
 3. Set the four required secrets above
+4. Complete the "Email sign-in link setup" below (redirect URLs + branded email template)
+
+## Email sign-in link setup (Supabase dashboard)
+
+The app signs users in with a tappable email link (no typed code). Two things must be configured
+in the Supabase dashboard for this to work — they can't be set via API with the keys available here,
+so they're one-time manual steps:
+
+**1. Allow the app's deep link to receive the redirect**
+Go to **Authentication → URL Configuration → Redirect URLs** and add:
+- `livingolive://auth-callback` — used by real installed builds (dev client, preview, production)
+- `exp://*` — used while testing in Expo Go during development (the port/host changes every tunnel session, so a wildcard is required)
+
+Without this, Supabase rejects the link with "requested path is invalid" and the user can never complete sign-in.
+
+**2. Install the branded "Living Olive" email**
+Go to **Authentication → Email Templates → Magic Link**, set the subject to `Your Living Olive sign-in link`,
+and paste in the contents of `server/supabase/email-templates/magic-link.html`. Supabase applies this same
+template to `signInWithOtp()` for both new and returning users, so it's the only template this app needs.
+
+**How the flow works end to end:** the app calls `supabase.auth.signInWithOtp()` with `emailRedirectTo` set to
+its own deep link (`mobile/src/lib/authLinking.ts`). The user taps the emailed link, Supabase verifies it and
+redirects to that deep link with a `?code=...` param, and the app exchanges it for a session
+(`exchangeCodeForSession`) in `AuthContext`. No code is ever typed — if the link is opened on a different
+device than the one that requested it, that device becomes signed in instead (expected — a link is a
+credential; email access is the actual identity check).
 
 ## Running in development
 

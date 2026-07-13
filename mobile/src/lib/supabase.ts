@@ -37,6 +37,11 @@ function buildClient() {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // PKCE is required for the magic-link deep-link flow used on native:
+      // the email link redirects back with `?code=...`, which the app
+      // exchanges for a session via exchangeCodeForSession (see
+      // src/lib/authLinking.ts).
+      flowType: "pkce",
     },
   });
 }

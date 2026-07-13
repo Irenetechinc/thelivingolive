@@ -10,17 +10,20 @@ import {
   ActivityIndicator,
   Animated,
   ScrollView,
+  Image,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
 import { colors, radii, spacing, typography, shadows } from "../theme/theme";
 
+const RESEND_COOLDOWN_SECONDS = 30;
+
 export default function AuthScreen() {
-  const { requestOtp, verifyOtp, pendingEmail } = useAuth();
+  const { sendMagicLink, resendMagicLink, cancelPending, pendingEmail, linkError } = useAuth();
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
 
   const heroAnim = useRef(new Animated.Value(0)).current;
   const cardAnim = useRef(new Animated.Value(0)).current;
@@ -32,7 +35,17 @@ export default function AuthScreen() {
     ]).start();
   }, []);
 
-  async function handleRequestCode() {
+  useEffect(() => {
+    if (linkError) setError(linkError);
+  }, [linkError]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  async function handleSendLink() {
     setError(null);
     if (!/^\S+@\S+\.\S+$/.test(email)) {
       setError("Enter a valid email address.");
@@ -40,25 +53,23 @@ export default function AuthScreen() {
     }
     setBusy(true);
     try {
-      await requestOtp(email.trim().toLowerCase());
+      await sendMagicLink(email.trim().toLowerCase());
+      setCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (e: any) {
-      setError(e.message ?? "Could not send the code. Try again.");
+      setError(e.message ?? "Could not send the sign-in link. Try again.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleVerify() {
+  async function handleResend() {
     setError(null);
-    if (code.trim().length < 4) {
-      setError("Enter the code from your email.");
-      return;
-    }
     setBusy(true);
     try {
-      await verifyOtp(pendingEmail ?? email.trim().toLowerCase(), code.trim());
+      await resendMagicLink();
+      setCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (e: any) {
-      setError(e.message ?? "That code didn't work. Try again.");
+      setError(e.message ?? "Could not resend the link. Try again.");
     } finally {
       setBusy(false);
     }
@@ -99,7 +110,11 @@ export default function AuthScreen() {
             <View style={styles.logoWrap}>
               <View style={styles.logoOuter}>
                 <View style={styles.logoInner}>
-                  <Text style={styles.logoGlyph}>✦</Text>
+                  <Image
+                    source={require("../../assets/splash-icon.png")}
+                    style={styles.logoImage}
+                    resizeMode="contain"
+                  />
                 </View>
               </View>
             </View>
@@ -128,7 +143,7 @@ export default function AuthScreen() {
               <>
                 <Text style={styles.cardTitle}>Welcome back</Text>
                 <Text style={styles.cardSubtitle}>
-                  Enter your email — we'll send a one-time sign-in code.
+                  Enter your email — we'll send you a secure sign-in link.
                 </Text>
                 <Text style={styles.label}>Email address</Text>
                 <TextInput
@@ -141,17 +156,17 @@ export default function AuthScreen() {
                   value={email}
                   onChangeText={setEmail}
                   returnKeyType="send"
-                  onSubmitEditing={handleRequestCode}
+                  onSubmitEditing={handleSendLink}
                 />
                 <Pressable
                   style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-                  onPress={handleRequestCode}
+                  onPress={handleSendLink}
                   disabled={busy}
                 >
                   {busy ? (
                     <ActivityIndicator color={colors.parchment} />
                   ) : (
-                    <Text style={styles.buttonText}>Send sign-in code</Text>
+                    <Text style={styles.buttonText}>Send sign-in link</Text>
                   )}
                 </Pressable>
               </>
@@ -159,33 +174,27 @@ export default function AuthScreen() {
               <>
                 <Text style={styles.cardTitle}>Check your inbox</Text>
                 <Text style={styles.cardSubtitle}>
-                  We sent a code to{"\n"}
+                  We sent a sign-in link to{"\n"}
                   <Text style={styles.emailHighlight}>{pendingEmail}</Text>
+                  {"\n\n"}Tap the link on this device to continue — no code needed.
                 </Text>
-                <Text style={styles.label}>One-time code</Text>
-                <TextInput
-                  style={[styles.input, styles.codeInput]}
-                  placeholder="000000"
-                  placeholderTextColor={colors.inkFaint}
-                  keyboardType="number-pad"
-                  value={code}
-                  onChangeText={setCode}
-                  maxLength={6}
-                  returnKeyType="done"
-                  onSubmitEditing={handleVerify}
-                />
                 <Pressable
-                  style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-                  onPress={handleVerify}
-                  disabled={busy}
+                  style={({ pressed }) => [
+                    styles.button,
+                    (pressed || cooldown > 0) && styles.buttonPressed,
+                  ]}
+                  onPress={handleResend}
+                  disabled={busy || cooldown > 0}
                 >
                   {busy ? (
                     <ActivityIndicator color={colors.parchment} />
                   ) : (
-                    <Text style={styles.buttonText}>Verify & continue</Text>
+                    <Text style={styles.buttonText}>
+                      {cooldown > 0 ? `Resend link in ${cooldown}s` : "Resend link"}
+                    </Text>
                   )}
                 </Pressable>
-                <Pressable onPress={() => setCode("")} hitSlop={8}>
+                <Pressable onPress={cancelPending} hitSlop={8}>
                   <Text style={styles.backLink}>← Use a different email</Text>
                 </Pressable>
               </>
@@ -234,7 +243,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  logoGlyph: { fontSize: 26, color: "#E2C060" },
+  logoImage: { width: 40, height: 40 },
   brand: {
     fontSize: 32,
     fontWeight: "700",
@@ -281,12 +290,6 @@ const styles = StyleSheet.create({
     color: colors.ink,
     backgroundColor: colors.parchment,
     marginBottom: spacing.md,
-  },
-  codeInput: {
-    fontSize: 28,
-    fontWeight: "700",
-    letterSpacing: 8,
-    textAlign: "center",
   },
   button: {
     backgroundColor: colors.oliveDark,

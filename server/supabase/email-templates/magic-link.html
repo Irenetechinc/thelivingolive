@@ -1,0 +1,96 @@
+<!--
+  The Living Olive — Sign-in link email template.
+
+  Paste this into the Supabase dashboard at:
+    Authentication → Email Templates → Magic Link
+
+  Suggested subject line:
+    Your Living Olive sign-in link
+
+  Supabase applies this same "Magic Link" template to signInWithOtp()
+  requests for both new and returning users (it doesn't use "Confirm
+  signup" for OTP-based sign-in), so this one template covers the app's
+  entire login flow.
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0; padding:0; background-color:#EDE7D8; font-family: Georgia, 'Times New Roman', serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#EDE7D8; padding: 32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background-color:#FBF8F1; border-radius:16px; overflow:hidden; box-shadow: 0 2px 12px rgba(28,39,18,0.12);">
+
+            <!-- Header -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#1C2712,#3E4A2F 55%,#5B6B45); padding: 36px 32px 28px 32px;" align="center">
+                <div style="width:64px;height:64px;border-radius:32px;border:2px solid rgba(255,255,255,0.35);display:inline-block;line-height:60px;text-align:center;margin-bottom:16px;">
+                  <span style="font-size:26px; color:#E2C060;">&#10022;</span>
+                </div>
+                <div style="font-size:24px; font-weight:700; color:#FFFFFF; letter-spacing:-0.4px;">
+                  The Living Olive
+                </div>
+                <div style="font-size:11px; letter-spacing:1.5px; color:rgba(255,255,255,0.65); text-transform:uppercase; margin-top:6px;">
+                  Scripture &middot; Hymns &middot; Devotion &middot; Prayer
+                </div>
+              </td>
+            </tr>
+
+            <!-- Body -->
+            <tr>
+              <td style="padding: 36px 32px 8px 32px;">
+                <div style="font-size:20px; font-weight:700; color:#2E3A1F; margin-bottom:12px;">
+                  Your sign-in link is ready
+                </div>
+                <div style="font-size:15px; line-height:24px; color:#4A4A42;">
+                  Tap the button below on your device to sign in to The Living Olive. This link is valid for a short time and can only be used once.
+                </div>
+              </td>
+            </tr>
+
+            <!-- Button -->
+            <tr>
+              <td style="padding: 24px 32px 8px 32px;" align="center">
+                <a href="{{ .ConfirmationURL }}"
+                   style="display:inline-block; background-color:#2E3A1F; color:#FBF8F1; text-decoration:none; font-size:16px; font-weight:700; letter-spacing:0.2px; padding:14px 36px; border-radius:10px; box-shadow: 0 2px 6px rgba(46,58,31,0.35);">
+                  Sign in to The Living Olive
+                </a>
+              </td>
+            </tr>
+
+            <!-- Fallback link -->
+            <tr>
+              <td style="padding: 20px 32px 0 32px;">
+                <div style="font-size:12px; color:#8A8A7C; line-height:20px;">
+                  If the button doesn't work, copy and paste this link into your device's browser:
+                </div>
+                <div style="font-size:12px; color:#5B7553; word-break:break-all; margin-top:6px;">
+                  {{ .ConfirmationURL }}
+                </div>
+              </td>
+            </tr>
+
+            <!-- Notice -->
+            <tr>
+              <td style="padding: 24px 32px 0 32px;">
+                <div style="border-top:1px solid #E4DCC7; padding-top:18px; font-size:12px; line-height:20px; color:#8A8A7C;">
+                  Didn't request this? You can safely ignore this email — no account changes will be made. For your security, this link expires soon and only works once.
+                </div>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding: 28px 32px 32px 32px;" align="center">
+                <div style="width:32px; height:1px; background-color:#C9A227; margin:0 auto 12px auto;"></div>
+                <div style="font-size:10px; letter-spacing:2px; color:#B0A98F; text-transform:uppercase;">
+                  Powered by Syntax
+                </div>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

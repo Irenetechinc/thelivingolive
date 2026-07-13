@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import {
   Animated,
   Dimensions,
+  Image,
   StyleSheet,
   Text,
   View,
@@ -92,8 +93,11 @@ export default function SplashScreen({ onFinish }: Props) {
         >
           <View style={styles.outerRing}>
             <View style={styles.innerRing}>
-              {/* Olive leaf cross */}
-              <Text style={styles.logoMark}>✦</Text>
+              <Image
+                source={require("../../assets/splash-icon.png")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
           </View>
           {/* Ring orbiting dots */}
@@ -186,9 +190,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  logoMark: {
-    fontSize: 28,
-    color: "#E2C060",
+  logoImage: {
+    width: 46,
+    height: 46,
   },
   orbitDot: {
     position: "absolute",
