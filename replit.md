@@ -98,6 +98,29 @@ scripts and a `NODE_OPTIONS`-injected fs patch (`mobile/scripts/patch-fs-permiss
 around this by chmod'ing any read-only path before deletion. Always build via these npm scripts,
 not by calling `eas build` directly, so the workaround is applied.
 
+## EAS builds need their own env vars (separate from the Replit workflow)
+
+The Replit "Mobile (Expo)" workflow exports `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`,
+and `EXPO_PUBLIC_API_URL` for the **dev tunnel only**. Those shell exports do not exist on EAS's build
+servers, so a real device install (`eas build`) will silently ship with an unconfigured Supabase client
+and an empty API URL — auth, Bible sync, AI features, and push all fail on the installed app even though
+the same code works fine in Expo Go here. This is a common cause of "the app crashes/doesn't work on my
+phone" reports that don't reproduce in the dev tunnel.
+
+Before running any `eas build` (dev, preview, or production), register these as EAS-hosted environment
+variables so the build servers can inline them:
+
+```sh
+cd mobile
+eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value "<your Supabase URL>" --visibility plaintext
+eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value "<your Supabase anon key>" --visibility plaintext
+eas env:create --environment production --name EXPO_PUBLIC_API_URL --value "<your Railway backend URL>" --visibility plaintext
+```
+
+Repeat for `--environment development` and `--environment preview` if you build those profiles (the
+preview/dev API URL can point at this repl's dev domain; production should point at Railway). Confirm
+with `eas env:list --environment production` before building.
+
 ## Deploying backend to Railway
 
 1. In Railway → **Settings → Source**, set **Root Directory** to `server`
