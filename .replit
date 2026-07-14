@@ -38,13 +38,13 @@ outputType = "webview"
 name = "Mobile (Expo)"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd mobile && export EXPO_PUBLIC_SUPABASE_URL=\"$SUPABASE_URL\" && export EXPO_PUBLIC_SUPABASE_ANON_KEY=\"$SUPABASE_ANON_KEY\" && export EXPO_PUBLIC_API_URL=\"https://a729f06c-6adc-44a5-9706-5a23604b4b7a-00-gd0gd3ke3s3l.spock.replit.dev\" && npx expo start --tunnel --port 8080"
-waitForPort = 8080
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd mobile && export EXPO_PUBLIC_SUPABASE_URL=\"$SUPABASE_URL\" && export EXPO_PUBLIC_SUPABASE_ANON_KEY=\"$SUPABASE_ANON_KEY\" && export EXPO_PUBLIC_API_URL=\"https://livingolive.adroomai.com\" && npx expo start --tunnel --port 8080"
+waitForPort = 8080
 
 [[ports]]
 localPort = 5000

@@ -5,7 +5,7 @@ A mobile app for daily spiritual life: Bible reading with highlights/notes/AI ex
 ## Architecture
 
 - **`mobile/`** — Expo (React Native + TypeScript) app. Mobile-only (not a web app). Preview with Expo Go on a physical phone.
-- **`server/`** — Node/Express API on port 5000. Proxies OpenAI calls and serves Bible text. Designed for Railway in production.
+- **`server/`** — Node/Express API on port 5000 locally. Deployed independently of Replit at **`https://livingolive.adroomai.com`** — this is the one and only backend URL the app ships with (see `mobile/src/lib/api.ts`). The app never depends on a `*.replit.dev` URL; that domain is only used for backend development inside this workspace.
 - **Supabase** — Auth (email OTP / magic link, no passwords) and Postgres. Row Level Security scopes every table to its owning user. Schema: `server/supabase/schema.sql`.
 - **OpenAI** — `gpt-4o-mini` for verse explanations, devotional generation, and prayer generation.
 
@@ -97,7 +97,7 @@ Two workflows start automatically:
 - **Backend API** — Express on port 5000
 - **Mobile (Expo)** — Metro + ngrok tunnel (scan QR with Expo Go on your phone)
 
-The Expo workflow uses a hard-coded `EXPO_PUBLIC_API_URL` pointing at this repl's backend. If the repl URL changes, update the workflow command.
+The Expo workflow exports `EXPO_PUBLIC_API_URL=https://livingolive.adroomai.com` — the real production backend — so the dev tunnel behaves exactly like an installed build. `mobile/src/lib/api.ts` also falls back to that same URL if the env var is ever unset, so there is no path in the app that can end up pointing at a Replit URL. Only override `EXPO_PUBLIC_API_URL` in the workflow command if you need to test against the backend running live in this workspace instead.
 
 ## Regenerating the lockfile inside Replit
 
@@ -136,17 +136,17 @@ the same code works fine in Expo Go here. This is a common cause of "the app cra
 phone" reports that don't reproduce in the dev tunnel.
 
 Before running any `eas build` (dev, preview, or production), register these as EAS-hosted environment
-variables so the build servers can inline them:
+variables so the build servers can inline them. Since `mobile/src/lib/api.ts` now falls back to the
+production URL (`https://livingolive.adroomai.com`) automatically, `EXPO_PUBLIC_API_URL` is optional —
+Supabase's URL/key are still required for every profile:
 
 ```sh
 cd mobile
 eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value "<your Supabase URL>" --visibility plaintext
 eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value "<your Supabase anon key>" --visibility plaintext
-eas env:create --environment production --name EXPO_PUBLIC_API_URL --value "<your Railway backend URL>" --visibility plaintext
 ```
 
-Repeat for `--environment development` and `--environment preview` if you build those profiles (the
-preview/dev API URL can point at this repl's dev domain; production should point at Railway). Confirm
+Repeat for `--environment development` and `--environment preview` if you build those profiles. Confirm
 with `eas env:list --environment production` before building.
 
 ## Deploying backend to Railway
@@ -154,7 +154,7 @@ with `eas env:list --environment production` before building.
 1. In Railway → **Settings → Source**, set **Root Directory** to `server`
 2. Add env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, optionally `EXPO_ACCESS_TOKEN` and `CRON_SECRET`
 3. Railway will detect `server/package.json` and use `npm start` (`node src/index.js`)
-4. Set `EXPO_PUBLIC_API_URL` in the Expo workflow and any production build to the Railway URL
+4. Point the custom domain `livingolive.adroomai.com` at this Railway service (Railway → Settings → Domains). The app is hard-wired to this URL (`mobile/src/lib/api.ts`) — if it ever needs to change, update `PRODUCTION_API_URL` there.
 
 ## Bible versions
 

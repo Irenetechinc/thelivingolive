@@ -1,33 +1,59 @@
 import { supabase } from "./supabase";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "";
+// The Living Olive backend, deployed independently of Replit (Railway,
+// behind this custom domain). This is the single source of truth for every
+// build — dev, EAS preview/production — so the app never depends on a
+// Replit-hosted URL. Override with EXPO_PUBLIC_API_URL only for local
+// backend development against this same repl.
+const PRODUCTION_API_URL = "https://livingolive.adroomai.com";
+const API_URL = process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_URL;
 
 function requireApiUrl() {
-  if (!API_URL) {
-    throw new Error(
-      "EXPO_PUBLIC_API_URL is not set. Point it at the running backend server."
-    );
-  }
   return API_URL;
+}
+
+// The server always replies with JSON (including on errors — see the
+// global JSON error handler in server/src/index.js). If we ever get
+// something else back (an HTML error page from a proxy/CDN in front of the
+// backend, a captive portal, etc.) surface a clean message instead of
+// dumping markup into the UI.
+async function parseJsonResponse(res: Response) {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    if (!res.ok) {
+      throw new Error(
+        res.status === 404
+          ? "The server couldn't be reached. Check your connection and try again."
+          : `The server returned an unexpected response (${res.status}). Try again.`
+      );
+    }
+    throw new Error("The server returned an unexpected response. Try again.");
+  }
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.error || `Request failed (${res.status}).`);
+  }
+  return json;
 }
 
 async function authedFetch(path: string, body: unknown) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("You need to be signed in to use this feature.");
-  const res = await fetch(`${requireApiUrl()}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Request failed (${res.status}): ${errText}`);
+  let res: Response;
+  try {
+    res = await fetch(`${requireApiUrl()}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error("Couldn't reach the server. Check your internet connection and try again.");
   }
-  return res.json();
+  return parseJsonResponse(res);
 }
 
 // ─── Bible ────────────────────────────────────────────────────────────────────
@@ -36,8 +62,7 @@ export type BibleBookMeta = { id: number; name: string; chapterCount: number };
 
 export async function fetchBibleBooks(): Promise<BibleBookMeta[]> {
   const res = await fetch(`${requireApiUrl()}/api/bible/books`);
-  if (!res.ok) throw new Error(`Failed to load Bible books (${res.status})`);
-  return res.json();
+  return parseJsonResponse(res);
 }
 
 export async function fetchBibleChapter(
@@ -54,9 +79,8 @@ export async function fetchBibleChapter(
   fallbackReason?: string;
 }> {
   const url = `${requireApiUrl()}/api/bible/${bookId}/${chapter}?version=${encodeURIComponent(version)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to load chapter (${res.status})`);
-  return res.json();
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  return parseJsonResponse(res);
 }
 
 // ─── AI features ──────────────────────────────────────────────────────────────
@@ -93,7 +117,6 @@ export function generatePrayer(input: { desires: string; count: number; type: st
 // ─── Push notifications ────────────────────────────────────────────────────────
 
 export async function registerPushToken(token: string, platform?: string): Promise<void> {
-  if (!API_URL) return; // silently skip if API not configured
   try {
     const { data } = await supabase.auth.getSession();
     const accessToken = data.session?.access_token;

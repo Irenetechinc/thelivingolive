@@ -2,7 +2,10 @@
 - [No Supabase/OpenAI Replit connectors](supabase-openai-no-connector.md) — searchIntegrations returns nothing for these; request raw secrets instead of looking for a connector.
 - [Public-domain Bible/hymn content sources](public-domain-religious-content.md) — `bible-kjv` npm package ships full KJV text; only KJV (not NIV/NLT/ESV/NABRE) is legally embeddable without a paid license.
 - [Railway deploy needs public-registry lockfile](railway-deploy-lockfile.md) — package-lock.json with Replit's internal firewall URLs makes `npm ci` fail off-Replit; regenerate against registry.npmjs.org before deploying elsewhere.
-- [Don't bundle large static data in Expo/RN apps](mobile-bundle-size-large-data.md) — multi-MB JSON via static require() inflates the JS bundle and can break Expo Go tunnel downloads; serve it from the backend on demand instead.
+- [Don't bundle large static data in Expo/RN apps](mobile-bundle-size-large-data.md) — multi-MB JSON via static require() inflates the JS bundle; exception is data that must work 100% offline (see bible-offline-bundling.md).
 - [EAS build dotslash EACCES on tarball upload](eas-build-dotslash-permission-bug.md) — local `eas build` upload fails EACCES/rmdir on `.cache/dotslash/...`; fix via a Node fs-preload patch (NODE_OPTIONS), not env vars or node_modules edits.
 - [Verify Expo icon/splash assets visually](expo-icon-asset-verification.md) — a valid PNG wired into app.json can still be a broken/leftover design-tool file; view it, don't just check dimensions.
 - [EAS builds don't see Replit workflow env vars](eas-build-env-vars.md) — register EXPO_PUBLIC_* via `eas env:create` per build profile, or installed builds silently run with unconfigured Supabase/API URL.
+- [Bundling Bible text for true offline support](bible-offline-bundling.md) — a server-fetched Bible can't satisfy "works with no internet at all"; bundle the base translation into the app with a static require map.
+- [Mobile app API base URL should never depend on Replit](mobile-api-url-no-replit-dependency.md) — hardcode the real production domain as the in-code fallback, not just the dev workflow env var.
+- [Never let raw HTML/error bodies reach the mobile UI](json-only-error-handling.md) — pair a global JSON error/404 handler on the Express server with response content-type checking on the client fetch layer.

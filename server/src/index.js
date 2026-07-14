@@ -392,6 +392,22 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// JSON-only 404 + error handling for every /api/* route.
+// Without this, an unmatched route or an uncaught exception falls through
+// to Express's default HTML error page, which the mobile app would render
+// as raw markup instead of a clean error message.
+// ──────────────────────────────────────────────
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error" });
+});
+
+// ──────────────────────────────────────────────
 // Server start
 // ──────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
