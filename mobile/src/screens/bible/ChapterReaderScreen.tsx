@@ -14,7 +14,7 @@ import type { RootStackParamList } from "../../navigation/AppNavigator";
 import type { BibleVersion } from "./BibleHomeScreen";
 import { loadChapterVerses } from "../../data/bibleLoader";
 import { supabase } from "../../lib/supabase";
-import { explainVerse } from "../../lib/api";
+import { explainVerse, rateVerseExplanation } from "../../lib/api";
 import { colors, radii, spacing, typography } from "../../theme/theme";
 import FloatingNotesWidget from "../../components/FloatingNotesWidget";
 
@@ -56,6 +56,9 @@ export default function ChapterReaderScreen({ route }: Props) {
   const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<"actions" | "note" | "explain" | null>(null);
+  const [userRating, setUserRating] = useState<number | null>(null);
+  const [submittingRating, setSubmittingRating] = useState(false);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
 
   // Load saved highlights for this chapter
   useEffect(() => {
@@ -80,6 +83,23 @@ export default function ChapterReaderScreen({ route }: Props) {
     setNoteText("");
     setExplanation(null);
     setExplainError(null);
+    setUserRating(null);
+    setRatingSubmitted(false);
+  }
+
+  async function submitRating(stars: number) {
+    if (submittingRating || ratingSubmitted || selectedVerse == null) return;
+    setUserRating(stars);
+    setSubmittingRating(true);
+    try {
+      const verseRef = `${bookName} ${chapter}:${selectedVerse}`;
+      await rateVerseExplanation({ verseRef, rating: stars });
+      setRatingSubmitted(true);
+    } catch {
+      // Non-fatal — rating failed silently; UI still shows the selected stars
+    } finally {
+      setSubmittingRating(false);
+    }
   }
 
   async function toggleHighlight() {
@@ -270,7 +290,7 @@ export default function ChapterReaderScreen({ route }: Props) {
                 <Text style={styles.error}>{explainError}</Text>
               ) : (
                 <>
-                  <ScrollView style={{ maxHeight: 320 }}>
+                  <ScrollView style={{ maxHeight: 280 }}>
                     <Text style={styles.explanationText}>{explanation}</Text>
                     {supportingScriptures.length > 0 && (
                       <>
@@ -285,6 +305,41 @@ export default function ChapterReaderScreen({ route }: Props) {
                       </>
                     )}
                   </ScrollView>
+
+                  {/* Star rating */}
+                  <View style={styles.ratingContainer}>
+                    {ratingSubmitted ? (
+                      <Text style={styles.ratingThanks}>Thanks for your feedback 🙏</Text>
+                    ) : (
+                      <>
+                        <Text style={styles.ratingLabel}>Was this insight helpful?</Text>
+                        <View style={styles.starsRow}>
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Pressable
+                              key={star}
+                              onPress={() => submitRating(star)}
+                              disabled={submittingRating}
+                              style={styles.starButton}
+                            >
+                              <Text style={[
+                                styles.starText,
+                                (userRating ?? 0) >= star && styles.starFilled,
+                              ]}>
+                                {(userRating ?? 0) >= star ? "★" : "☆"}
+                              </Text>
+                            </Pressable>
+                          ))}
+                          {submittingRating && (
+                            <ActivityIndicator
+                              color={colors.olive}
+                              size="small"
+                              style={{ marginLeft: spacing.sm }}
+                            />
+                          )}
+                        </View>
+                      </>
+                    )}
+                  </View>
                 </>
               )}
               <Pressable style={[styles.primaryButton, { marginTop: spacing.md }]} onPress={() => setModalMode(null)}>
@@ -363,4 +418,17 @@ const styles = StyleSheet.create({
   explanationText: { ...typography.body, color: colors.ink, marginBottom: spacing.md },
   supportingScripture: { ...typography.body, color: colors.inkSoft, marginBottom: spacing.xs },
   error: { color: colors.danger },
+  ratingContainer: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.parchmentDark,
+    alignItems: "center",
+  },
+  ratingLabel: { ...typography.caption, color: colors.inkSoft, marginBottom: spacing.sm },
+  starsRow: { flexDirection: "row", alignItems: "center" },
+  starButton: { paddingHorizontal: spacing.xs },
+  starText: { fontSize: 28, color: colors.parchmentDark },
+  starFilled: { color: "#D4A017" },
+  ratingThanks: { ...typography.body, color: colors.olive, fontWeight: "600" },
 });

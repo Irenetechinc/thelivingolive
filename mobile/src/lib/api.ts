@@ -94,6 +94,10 @@ export function explainVerse(input: { reference: string; text: string; version: 
   return authedFetch("/api/ai/explain-verse", input) as Promise<VerseExplanation>;
 }
 
+export function rateVerseExplanation(input: { verseRef: string; rating: number }) {
+  return authedFetch("/api/ai/explain-verse/feedback", input) as Promise<{ ok: boolean }>;
+}
+
 export type DevotionResult = {
   title: string;
   scriptureReference: string;
