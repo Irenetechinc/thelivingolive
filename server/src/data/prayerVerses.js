@@ -104,3 +104,48 @@ export function loadLearnedKeywords(rows) {
     }
   }
 }
+
+// ─── Discovered verses (from the web crawler, see lib/webCrawler.js) ───────
+// Kept separate from the hand-curated VERSE_BANK above so a bad crawl can be
+// wiped without touching the curated baseline. Every entry here has already
+// been validated against the real local KJV data (see webCrawler.js) before
+// being added — this pool never stores unverified scripture text, only a
+// {bookId, chapter, verseStart, verseEnd} pointer, same as VERSE_BANK.
+const discoveredVerses = [];
+const discoveredRefs = new Set(); // de-dupe by ref, case-insensitive
+
+export function addDiscoveredVerse(entry) {
+  const key = entry.ref.toLowerCase();
+  if (discoveredRefs.has(key)) return false;
+  if (VERSE_BANK.some((v) => v.ref.toLowerCase() === key)) return false;
+  discoveredRefs.add(key);
+  discoveredVerses.push(entry);
+  return true;
+}
+
+export function loadDiscoveredVerses(rows) {
+  for (const row of rows ?? []) {
+    addDiscoveredVerse({
+      ref: row.ref,
+      bookId: row.book_id,
+      chapter: row.chapter,
+      verseStart: row.verse_start,
+      verseEnd: row.verse_end ?? undefined,
+      title: row.ref,
+      category: row.category,
+      keywords: row.keywords ?? [],
+      source: "crawler",
+    });
+  }
+}
+
+// The engine should always read through this getter (not VERSE_BANK
+// directly) so crawler-discovered verses are eligible for selection the
+// moment they're validated, without a code deploy.
+export function getVerseBank() {
+  return VERSE_BANK.concat(discoveredVerses);
+}
+
+export function getDiscoveredVerses() {
+  return discoveredVerses;
+}

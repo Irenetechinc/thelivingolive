@@ -21,7 +21,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { CATEGORIES, VERSE_BANK } from "../data/prayerVerses.js";
+import { CATEGORIES, getVerseBank } from "../data/prayerVerses.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bibleDir = path.join(__dirname, "..", "data", "bible");
@@ -95,7 +95,7 @@ export function detectCategory(desireText) {
 // same order, because the ranking genuinely depends on the input.
 export function selectVerses(category, desireText, count, weights) {
   const words = new Set(tokenize(desireText).filter((w) => !STOPWORDS.has(w)));
-  const pool = VERSE_BANK.filter((v) => v.category === category);
+  const pool = getVerseBank().filter((v) => v.category === category);
   const scored = pool.map((v) => {
     const overlap = v.keywords.reduce((s, k) => s + (words.has(k) ? 1 : 0), 0);
     const weight = weights?.[v.ref] ?? 1;
@@ -173,8 +173,9 @@ export function generateDevotional({ goal, dayNumber, weights }) {
   const detection = detectCategory(goal);
   // Devotionals lean thankful/adoring in tone regardless of the detected
   // prayer category, but still pick scripture relevant to the stated goal.
-  const pool = VERSE_BANK.filter((v) => v.keywords.some((k) => tokenize(goal).includes(k)));
-  const candidates = pool.length ? pool : VERSE_BANK.filter((v) => v.category === "Thanksgiving");
+  const bank = getVerseBank();
+  const pool = bank.filter((v) => v.keywords.some((k) => tokenize(goal).includes(k)));
+  const candidates = pool.length ? pool : bank.filter((v) => v.category === "Thanksgiving");
   const seedIndex = (dayNumber ?? 1) % candidates.length;
   const verse = candidates[seedIndex] ?? VERSE_BANK[0];
   const text = verseText(verse);

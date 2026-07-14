@@ -1,28 +1,36 @@
 // ─── Self-learning background jobs for the rule-based prayer engine ───────
 // Runs inside the same always-on Express process (no separate worker
-// process/dyno needed — this is what makes it deployable on a single
-// Railway web service). Three real, working feedback loops:
+// process/dyno needed — everything here is deployable on a single Railway
+// web service, and every step logs through logger.js so it shows up in
+// `railway logs`). Five real, working feedback/discovery loops:
 //
 //   1. Real-time: every POST /api/prayer-engine/feedback immediately nudges
 //      that verse's weight in Supabase (see recordFeedback below).
 //   2. Hourly: re-reads the last hour of feedback and republishes an
 //      in-memory weights cache so new generations reflect it without a
 //      full table scan per request.
-//   3. Daily: scans the day's 4-5 star feedback for words that AREN'T yet
-//      in any category's keyword table and, if a word shows up repeatedly
-//      alongside one category, promotes it — a small but genuine example
-//      of the system improving its own classification over time from real
-//      usage, with no LLM involved.
+//   3. Daily (03:00): scans the day's 4-5 star feedback for words that
+//      AREN'T yet in any category's keyword table and, if a word shows up
+//      repeatedly alongside one category, promotes it.
+//   4. Daily (02:00): a real web crawler (lib/webCrawler.js) fetches public
+//      Bible-topic reference pages and discovers new scripture candidates
+//      per category, validated against local scripture data before use.
+//   5. Daily (04:00): a genetic algorithm (lib/geneticAlgorithm.js) evolves
+//      each category's entire verse-weight vector at once against the full
+//      feedback history — population, selection, crossover, mutation across
+//      generations — rather than only nudging one verse per rating.
 //
-// This is intentionally scoped below a full genetic-algorithm / web-crawler
-// pipeline (SearXNG, Crawl4AI, etc.) — that would need dedicated
-// infrastructure (headless browsers, a job queue, a vector index) that a
-// single Railway web dyno can't safely run. If the user wants that tier
-// later, it should be a separate worker service, not bolted onto the API
-// process.
+// Order matters: crawl (02:00) → keyword learning (03:00) → genetic
+// optimization (04:00), so each day's newly discovered verses and learned
+// keywords are already in play before the GA re-optimizes weights.
 
 import cron from "node-cron";
-import { CATEGORIES, learnKeyword, loadLearnedKeywords } from "../data/prayerVerses.js";
+import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses } from "../data/prayerVerses.js";
+import { runWebCrawl } from "./webCrawler.js";
+import { runGeneticOptimization } from "./geneticAlgorithm.js";
+import { logger } from "./logger.js";
+
+const log = logger("scheduler");
 
 let weightsCache = {}; // { "Philippians 4:6-7": 1.3, ... }
 
@@ -33,21 +41,33 @@ export function getWeights() {
 async function refreshWeightsCache(supabase) {
   const { data, error } = await supabase.from("verse_category_weights").select("verse_ref, weight");
   if (error) {
-    console.warn("prayer-engine: failed to refresh weights cache:", error.message);
+    log.warn("failed to refresh weights cache:", error.message);
     return;
   }
   const next = {};
   for (const row of data ?? []) next[row.verse_ref] = Number(row.weight);
   weightsCache = next;
+  log.info(`weights cache refreshed — ${Object.keys(next).length} verse weight(s) loaded`);
 }
 
 async function loadLearnedKeywordsFromDb(supabase) {
   const { data, error } = await supabase.from("learned_keywords").select("category, keyword, weight");
   if (error) {
-    console.warn("prayer-engine: failed to load learned keywords:", error.message);
+    log.warn("failed to load learned keywords:", error.message);
     return;
   }
   loadLearnedKeywords(data ?? []);
+  log.info(`loaded ${data?.length ?? 0} learned keyword(s) from previous runs`);
+}
+
+async function loadDiscoveredVersesFromDb(supabase) {
+  const { data, error } = await supabase.from("discovered_verses").select("*");
+  if (error) {
+    log.warn("failed to load discovered verses:", error.message);
+    return;
+  }
+  loadDiscoveredVerses(data ?? []);
+  log.info(`loaded ${data?.length ?? 0} crawler-discovered verse(s) from previous runs`);
 }
 
 // Called synchronously from the feedback endpoint — updates the weight for
@@ -107,7 +127,7 @@ async function runDailyKeywordLearning(supabase) {
     .not("source_text", "is", null);
 
   if (error) {
-    console.warn("prayer-engine: daily keyword learning query failed:", error.message);
+    log.warn("daily keyword learning query failed:", error.message);
     return;
   }
 
@@ -146,24 +166,63 @@ async function runDailyKeywordLearning(supabase) {
   }
 
   if (promotions.length) {
-    console.log(`prayer-engine: promoted ${promotions.length} learned keyword(s):`, promotions.map((p) => `${p.keyword}→${p.category}`).join(", "));
+    log.info(`promoted ${promotions.length} learned keyword(s):`, promotions.map((p) => `${p.keyword}→${p.category}`).join(", "));
+  } else {
+    log.info("daily keyword learning: no new keywords qualified for promotion today");
+  }
+}
+
+async function runCrawlJob(supabase) {
+  try {
+    await runWebCrawl(supabase);
+  } catch (e) {
+    log.warn("web crawl job failed:", e.message);
+  }
+}
+
+async function runGeneticJob(supabase) {
+  try {
+    const { updatedWeights } = await runGeneticOptimization(supabase, weightsCache);
+    weightsCache = updatedWeights;
+  } catch (e) {
+    log.warn("genetic optimization job failed:", e.message);
   }
 }
 
 export async function startPrayerEngineScheduler(supabase) {
   await loadLearnedKeywordsFromDb(supabase);
+  await loadDiscoveredVersesFromDb(supabase);
   await refreshWeightsCache(supabase);
 
   // Hourly: keep the in-memory weights cache in sync with Supabase (in case
   // of multiple server instances writing feedback).
   cron.schedule("0 * * * *", () => {
-    refreshWeightsCache(supabase).catch((e) => console.warn("prayer-engine hourly refresh failed:", e.message));
+    refreshWeightsCache(supabase).catch((e) => log.warn("hourly refresh failed:", e.message));
   });
+
+  // Daily at 02:00 server time: web crawl for newly discovered scripture.
+  cron.schedule("0 2 * * *", () => runCrawlJob(supabase));
 
   // Daily at 03:00 server time: the keyword-learning pass.
   cron.schedule("0 3 * * *", () => {
-    runDailyKeywordLearning(supabase).catch((e) => console.warn("prayer-engine daily learning failed:", e.message));
+    runDailyKeywordLearning(supabase).catch((e) => log.warn("daily learning failed:", e.message));
   });
 
-  console.log("prayer-engine: scheduler started (hourly weight sync, daily keyword learning)");
+  // Daily at 04:00 server time: genetic-algorithm weight optimization,
+  // after the day's crawl + keyword learning have already run.
+  cron.schedule("0 4 * * *", () => runGeneticJob(supabase));
+
+  log.info("scheduler started — hourly weight sync, daily web crawl (02:00), keyword learning (03:00), genetic optimization (04:00)");
+
+  // Run the full pipeline once shortly after boot too, so activity is
+  // visible in the logs immediately after a deploy rather than only once a
+  // day — genuinely useful for a fresh Railway deploy, and harmless to run
+  // an extra time since every step is idempotent (upserts).
+  setTimeout(() => {
+    log.info("running startup pipeline pass (crawl → keyword learning → genetic optimization)");
+    runCrawlJob(supabase)
+      .then(() => runDailyKeywordLearning(supabase).catch((e) => log.warn("startup keyword learning failed:", e.message)))
+      .then(() => runGeneticJob(supabase))
+      .catch((e) => log.warn("startup pipeline failed:", e.message));
+  }, 15000);
 }

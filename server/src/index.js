@@ -10,6 +10,9 @@ import multer from "multer";
 import { toFile } from "openai/uploads";
 import { generatePrayerPoints, generateDevotional } from "./lib/prayerEngine.js";
 import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/scheduler.js";
+import { logger } from "./lib/logger.js";
+
+const log = logger("api");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bibleDir = path.join(__dirname, "data", "bible");
@@ -34,6 +37,22 @@ for (const key of requiredEnv) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ──────────────────────────────────────────────
+// Request logging — every API call, printed to stdout so it shows up in
+// `railway logs` (Railway has no separate logging API; it just captures
+// whatever the process writes to stdout/stderr). Logs method, path, status,
+// duration, and the authenticated user id when available.
+// ──────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    const who = req.user?.id ? ` user=${req.user.id}` : "";
+    log.info(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)${who}`);
+  });
+  next();
+});
 
 // Lazy-initialize OpenAI so a missing key doesn't crash startup
 let _openai = null;
@@ -543,12 +562,14 @@ app.use((err, _req, res, _next) => {
 // ──────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`The Living Olive API listening on port ${PORT}`);
+  log.info(`The Living Olive API listening on port ${PORT}`);
 });
 
 // Starts the rule-based prayer engine's self-learning cron jobs inside this
 // same process — see lib/scheduler.js. Runs regardless of OpenAI key
-// presence since it needs none.
+// presence since it needs none. All of its activity (web crawl runs,
+// genetic-algorithm generations, keyword learning) logs to stdout the same
+// way, so it's visible in `railway logs` right alongside API traffic.
 startPrayerEngineScheduler(supabaseAdmin).catch((e) =>
-  console.warn("prayer-engine scheduler failed to start:", e.message)
+  log.warn("prayer-engine scheduler failed to start:", e.message)
 );

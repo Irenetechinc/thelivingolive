@@ -134,9 +134,45 @@ create table if not exists public.learned_keywords (
   primary key (category, keyword)
 );
 
+-- Scripture references the web crawler (lib/webCrawler.js) has discovered
+-- from public Bible-topic reference pages, validated against local
+-- scripture data before being added here. Verse TEXT is never stored — only
+-- the reference/pointer; the prayer engine always re-derives the actual
+-- text from server/src/data/bible/ at generation time.
+create table if not exists public.discovered_verses (
+  ref text not null,
+  category text not null,
+  book_id int not null,
+  chapter int not null,
+  verse_start int not null,
+  verse_end int,
+  keywords text[] not null default '{}',
+  source_url text,
+  discovered_at timestamptz not null default now(),
+  primary key (ref, category)
+);
+
+-- Audit trail of each genetic-algorithm optimization run
+-- (lib/geneticAlgorithm.js) — one row per category per run, so the
+-- evolutionary process is queryable, not just visible in logs.
+create table if not exists public.ga_generations (
+  id uuid primary key default gen_random_uuid(),
+  category text not null,
+  generations int not null,
+  population_size int not null,
+  best_fitness numeric not null,
+  avg_fitness numeric not null,
+  feedback_rows_used int not null default 0,
+  best_weights jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+create index if not exists ga_generations_category_idx on public.ga_generations(category, created_at desc);
+
 alter table public.verse_category_weights enable row level security;
 alter table public.generation_feedback enable row level security;
 alter table public.learned_keywords enable row level security;
+alter table public.discovered_verses enable row level security;
+alter table public.ga_generations enable row level security;
 
 -- These are shared/aggregate tables (no per-row user ownership), so allow
 -- any authenticated user to read them and only the service role (server) to
@@ -146,6 +182,10 @@ drop policy if exists "authenticated_read" on public.verse_category_weights;
 create policy "authenticated_read" on public.verse_category_weights for select using (auth.role() = 'authenticated');
 drop policy if exists "authenticated_read" on public.learned_keywords;
 create policy "authenticated_read" on public.learned_keywords for select using (auth.role() = 'authenticated');
+drop policy if exists "authenticated_read" on public.discovered_verses;
+create policy "authenticated_read" on public.discovered_verses for select using (auth.role() = 'authenticated');
+drop policy if exists "authenticated_read" on public.ga_generations;
+create policy "authenticated_read" on public.ga_generations for select using (auth.role() = 'authenticated');
 drop policy if exists "owner_insert" on public.generation_feedback;
 create policy "owner_insert" on public.generation_feedback for insert with check (auth.uid() = user_id);
 drop policy if exists "owner_read" on public.generation_feedback;
