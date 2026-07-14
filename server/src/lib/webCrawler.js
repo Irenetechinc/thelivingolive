@@ -1,30 +1,36 @@
-// ─── Web crawler: real-world scripture discovery ───────────────────────────
-// Fetches real pages from a public, permissively-licensed Bible reference
-// site (openbible.info — verse/topic data is CC-BY licensed) to discover
-// which scripture references the wider web associates with each prayer
-// category, beyond the hand-curated VERSE_BANK. This is a genuine network
-// crawl, not a simulation: real HTTP GET requests, real HTML parsed for
-// verse citations.
+// ─── Web crawler: real-world scripture discovery + verse teaching context ─────
+// Two crawl passes in one run:
+//
+//   Pass 1 — Prayer category discovery (openbible.info topic pages):
+//     Fetches public CC-BY-licensed Bible reference pages to discover which
+//     scripture references the broader web associates with each prayer
+//     category. Only the *reference* is stored; scripture text always comes
+//     from our local KJV data, so a bad scrape can never corrupt what the
+//     Bible says — only which reference gets suggested.
+//
+//   Pass 2 — Verse teaching context (openbible.info verse/commentary pages):
+//     For each reference discovered, fetches its verse detail page to
+//     extract short human-written teaching snippets (community commentary,
+//     usage notes). These are stored as free-text snippets and fed into the
+//     algorithmic verse-explanation engine (verseExplainEngine.js) to
+//     enrich explanations with real-world theological commentary patterns
+//     without storing or reproducing scripture text separately.
 //
 // Safety/legal notes:
-//  - We NEVER store or serve scraped verse *text*. Only the reference
-//    (book/chapter/verse) is kept; the actual scripture text is always
-//    re-derived from this project's own local public-domain KJV data
-//    (server/src/data/bible/), so a bad scrape can corrupt at most "which
-//    reference gets suggested", never "what the Bible says".
-//  - Requests are rate-limited (one at a time, with a pause between) and
-//    carry an identifying User-Agent, and every fetch has a timeout + is
-//    wrapped so a network failure just logs a warning — the curated bank
-//    keeps working with zero crawler dependency.
-//  - Discovered references are only accepted if they parse into a real
-//    book/chapter/verse that exists in our local Bible data — an
-//    unparseable or out-of-range citation is discarded, not guessed at.
+//  - openbible.info verse data is CC-BY licensed; community notes are used
+//    only as short quoted snippets with attribution to the source URL.
+//  - Requests are rate-limited, carry an identifying User-Agent, have
+//    timeouts, and are wrapped so any failure is logged as a warning — the
+//    curated bank keeps working with zero crawler dependency.
+//  - Every page fetch, ref accepted/rejected, and snippet stored is logged
+//    so all crawler activity is visible in `railway logs`.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { logger } from "./logger.js";
 import { addDiscoveredVerse } from "../data/prayerVerses.js";
+import { addTeachingContext } from "./verseExplainEngine.js";
 
 const log = logger("crawler");
 
@@ -100,17 +106,70 @@ function extractReferences(html) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── Pass 2: verse teaching context ──────────────────────────────────────────
+// Fetches the openbible.info page for a specific verse reference and
+// extracts community-written teaching notes. These short snippets are stored
+// as teaching context and used by verseExplainEngine.js to produce richer,
+// more contextually varied explanations without using LLMs.
+async function fetchVerseTeachingPage(ref) {
+  // openbible.info uses URL format /topics/<Book+Chapter+Verse>
+  // e.g. "John 3:16" → /topics/john_3_16
+  const slug = ref.toLowerCase().replace(/\s+/g, "_").replace(/:/g, "_").replace(/-/g, "_");
+  const url = `https://www.openbible.info/topics/${slug}`;
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(10000),
+    headers: { "User-Agent": USER_AGENT },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return { html: await res.text(), url };
+}
+
+// Extract short human-written notes/snippets from the page HTML.
+// These appear inside <p class="comment"> or plain paragraphs in the
+// community-note section. We cap at 400 chars per snippet to avoid
+// storing large blocks of text.
+function extractTeachingSnippets(html) {
+  const snippets = [];
+
+  // Try <p class="comment"> blocks first
+  const commentMatches = html.matchAll(/<p[^>]*class="[^"]*comment[^"]*"[^>]*>(.*?)<\/p>/gs);
+  for (const m of commentMatches) {
+    const text = m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (text.length > 40 && text.length < 800) snippets.push(text.slice(0, 400));
+    if (snippets.length >= 5) break;
+  }
+
+  // Fall back to any <p> that looks like a teaching sentence (heuristic)
+  if (snippets.length < 2) {
+    const pMatches = html.matchAll(/<p[^>]*>(.*?)<\/p>/gs);
+    for (const m of pMatches) {
+      const text = m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (
+        text.length > 60 &&
+        text.length < 600 &&
+        /[Gg]od|[Ll]ord|[Cc]hrist|[Jj]esus|[Pp]rayer|[Ff]aith|[Ss]cripture|[Vv]erse|[Bb]ible/.test(text)
+      ) {
+        snippets.push(text.slice(0, 400));
+        if (snippets.length >= 4) break;
+      }
+    }
+  }
+
+  return [...new Set(snippets)];
+}
+
 // Crawls every configured topic page once, validates every citation found
 // against real local scripture data, and registers newly-discovered verses
 // (in-memory immediately, persisted to Supabase for durability across
-// restarts). Logs every page fetched and every verse accepted/rejected
-// count so the run is fully visible in `railway logs`.
+// restarts). Also runs a second pass to fetch teaching context for each
+// accepted verse. All activity is logged for visibility in `railway logs`.
 export async function runWebCrawl(supabase) {
-  log.info("crawl started");
+  log.info("crawl started — pass 1: category discovery, pass 2: verse teaching context");
   let pagesFetched = 0;
   let refsFound = 0;
   let refsAccepted = 0;
   const toPersist = [];
+  const acceptedRefs = []; // for pass 2
 
   for (const [category, slugs] of Object.entries(CRAWL_TARGETS)) {
     for (const slug of slugs) {
@@ -119,7 +178,7 @@ export async function runWebCrawl(supabase) {
         pagesFetched += 1;
         const refs = extractReferences(html);
         refsFound += refs.length;
-        log.info(`fetched openbible.info/topics/${slug} (${category}) — ${refs.length} citation(s) found`);
+        log.info(`[pass-1] fetched openbible.info/topics/${slug} (${category}) — ${refs.length} citation(s) found`);
 
         for (const raw of refs) {
           const parsed = parseAndValidateRef(raw);
@@ -134,6 +193,7 @@ export async function runWebCrawl(supabase) {
           const added = addDiscoveredVerse(entry);
           if (added) {
             refsAccepted += 1;
+            acceptedRefs.push(parsed.ref);
             toPersist.push({
               ref: parsed.ref,
               category,
@@ -147,9 +207,9 @@ export async function runWebCrawl(supabase) {
           }
         }
       } catch (err) {
-        log.warn(`fetch failed for topics/${slug} (${category}): ${err.message} — skipping, engine keeps working from curated bank`);
+        log.warn(`[pass-1] fetch failed for topics/${slug} (${category}): ${err.message} — skipping`);
       }
-      await sleep(600); // be a polite, rate-limited crawler
+      await sleep(600);
     }
   }
 
@@ -158,8 +218,68 @@ export async function runWebCrawl(supabase) {
     if (error) log.warn("failed to persist discovered verses to Supabase:", error.message);
   }
 
+  log.info(`[pass-1] complete — pages fetched: ${pagesFetched}, citations found: ${refsFound}, new verses accepted: ${refsAccepted}`);
+
+  // ── Pass 2: teaching context for accepted verses ─────────────────────────
+  // Sample up to 20 refs per crawl run to stay polite and within Railway
+  // process time; the rest get covered on subsequent daily crawls.
+  const refsForPass2 = [...new Set(acceptedRefs)].slice(0, 20);
+  log.info(`[pass-2] fetching verse teaching context for ${refsForPass2.length} verse(s)`);
+
+  let snippetsTotal = 0;
+  const teachingRows = [];
+
+  for (const ref of refsForPass2) {
+    try {
+      const { html, url } = await fetchVerseTeachingPage(ref);
+      const snippets = extractTeachingSnippets(html);
+      if (snippets.length) {
+        addTeachingContext(ref, snippets);
+        snippetsTotal += snippets.length;
+        teachingRows.push({ verse_ref: ref, snippets, source_url: url, scraped_at: new Date().toISOString() });
+        log.info(`[pass-2] ${ref} — ${snippets.length} teaching snippet(s) stored`);
+      } else {
+        log.info(`[pass-2] ${ref} — no teaching snippets found on page`);
+      }
+    } catch (err) {
+      log.warn(`[pass-2] teaching fetch failed for ${ref}: ${err.message} — skipping`);
+    }
+    await sleep(700);
+  }
+
+  if (teachingRows.length && supabase) {
+    const { error } = await supabase
+      .from("verse_teaching_context")
+      .upsert(teachingRows, { onConflict: "verse_ref" });
+    if (error) log.warn("failed to persist teaching context to Supabase:", error.message);
+    else log.info(`[pass-2] persisted teaching context for ${teachingRows.length} verse(s) to Supabase`);
+  }
+
   log.info(
-    `crawl finished — pages fetched: ${pagesFetched}, citations found: ${refsFound}, new verses accepted: ${refsAccepted}`
+    `crawl finished — pass-1: ${pagesFetched} pages, ${refsAccepted} new verse(s) | pass-2: ${snippetsTotal} teaching snippet(s) across ${refsForPass2.length} verse(s)`
   );
-  return { pagesFetched, refsFound, refsAccepted };
+  return { pagesFetched, refsFound, refsAccepted, teachingSnippets: snippetsTotal };
+}
+
+// ── Standalone: fetch teaching context for a specific verse on-demand ────────
+// Called when the explanation engine encounters a verse with no cached
+// teaching context. Runs in the background (non-blocking) so the explanation
+// request doesn't hang.
+export async function fetchTeachingContextForVerse(ref, supabase) {
+  try {
+    log.info(`[on-demand] fetching teaching context for ${ref}`);
+    const { html, url } = await fetchVerseTeachingPage(ref);
+    const snippets = extractTeachingSnippets(html);
+    if (!snippets.length) return;
+    addTeachingContext(ref, snippets);
+    log.info(`[on-demand] ${ref} — ${snippets.length} teaching snippet(s) stored`);
+    if (supabase) {
+      await supabase.from("verse_teaching_context").upsert(
+        { verse_ref: ref, snippets, source_url: url, scraped_at: new Date().toISOString() },
+        { onConflict: "verse_ref" }
+      );
+    }
+  } catch (err) {
+    log.warn(`[on-demand] teaching fetch failed for ${ref}: ${err.message}`);
+  }
 }

@@ -29,6 +29,7 @@ import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses } f
 import { runWebCrawl } from "./webCrawler.js";
 import { runGeneticOptimization } from "./geneticAlgorithm.js";
 import { logger } from "./logger.js";
+import { loadExplanationLearning, loadTeachingContextFromDb } from "./verseExplainEngine.js";
 
 const log = logger("scheduler");
 
@@ -189,10 +190,33 @@ async function runGeneticJob(supabase) {
   }
 }
 
+async function loadTeachingContextFromSupabase(supabase) {
+  const { data, error } = await supabase.from("verse_teaching_context").select("verse_ref, snippets");
+  if (error) {
+    log.warn("failed to load verse teaching context:", error.message);
+    return;
+  }
+  loadTeachingContextFromDb(data ?? []);
+}
+
+async function loadExplanationLearningFromDb(supabase) {
+  const { data, error } = await supabase
+    .from("verse_explanations")
+    .select("verse_ref, total_rating, call_count");
+  if (error) {
+    log.warn("failed to load explanation learning data:", error.message);
+    return;
+  }
+  loadExplanationLearning(data ?? []);
+  log.info(`loaded explanation learning data for ${data?.length ?? 0} verse(s)`);
+}
+
 export async function startPrayerEngineScheduler(supabase) {
   await loadLearnedKeywordsFromDb(supabase);
   await loadDiscoveredVersesFromDb(supabase);
   await refreshWeightsCache(supabase);
+  await loadTeachingContextFromSupabase(supabase);
+  await loadExplanationLearningFromDb(supabase);
 
   // Hourly: keep the in-memory weights cache in sync with Supabase (in case
   // of multiple server instances writing feedback).

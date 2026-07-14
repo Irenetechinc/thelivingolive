@@ -105,15 +105,24 @@ credential; email access is the actual identity check).
 ## Running in development
 
 Two workflows start automatically:
-- **Backend API** — Express on port 5000
+- **Backend API** — Express on port 5000 (Node.js 22 required — already configured)
 - **Mobile (Expo)** — Metro + ngrok tunnel (scan QR with Expo Go on your phone)
 
-**Setup status (verified 2026-07-14):** all four required secrets (`SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`) are configured in this workspace. `server/` and `mobile/`
-dependencies are installed. Verified both workflows come up cleanly:
-- Backend API logs `The Living Olive API listening on port 5000` and `GET /health` returns `{"ok":true,"service":"the-living-olive-api"}`.
-- Mobile (Expo) reports `Tunnel ready` and prints the `exp://` QR code for scanning with Expo Go.
-Optional secrets `CRON_SECRET` and `EXPO_ACCESS_TOKEN` are not yet set — add them when wiring the scheduled-notify cron job or Expo push service access.
+**Node.js version:** The project requires Node.js 22+ (for native WebSocket, used by Supabase). The Replit module is set to `nodejs-22`.
+
+**Required secrets (set in Replit Secrets):**
+- `SUPABASE_URL` — Supabase project URL
+- `SUPABASE_ANON_KEY` — Mobile app auth
+- `SUPABASE_SERVICE_ROLE_KEY` — Server admin access
+- `OPENAI_API_KEY` — **Optional** — only needed for sermon transcription; all other features work without it
+
+**Setup steps after a fresh import:**
+1. Set the four secrets above in Replit Secrets
+2. Run `cd server && npm install` (dependencies are tracked in `server/package.json`)
+3. Run `cd mobile && npm install`
+4. Both workflows start automatically
+
+**Verified (2026-07-14):** Backend API starts cleanly on Node.js 22 with or without secrets (features degrade gracefully with warnings in logs). `GET /health` returns `{"ok":true,"service":"the-living-olive-api"}`.
 
 The Expo workflow exports `EXPO_PUBLIC_API_URL=https://livingolive.adroomai.com` — the real production backend — so the dev tunnel behaves exactly like an installed build. `mobile/src/lib/api.ts` also falls back to that same URL if the env var is ever unset, so there is no path in the app that can end up pointing at a Replit URL. Only override `EXPO_PUBLIC_API_URL` in the workflow command if you need to test against the backend running live in this workspace instead.
 

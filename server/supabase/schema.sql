@@ -115,7 +115,7 @@ create table if not exists public.verse_category_weights (
 create table if not exists public.generation_feedback (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete set null,
-  entry_type text not null check (entry_type in ('prayer','devotion')),
+  entry_type text not null check (entry_type in ('prayer','devotion','explanation')),
   category text not null,
   verse_ref text,
   rating int not null check (rating between 1 and 5),
@@ -152,6 +152,32 @@ create table if not exists public.discovered_verses (
   primary key (ref, category)
 );
 
+-- Cached algorithmic verse explanations (verseExplainEngine.js).
+-- One row per verse reference; regenerated after 48 h to benefit from
+-- newly learned teaching context and dictionary data.
+create table if not exists public.verse_explanations (
+  verse_ref text primary key,
+  explanation text not null,
+  supporting_scriptures jsonb not null default '[]',
+  total_rating numeric not null default 0,
+  call_count int not null default 0,
+  generated_at timestamptz not null default now()
+);
+
+-- Verse teaching context scraped by webCrawler.js (pass 2).
+-- Snippets are short community-written teaching notes harvested from
+-- openbible.info verse pages; fed into the explanation engine for richer,
+-- varied explanations.
+create table if not exists public.verse_teaching_context (
+  verse_ref text primary key,
+  snippets jsonb not null default '[]',
+  source_url text,
+  scraped_at timestamptz not null default now()
+);
+
+-- No RPC needed for rating increments — the server uses the service-role
+-- key (which bypasses RLS) and updates verse_explanations directly.
+
 -- Audit trail of each genetic-algorithm optimization run
 -- (lib/geneticAlgorithm.js) — one row per category per run, so the
 -- evolutionary process is queryable, not just visible in logs.
@@ -173,6 +199,8 @@ alter table public.generation_feedback enable row level security;
 alter table public.learned_keywords enable row level security;
 alter table public.discovered_verses enable row level security;
 alter table public.ga_generations enable row level security;
+alter table public.verse_explanations enable row level security;
+alter table public.verse_teaching_context enable row level security;
 
 -- These are shared/aggregate tables (no per-row user ownership), so allow
 -- any authenticated user to read them and only the service role (server) to
@@ -186,6 +214,10 @@ drop policy if exists "authenticated_read" on public.discovered_verses;
 create policy "authenticated_read" on public.discovered_verses for select using (auth.role() = 'authenticated');
 drop policy if exists "authenticated_read" on public.ga_generations;
 create policy "authenticated_read" on public.ga_generations for select using (auth.role() = 'authenticated');
+drop policy if exists "authenticated_read" on public.verse_explanations;
+create policy "authenticated_read" on public.verse_explanations for select using (auth.role() = 'authenticated');
+drop policy if exists "authenticated_read" on public.verse_teaching_context;
+create policy "authenticated_read" on public.verse_teaching_context for select using (auth.role() = 'authenticated');
 drop policy if exists "owner_insert" on public.generation_feedback;
 create policy "owner_insert" on public.generation_feedback for insert with check (auth.uid() = user_id);
 drop policy if exists "owner_read" on public.generation_feedback;

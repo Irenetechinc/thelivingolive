@@ -11,6 +11,8 @@ import { toFile } from "openai/uploads";
 import { generatePrayerPoints, generateDevotional } from "./lib/prayerEngine.js";
 import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/scheduler.js";
 import { logger } from "./lib/logger.js";
+import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
+import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
 
 const log = logger("api");
 
@@ -27,11 +29,17 @@ function loadBibleBook(bookId) {
   return bibleBookCache.get(bookId);
 }
 
-const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
+// Only Supabase keys are strictly required; OPENAI_API_KEY is optional and
+// only used for the sermon transcription feature — all other features
+// (Bible reading, verse explanation, prayer, devotion) run without it.
+const requiredEnv = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
 for (const key of requiredEnv) {
   if (!process.env[key]) {
-    console.warn(`Missing environment variable: ${key} — some features will be unavailable`);
+    console.warn(`[WARN] Missing environment variable: ${key} — some features will be unavailable`);
   }
+}
+if (!process.env.OPENAI_API_KEY) {
+  console.warn("[WARN] OPENAI_API_KEY not set — sermon transcription feature will be unavailable. All other features run without it.");
 }
 
 const app = express();
@@ -195,33 +203,77 @@ app.get("/api/bible/:bookId/:chapter", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// AI verse explanation
+// Algorithmic verse explanation — no LLM, no GPU
+// Uses the verseExplainEngine (Free Dictionary API + Markov chains +
+// scraped teaching context + cross-references). Same response shape as
+// before so the mobile app needs no changes.
 // ──────────────────────────────────────────────
 app.post("/api/ai/explain-verse", requireUser, async (req, res) => {
   try {
     const { reference, text, version } = req.body;
     if (!reference || !text) return res.status(400).json({ error: "reference and text are required" });
 
-    const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a thoughtful, doctrinally careful Bible study assistant. Explain verses clearly, in plain language, and always ground your explanation in supporting scripture references. Avoid denominational bias where possible. Keep responses focused and well-organized.",
-        },
-        {
-          role: "user",
-          content: `Explain ${reference} (${version || "KJV"}): "${text}"\n\nProvide:\n1. A clear explanation of the meaning and context.\n2. 2-4 supporting scripture references (with brief context) that illuminate this verse.\n\nRespond in JSON with keys "explanation" (string) and "supportingScriptures" (array of {reference, note}).`,
-        },
-      ],
-      response_format: { type: "json_object" },
-    });
+    const result = await explainVerse({ reference, text, version }, supabaseAdmin);
 
-    res.json(JSON.parse(completion.choices[0].message.content));
+    // Kick off a background teaching-context fetch for this verse if not
+    // already cached — enriches the next explanation without delaying this one
+    fetchTeachingContextForVerse(reference, supabaseAdmin).catch(() => {});
+
+    res.json(result);
   } catch (err) {
-    console.error("explain-verse error:", err);
+    log.error("explain-verse error:", err.message);
     res.status(500).json({ error: "Failed to generate explanation" });
+  }
+});
+
+// User can rate an explanation (1-5 stars) — drives the explanation engine's
+// self-learning loop via verseExplainEngine.recordExplanationFeedback.
+app.post("/api/ai/explain-verse/feedback", requireUser, async (req, res) => {
+  try {
+    const { verseRef, rating } = req.body;
+    if (!verseRef || !rating) return res.status(400).json({ error: "verseRef and rating are required" });
+    const r = parseInt(rating, 10);
+    if (!Number.isInteger(r) || r < 1 || r > 5) return res.status(400).json({ error: "rating must be 1-5" });
+
+    recordExplanationFeedback(verseRef, r);
+
+    // 1. Persist to generation_feedback for the unified audit trail.
+    const { error: feedbackError } = await supabaseAdmin.from("generation_feedback").insert({
+      user_id: req.user.id,
+      entry_type: "explanation",
+      category: "explanation",
+      verse_ref: verseRef,
+      rating: r,
+      source_text: null,
+    });
+    if (feedbackError) {
+      log.warn(`explain-verse feedback insert failed for ${verseRef}:`, feedbackError.message);
+      return res.status(500).json({ error: "Failed to record feedback" });
+    }
+
+    // 2. Increment learning counters in verse_explanations directly via the
+    // service-role client (bypasses RLS — no RPC or SECURITY DEFINER needed).
+    // Read-then-write: Supabase JS v2 doesn't support column expressions in
+    // .update(), so we read the current values first and compute the new ones.
+    // Only updates existing rows; never inserts a placeholder with empty text.
+    const { data: existing } = await supabaseAdmin
+      .from("verse_explanations")
+      .select("total_rating, call_count")
+      .eq("verse_ref", verseRef)
+      .maybeSingle();
+
+    if (existing) {
+      await supabaseAdmin.from("verse_explanations").update({
+        total_rating: (Number(existing.total_rating) || 0) + r,
+        call_count: (Number(existing.call_count) || 0) + 1,
+      }).eq("verse_ref", verseRef);
+    }
+
+    log.info(`explanation feedback recorded — ref=${verseRef} rating=${r}`);
+    res.json({ ok: true });
+  } catch (err) {
+    log.error("explain-verse/feedback error:", err.message);
+    res.status(500).json({ error: "Failed to record feedback" });
   }
 });
 
