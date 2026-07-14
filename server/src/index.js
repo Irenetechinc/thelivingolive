@@ -6,6 +6,8 @@ import { Expo } from "expo-server-sdk";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import multer from "multer";
+import { toFile } from "openai/uploads";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bibleDir = path.join(__dirname, "data", "bible");
@@ -47,6 +49,11 @@ const supabaseAdmin = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
+
+// In-memory upload handling for sermon audio — files are transcribed and
+// discarded immediately, never written to disk. Cap keeps a single request
+// from exhausting server memory on a long recording.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 // Verify the caller's Supabase access token and attach the user to the request.
 async function requireUser(req, res, next) {
@@ -273,6 +280,45 @@ app.post("/api/ai/prayer", requireUser, async (req, res) => {
   } catch (err) {
     console.error("prayer error:", err);
     res.status(500).json({ error: "Failed to generate prayer" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Sermon recording transcription
+// ──────────────────────────────────────────────
+app.post("/api/ai/transcribe", requireUser, upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "audio file is required" });
+
+    const audioFile = await toFile(req.file.buffer, req.file.originalname || "sermon.m4a");
+    const transcription = await getOpenAI().audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+    });
+
+    const rawText = transcription.text?.trim();
+    if (!rawText) return res.status(422).json({ error: "Couldn't hear any speech in that recording" });
+
+    // Clean up into readable, paragraphed sermon notes rather than a raw
+    // wall of transcript text.
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You format raw sermon transcripts into clean, readable notes: fix obvious transcription errors, break into logical paragraphs, and add a short title. Do not add content that wasn't said. Respond in JSON with keys \"title\" (short, string) and \"formattedText\" (string, paragraphs separated by blank lines).",
+        },
+        { role: "user", content: rawText },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const { title, formattedText } = JSON.parse(completion.choices[0].message.content);
+    res.json({ title: title || "Sermon Recording", formattedText: formattedText || rawText, rawText });
+  } catch (err) {
+    console.error("transcribe error:", err);
+    res.status(500).json({ error: "Failed to transcribe recording" });
   }
 });
 

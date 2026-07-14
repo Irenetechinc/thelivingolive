@@ -114,6 +114,38 @@ export function generatePrayer(input: { desires: string; count: number; type: st
   return authedFetch("/api/ai/prayer", input) as Promise<PrayerResult>;
 }
 
+// ─── Sermon recording transcription ────────────────────────────────────────────
+
+export type TranscribeResult = { title: string; formattedText: string; rawText: string };
+
+// Uploads a locally-recorded sermon clip and gets back cleaned-up, paragraphed
+// notes. Requires connectivity (Whisper runs server-side) — callers are
+// expected to queue this and retry when back online (see sermonRecorder.ts).
+export async function transcribeSermon(fileUri: string, fileName: string): Promise<TranscribeResult> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in to use this feature.");
+
+  const form = new FormData();
+  form.append("audio", {
+    uri: fileUri,
+    name: fileName,
+    type: "audio/m4a",
+  } as any);
+
+  let res: Response;
+  try {
+    res = await fetch(`${requireApiUrl()}/api/ai/transcribe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+  } catch {
+    throw new Error("Couldn't reach the server. Check your internet connection and try again.");
+  }
+  return parseJsonResponse(res);
+}
+
 // ─── Push notifications ────────────────────────────────────────────────────────
 
 export async function registerPushToken(token: string, platform?: string): Promise<void> {

@@ -1,6 +1,8 @@
 {
   "name": "living-olive-server",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -16,6 +18,7 @@
     "cors": "^2.8.5",
     "expo-server-sdk": "^6.1.0",
     "express": "^4.19.2",
+    "multer": "^2.2.0",
     "openai": "^4.60.0"
   }
 }

@@ -175,7 +175,7 @@ export default function DevotionsScreen() {
         locations={[0, 0.35, 0.7, 1]}
         style={styles.header}
       >
-        <Text style={styles.headerEyebrow}>AI-GUIDED</Text>
+        <Text style={styles.headerEyebrow}>SPIRIT-GUIDED</Text>
         <Text style={styles.headerTitle}>Daily Devotions</Text>
         <Text style={styles.headerSub}>Scripture-rooted reflections for your spiritual journey</Text>
       </LinearGradient>

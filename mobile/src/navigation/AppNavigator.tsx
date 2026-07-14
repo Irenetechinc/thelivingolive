@@ -4,6 +4,8 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../context/AuthContext";
 import { colors } from "../theme/theme";
 import type { BibleVersion } from "../screens/bible/BibleHomeScreen";
+import OliveBranch from "../components/OliveBranch";
+import SkeletonHomeLoader from "../components/SkeletonHomeLoader";
 
 import SplashScreen from "../screens/SplashScreen";
 import HomeScreen from "../screens/HomeScreen";
@@ -40,58 +42,63 @@ export default function AppNavigator() {
     return <SplashScreen onFinish={() => setSplashDone(true)} />;
   }
 
-  // Auth still resolving after splash — keep a blank parchment screen
-  if (loading) return null;
+  // Auth still resolving after splash — show a shimmering skeleton instead
+  // of a dead blank screen, so the app always feels alive while loading.
+  if (loading) return <SkeletonHomeLoader />;
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.oliveDark },
-          headerTintColor: colors.parchment,
-          headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-          contentStyle: { backgroundColor: colors.parchment },
-          headerShadowVisible: false,
-        }}
-      >
-        {!session ? (
-          <Stack.Screen
-            name="Home"
-            component={AuthScreen}
-            options={{ headerShown: false }}
-          />
-        ) : (
-          <>
+    <>
+      <NavigationContainer>
+        <Stack.Navigator
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.oliveDark },
+            headerTintColor: colors.parchment,
+            headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+            contentStyle: { backgroundColor: colors.parchment },
+            headerShadowVisible: false,
+          }}
+        >
+          {!session ? (
             <Stack.Screen
               name="Home"
-              component={HomeScreen}
+              component={AuthScreen}
               options={{ headerShown: false }}
             />
-            <Stack.Screen
-              name="BibleHome"
-              component={BibleHomeScreen}
-              options={{ title: "Bible" }}
-            />
-            <Stack.Screen
-              name="BookPicker"
-              component={BookPickerScreen}
-              options={{ title: "Books" }}
-            />
-            <Stack.Screen
-              name="ChapterReader"
-              component={ChapterReaderScreen}
-              options={({ route }) => ({
-                title: `${route.params.bookName} ${route.params.chapter}`,
-              })}
-            />
-            <Stack.Screen name="Notes" component={NotesScreen} options={{ title: "Highlights & Notes" }} />
-            <Stack.Screen name="HymnsList" component={HymnsListScreen} options={{ title: "Hymns" }} />
-            <Stack.Screen name="HymnDetail" component={HymnDetailScreen} options={{ title: "" }} />
-            <Stack.Screen name="Devotions" component={DevotionsScreen} options={{ title: "Devotions" }} />
-            <Stack.Screen name="Prayer" component={PrayerScreen} options={{ title: "Prayer" }} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+          ) : (
+            <>
+              <Stack.Screen
+                name="Home"
+                component={HomeScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="BibleHome"
+                component={BibleHomeScreen}
+                options={{ title: "Bible" }}
+              />
+              <Stack.Screen
+                name="BookPicker"
+                component={BookPickerScreen}
+                options={{ title: "Books" }}
+              />
+              <Stack.Screen
+                name="ChapterReader"
+                component={ChapterReaderScreen}
+                options={({ route }) => ({
+                  title: `${route.params.bookName} ${route.params.chapter}`,
+                })}
+              />
+              <Stack.Screen name="Notes" component={NotesScreen} options={{ title: "Highlights & Notes" }} />
+              <Stack.Screen name="HymnsList" component={HymnsListScreen} options={{ title: "Hymns" }} />
+              <Stack.Screen name="HymnDetail" component={HymnDetailScreen} options={{ title: "" }} />
+              <Stack.Screen name="Devotions" component={DevotionsScreen} options={{ title: "Devotions" }} />
+              <Stack.Screen name="Prayer" component={PrayerScreen} options={{ title: "Prayer" }} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+      {/* Global decorative branch — sits above every screen in the app. */}
+      <OliveBranch />
+    </>
   );
 }

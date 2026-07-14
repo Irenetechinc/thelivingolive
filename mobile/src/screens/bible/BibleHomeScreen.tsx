@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
+import { randomQuote, type Quote } from "../../data/bibleQuotes";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BibleHome">;
 
@@ -38,12 +40,25 @@ const VERSION_PREF_KEY = "bible:preferred_version";
 
 export default function BibleHomeScreen({ navigation }: Props) {
   const [version, setVersion] = useState<BibleVersion>("KJV");
+  const [quotes, setQuotes] = useState<Record<BibleVersion, Quote>>({
+    KJV: randomQuote("KJV"),
+    WEB: randomQuote("WEB"),
+    ASV: randomQuote("ASV"),
+  });
 
   useEffect(() => {
     AsyncStorage.getItem(VERSION_PREF_KEY).then((v) => {
       if (v && VERSIONS.find((x) => x.id === v)) setVersion(v as BibleVersion);
     });
   }, []);
+
+  // A fresh quote from each translation every time this screen is revisited
+  // — makes the version picker feel alive rather than a static settings list.
+  useFocusEffect(
+    React.useCallback(() => {
+      setQuotes({ KJV: randomQuote("KJV"), WEB: randomQuote("WEB"), ASV: randomQuote("ASV") });
+    }, [])
+  );
 
   function selectVersion(v: BibleVersion) {
     setVersion(v);
@@ -103,6 +118,18 @@ export default function BibleHomeScreen({ navigation }: Props) {
                   <Text style={[styles.versionDesc, active && styles.versionDescActive]}>
                     {v.description}
                   </Text>
+                  <View style={styles.quoteRow}>
+                    <View style={[styles.quoteBar, active && styles.quoteBarActive]} />
+                    <Text
+                      style={[styles.quoteText, active && styles.quoteTextActive]}
+                      numberOfLines={3}
+                    >
+                      "{quotes[v.id].text}"{"  "}
+                      <Text style={[styles.quoteRef, active && styles.quoteRefActive]}>
+                        — {quotes[v.id].reference}
+                      </Text>
+                    </Text>
+                  </View>
                 </View>
               </Pressable>
             );
@@ -198,6 +225,24 @@ const styles = StyleSheet.create({
   checkText: { color: colors.white, fontWeight: "700", fontSize: 14 },
   versionDesc: { ...typography.bodySmall, color: colors.inkSoft, lineHeight: 20 },
   versionDescActive: { color: "rgba(255,255,255,0.75)" },
+  quoteRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  quoteBar: { width: 2, borderRadius: 2, backgroundColor: colors.parchmentDark },
+  quoteBarActive: { backgroundColor: "rgba(255,255,255,0.4)" },
+  quoteText: {
+    ...typography.bodySmall,
+    fontSize: 13,
+    fontStyle: "italic",
+    color: colors.inkFaint,
+    flex: 1,
+    lineHeight: 19,
+  },
+  quoteTextActive: { color: "rgba(255,255,255,0.6)" },
+  quoteRef: { fontStyle: "normal", fontWeight: "700", color: colors.inkSoft },
+  quoteRefActive: { color: "rgba(255,255,255,0.85)" },
   primaryBtn: {
     borderRadius: radii.lg,
     overflow: "hidden",

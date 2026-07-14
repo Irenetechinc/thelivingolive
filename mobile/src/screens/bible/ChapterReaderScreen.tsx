@@ -16,6 +16,7 @@ import { loadChapterVerses } from "../../data/bibleLoader";
 import { supabase } from "../../lib/supabase";
 import { explainVerse } from "../../lib/api";
 import { colors, radii, spacing, typography } from "../../theme/theme";
+import FloatingNotesWidget from "../../components/FloatingNotesWidget";
 
 type Props = NativeStackScreenProps<RootStackParamList, "ChapterReader">;
 
@@ -226,7 +227,7 @@ export default function ChapterReaderScreen({ route }: Props) {
                 <Text style={styles.sheetActionText}>Add a note</Text>
               </Pressable>
               <Pressable style={styles.sheetAction} onPress={runExplain}>
-                <Text style={styles.sheetActionText}>Explain this verse (AI) ✨</Text>
+                <Text style={styles.sheetActionText}>Explain this verse ✨</Text>
               </Pressable>
               <Pressable style={styles.sheetAction} onPress={() => setModalMode(null)}>
                 <Text style={[styles.sheetActionText, { color: colors.inkSoft }]}>Cancel</Text>
@@ -262,7 +263,7 @@ export default function ChapterReaderScreen({ route }: Props) {
 
           {modalMode === "explain" && (
             <>
-              <Text style={styles.sheetTitle}>AI Explanation</Text>
+              <Text style={styles.sheetTitle}>Spiritual Insight</Text>
               {loadingExplanation ? (
                 <ActivityIndicator color={colors.olive} style={{ marginVertical: spacing.lg }} />
               ) : explainError ? (
@@ -293,6 +294,13 @@ export default function ChapterReaderScreen({ route }: Props) {
           )}
         </View>
       </Modal>
+
+      <FloatingNotesWidget
+        bookId={bookId}
+        bookName={bookName}
+        chapter={chapter}
+        version={activeVersion}
+      />
     </View>
   );
 }

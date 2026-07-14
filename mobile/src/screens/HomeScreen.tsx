@@ -42,7 +42,7 @@ const cards: {
   {
     key: "Devotions",
     title: "Daily Devotions",
-    description: "AI-guided devotionals rooted in scripture",
+    description: "Spirit-guided devotionals rooted in scripture",
     symbol: "◎",
     gradient: ["#8A6A10", "#C9A227"],
     accent: "#E2C060",

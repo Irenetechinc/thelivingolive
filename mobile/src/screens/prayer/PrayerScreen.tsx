@@ -137,7 +137,7 @@ export default function PrayerScreen() {
         locations={[0, 0.65, 1]}
         style={styles.header}
       >
-        <Text style={styles.headerEyebrow}>AI-GUIDED</Text>
+        <Text style={styles.headerEyebrow}>SPIRIT-GUIDED</Text>
         <Text style={styles.headerTitle}>Prayer Points</Text>
         <Text style={styles.headerSub}>Bible-rooted prayers for the desires of your heart</Text>
 
