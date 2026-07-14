@@ -53,7 +53,7 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
   const [saving, setSaving] = useState(false);
 
   const pos = useRef(
-    new Animated.ValueXY({ x: SCREEN_W - BUBBLE_SIZE - 20, y: SCREEN_H - BUBBLE_SIZE - 160 })
+    new Animated.ValueXY({ x: SCREEN_W - BUBBLE_SIZE - 20, y: SCREEN_H - BUBBLE_SIZE - 140 })
   ).current;
   const size = useRef({ w: DEFAULT_PANEL.width, h: DEFAULT_PANEL.height });
   const [, forceSize] = useState(0);
@@ -260,6 +260,8 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
 const styles = StyleSheet.create({
   wrap: {
     position: "absolute",
+    left: 0,
+    top: 0,
     zIndex: 60,
   },
   bubble: {
