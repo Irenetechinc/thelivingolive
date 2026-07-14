@@ -100,18 +100,39 @@ export type DevotionResult = {
   scriptureText: string;
   body: string;
   closingPrayer: string;
+  detectedCategory?: string;
 };
 
+// Uses the fully autonomous, rule-based engine (no OpenAI/LLM call, runs
+// entirely on curated scripture + keyword matching — see
+// server/src/lib/prayerEngine.js) rather than /api/ai/devotion.
 export function generateDevotion(input: { goal: string; duration: string; dayNumber?: number }) {
-  return authedFetch("/api/ai/devotion", input) as Promise<DevotionResult>;
+  return authedFetch("/api/prayer-engine/devotion", input) as Promise<DevotionResult>;
 }
 
 export type PrayerResult = {
-  prayerPoints: { title: string; prayerText: string; scriptureReference: string }[];
+  prayerPoints: { title: string; prayerText: string; scriptureReference: string; category?: string }[];
+  detectedCategory?: string;
 };
 
+// Uses the fully autonomous, rule-based engine (no OpenAI/LLM call) rather
+// than /api/ai/prayer.
 export function generatePrayer(input: { desires: string; count: number; type: string }) {
-  return authedFetch("/api/ai/prayer", input) as Promise<PrayerResult>;
+  return authedFetch("/api/prayer-engine/prayer", input) as Promise<PrayerResult>;
+}
+
+// Records a 1-5 star rating on a generated prayer point or devotional. This
+// is what feeds the engine's self-learning loop (see server/src/lib/scheduler.js):
+// ratings nudge that scripture's weight for future selection, and highly
+// rated free-text requests feed the daily keyword-learning pass.
+export function submitGenerationFeedback(input: {
+  entryType: "prayer" | "devotion";
+  category: string;
+  verseRef?: string;
+  rating: number;
+  sourceText?: string;
+}) {
+  return authedFetch("/api/prayer-engine/feedback", input) as Promise<{ ok: boolean }>;
 }
 
 // ─── Sermon recording transcription ────────────────────────────────────────────

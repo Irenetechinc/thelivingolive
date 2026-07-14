@@ -6,6 +6,8 @@ import { colors } from "../theme/theme";
 import type { BibleVersion } from "../screens/bible/BibleHomeScreen";
 import OliveBranch from "../components/OliveBranch";
 import SkeletonHomeLoader from "../components/SkeletonHomeLoader";
+import FloatingRecordingWidget from "../components/FloatingRecordingWidget";
+import { navigationRef } from "./navigationRef";
 
 import SplashScreen from "../screens/SplashScreen";
 import HomeScreen from "../screens/HomeScreen";
@@ -48,7 +50,7 @@ export default function AppNavigator() {
 
   return (
     <>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Stack.Navigator
           screenOptions={{
             headerStyle: { backgroundColor: colors.oliveDark },
@@ -99,6 +101,10 @@ export default function AppNavigator() {
       </NavigationContainer>
       {/* Global decorative branch — sits above every screen in the app. */}
       <OliveBranch />
+      {/* Floating control for an in-progress recording/transcription — visible
+          no matter which screen the user navigates to, tapping it jumps back
+          to Highlights & Notes. */}
+      {session ? <FloatingRecordingWidget /> : null}
     </>
   );
 }

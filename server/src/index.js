@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import multer from "multer";
 import { toFile } from "openai/uploads";
+import { generatePrayerPoints, generateDevotional } from "./lib/prayerEngine.js";
+import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/scheduler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bibleDir = path.join(__dirname, "data", "bible");
@@ -284,6 +286,89 @@ app.post("/api/ai/prayer", requireUser, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// Rule-based prayer/devotion engine — fully autonomous, no LLM/GPU.
+// Runs entirely on curated scripture + keyword matching (see lib/prayerEngine.js);
+// self-improves from feedback via lib/scheduler.js. Separate from the
+// OpenAI-based /api/ai/prayer and /api/ai/devotion routes above, which stay
+// as-is since they're already used elsewhere in the app.
+// ──────────────────────────────────────────────
+app.post("/api/prayer-engine/prayer", requireUser, async (req, res) => {
+  try {
+    const { desires, count, type } = req.body;
+    if (!desires) return res.status(400).json({ error: "desires is required" });
+
+    const { prayerPoints, detectedCategory } = generatePrayerPoints({
+      desires,
+      type,
+      count,
+      weights: getWeights(),
+    });
+
+    sendPushToUser(req.user.id, {
+      title: "Prayer Points Ready 🙏",
+      body: `Your ${detectedCategory} prayer points have been generated`,
+    }).catch((e) => console.warn("push send failed:", e.message));
+
+    res.json({ prayerPoints, detectedCategory, engine: "rule-based" });
+  } catch (err) {
+    console.error("prayer-engine/prayer error:", err);
+    res.status(500).json({ error: "Failed to generate prayer" });
+  }
+});
+
+app.post("/api/prayer-engine/devotion", requireUser, async (req, res) => {
+  try {
+    const { goal, dayNumber } = req.body;
+    if (!goal) return res.status(400).json({ error: "goal is required" });
+
+    const content = generateDevotional({ goal, dayNumber, weights: getWeights() });
+
+    sendPushToUser(req.user.id, {
+      title: "New Devotion Ready 🌿",
+      body: content.title,
+    }).catch((e) => console.warn("push send failed:", e.message));
+
+    res.json({ ...content, engine: "rule-based" });
+  } catch (err) {
+    console.error("prayer-engine/devotion error:", err);
+    res.status(500).json({ error: "Failed to generate devotion" });
+  }
+});
+
+// Lets the app collect a 1-5 star rating on a generated prayer point or
+// devotional; this is what actually drives the "self-evolving" behavior —
+// see lib/scheduler.js for how it's applied.
+app.post("/api/prayer-engine/feedback", requireUser, async (req, res) => {
+  try {
+    const { entryType, category, verseRef, rating, sourceText } = req.body;
+    if (!entryType || !category || !rating) {
+      return res.status(400).json({ error: "entryType, category, and rating are required" });
+    }
+    if (!["prayer", "devotion"].includes(entryType)) {
+      return res.status(400).json({ error: "entryType must be 'prayer' or 'devotion'" });
+    }
+    const r = parseInt(rating, 10);
+    if (!Number.isInteger(r) || r < 1 || r > 5) {
+      return res.status(400).json({ error: "rating must be an integer 1-5" });
+    }
+
+    await recordFeedback(supabaseAdmin, {
+      userId: req.user.id,
+      entryType,
+      category,
+      verseRef,
+      rating: r,
+      sourceText,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("prayer-engine/feedback error:", err);
+    res.status(500).json({ error: "Failed to record feedback" });
+  }
+});
+
+// ──────────────────────────────────────────────
 // Sermon recording transcription
 // ──────────────────────────────────────────────
 app.post("/api/ai/transcribe", requireUser, upload.single("audio"), async (req, res) => {
@@ -460,3 +545,10 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`The Living Olive API listening on port ${PORT}`);
 });
+
+// Starts the rule-based prayer engine's self-learning cron jobs inside this
+// same process — see lib/scheduler.js. Runs regardless of OpenAI key
+// presence since it needs none.
+startPrayerEngineScheduler(supabaseAdmin).catch((e) =>
+  console.warn("prayer-engine scheduler failed to start:", e.message)
+);

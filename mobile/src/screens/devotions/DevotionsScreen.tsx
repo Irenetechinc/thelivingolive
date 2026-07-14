@@ -12,7 +12,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
-import { generateDevotion } from "../../lib/api";
+import { generateDevotion, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 
@@ -32,7 +32,31 @@ type DevotionEntry = {
   body: string;
   closing_prayer: string | null;
   created_at: string;
+  // Only present for entries generated in this session (see PrayerScreen for
+  // why this isn't a persisted column) — used to send feedback to the
+  // self-learning engine.
+  category?: string;
+  sourceText?: string;
 };
+
+function StarRating({ onRate }: { onRate: (rating: number) => void }) {
+  const [given, setGiven] = useState<number | null>(null);
+  if (given !== null) {
+    return <Text style={styles.feedbackThanks}>Thanks — this helps the devotion engine learn ✦</Text>;
+  }
+  return (
+    <View style={styles.starRow}>
+      <Text style={styles.starPrompt}>Was this helpful?</Text>
+      <View style={{ flexDirection: "row", gap: 2 }}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} onPress={() => { setGiven(n); onRate(n); }} hitSlop={4}>
+            <Text style={styles.star}>★</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
   const anim = useRef(new Animated.Value(0)).current;
@@ -71,6 +95,19 @@ function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
             <Text style={styles.prayerLabel}>CLOSING PRAYER</Text>
             <Text style={styles.prayerText}>{entry.closing_prayer}</Text>
           </View>
+        ) : null}
+        {entry.category ? (
+          <StarRating
+            onRate={(rating) =>
+              submitGenerationFeedback({
+                entryType: "devotion",
+                category: entry.category!,
+                verseRef: entry.scripture_reference ?? undefined,
+                rating,
+                sourceText: entry.sourceText,
+              }).catch(() => {})
+            }
+          />
         ) : null}
         <Text style={styles.cardDate}>
           {new Date(entry.created_at).toLocaleDateString("en-US", {
@@ -152,7 +189,12 @@ export default function DevotionsScreen() {
         })
         .select().single();
       if (entryError) throw entryError;
-      setEntries((prev) => [entry, ...prev]);
+      const enriched: DevotionEntry = {
+        ...entry,
+        category: result.detectedCategory,
+        sourceText: goal.trim(),
+      };
+      setEntries((prev) => [enriched, ...prev]);
       await scheduleRecurringReminder({
         identifier: `devotion-${plan.id}`,
         title: "Time for your devotion 🌿",
@@ -401,4 +443,16 @@ const styles = StyleSheet.create({
   prayerLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: 4 },
   prayerText: { ...typography.bodySmall, color: colors.inkSoft, fontStyle: "italic", lineHeight: 20 },
   cardDate: { ...typography.micro, color: colors.inkFaint, marginTop: spacing.sm, textAlign: "right" },
+  starRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.parchmentMid,
+  },
+  starPrompt: { ...typography.caption, color: colors.inkFaint },
+  star: { fontSize: 16, color: colors.gold, marginLeft: 2 },
+  feedbackThanks: { ...typography.caption, color: colors.olive, marginTop: spacing.sm, fontStyle: "italic" },
 });

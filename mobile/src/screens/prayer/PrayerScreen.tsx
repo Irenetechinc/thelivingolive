@@ -12,7 +12,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
-import { generatePrayer } from "../../lib/api";
+import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 
@@ -30,7 +30,30 @@ type PrayerEntry = {
   prayer_text: string;
   scripture_reference: string | null;
   created_at: string;
+  // Only present for entries generated in this session — used to send
+  // feedback to the self-learning engine. Not a persisted DB column.
+  category?: string;
+  sourceText?: string;
 };
+
+function StarRating({ onRate }: { onRate: (rating: number) => void }) {
+  const [given, setGiven] = useState<number | null>(null);
+  if (given !== null) {
+    return <Text style={styles.feedbackThanks}>Thanks — this helps the prayer engine learn ✦</Text>;
+  }
+  return (
+    <View style={styles.starRow}>
+      <Text style={styles.starPrompt}>Was this helpful?</Text>
+      <View style={{ flexDirection: "row", gap: 2 }}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} onPress={() => { setGiven(n); onRate(n); }} hitSlop={4}>
+            <Text style={styles.star}>★</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 function PrayerCard({ entry, index }: { entry: PrayerEntry; index: number }) {
   const anim = useRef(new Animated.Value(0)).current;
@@ -53,6 +76,19 @@ function PrayerCard({ entry, index }: { entry: PrayerEntry; index: number }) {
             <Text style={styles.scriptureIcon}>✦</Text>
             <Text style={styles.scriptureRef}>{entry.scripture_reference}</Text>
           </View>
+        ) : null}
+        {entry.category ? (
+          <StarRating
+            onRate={(rating) =>
+              submitGenerationFeedback({
+                entryType: "prayer",
+                category: entry.category!,
+                verseRef: entry.scripture_reference ?? undefined,
+                rating,
+                sourceText: entry.sourceText,
+              }).catch(() => {})
+            }
+          />
         ) : null}
       </View>
     </Animated.View>
@@ -112,7 +148,14 @@ export default function PrayerScreen() {
       }));
       const { data: inserted, error: insertError } = await supabase.from("prayer_entries").insert(rows).select();
       if (insertError) throw insertError;
-      setEntries((prev) => [...(inserted ?? []), ...prev]);
+      const desiresText = desires.trim();
+      const category = result.detectedCategory ?? type;
+      const withCategory: PrayerEntry[] = (inserted ?? []).map((row, i) => ({
+        ...row,
+        category: result.prayerPoints[i]?.category ?? category,
+        sourceText: desiresText,
+      }));
+      setEntries((prev) => [...withCategory, ...prev]);
       await scheduleRecurringReminder({
         identifier: `prayer-${plan.id}`,
         title: "Time to pray 🙏",
@@ -372,4 +415,16 @@ const styles = StyleSheet.create({
   },
   scriptureIcon: { color: colors.gold, fontSize: 10 },
   scriptureRef: { ...typography.caption, color: colors.terracotta, fontStyle: "italic" },
+  starRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.parchmentMid,
+  },
+  starPrompt: { ...typography.caption, color: colors.inkFaint },
+  star: { fontSize: 16, color: colors.gold, marginLeft: 2 },
+  feedbackThanks: { ...typography.caption, color: colors.olive, marginTop: spacing.sm, fontStyle: "italic" },
 });

@@ -92,6 +92,65 @@ create table if not exists public.push_tokens (
 );
 create index if not exists push_tokens_user_idx on public.push_tokens(user_id);
 
+-- ──────────────────────────────────────────────────────────────
+-- Rule-based (non-LLM) prayer/devotion engine — self-learning tables.
+-- No user_id/RLS on these: they hold aggregate, anonymous learning state
+-- shared across all users (which scripture performs well for a category,
+-- which keywords map to which category), not any one person's data.
+-- ──────────────────────────────────────────────────────────────
+
+-- Per-verse weight per category, nudged up/down by user feedback ratings.
+-- Read at generation time so well-received scripture is favored over time.
+create table if not exists public.verse_category_weights (
+  verse_ref text not null,
+  category text not null,
+  weight numeric not null default 1,
+  rating_count int not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (verse_ref, category)
+);
+
+-- Raw feedback events (1 row per rating) — kept so weight updates can be
+-- recomputed/audited later rather than only keeping a running average.
+create table if not exists public.generation_feedback (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
+  entry_type text not null check (entry_type in ('prayer','devotion')),
+  category text not null,
+  verse_ref text,
+  rating int not null check (rating between 1 and 5),
+  source_text text,
+  created_at timestamptz not null default now()
+);
+create index if not exists generation_feedback_created_idx on public.generation_feedback(created_at);
+
+-- Keywords the daily learning pass has promoted from highly-rated requests,
+-- so restarting the server doesn't lose what's been learned so far.
+create table if not exists public.learned_keywords (
+  category text not null,
+  keyword text not null,
+  weight numeric not null default 1,
+  updated_at timestamptz not null default now(),
+  primary key (category, keyword)
+);
+
+alter table public.verse_category_weights enable row level security;
+alter table public.generation_feedback enable row level security;
+alter table public.learned_keywords enable row level security;
+
+-- These are shared/aggregate tables (no per-row user ownership), so allow
+-- any authenticated user to read them and only the service role (server) to
+-- write — the server always uses the service-role key, which bypasses RLS,
+-- so these policies only govern direct client access.
+drop policy if exists "authenticated_read" on public.verse_category_weights;
+create policy "authenticated_read" on public.verse_category_weights for select using (auth.role() = 'authenticated');
+drop policy if exists "authenticated_read" on public.learned_keywords;
+create policy "authenticated_read" on public.learned_keywords for select using (auth.role() = 'authenticated');
+drop policy if exists "owner_insert" on public.generation_feedback;
+create policy "owner_insert" on public.generation_feedback for insert with check (auth.uid() = user_id);
+drop policy if exists "owner_read" on public.generation_feedback;
+create policy "owner_read" on public.generation_feedback for select using (auth.uid() = user_id);
+
 -- Row Level Security: every table is scoped to the owning user
 alter table public.highlights enable row level security;
 alter table public.notes enable row level security;

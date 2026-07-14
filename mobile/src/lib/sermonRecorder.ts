@@ -30,6 +30,9 @@ import { transcribeSermon } from "./api";
 //   recording, the clip is saved locally and queued — it transcribes
 //   itself automatically the moment you're back online, even in the
 //   background.
+// - The recorder itself lives in RecordingContext (app root), NOT in the
+//   Notes screen, specifically so navigating away from Notes/Highlights
+//   never tears down the native recorder and cuts the recording short.
 
 const QUEUE_KEY = "sermonRecorder.queue";
 const recordingsDir = new Directory(Paths.document, "sermon-recordings");
@@ -43,36 +46,58 @@ export type SermonRecording = {
   formattedText?: string;
   rawText?: string;
   error?: string;
+  edited?: boolean;
 };
 
 function ensureDir() {
   if (!recordingsDir.exists) recordingsDir.create({ intermediates: true, idempotent: true });
 }
 
-async function loadQueue(): Promise<SermonRecording[]> {
+export async function loadQueue(): Promise<SermonRecording[]> {
   const raw = await AsyncStorage.getItem(QUEUE_KEY);
   return raw ? JSON.parse(raw) : [];
 }
 
-async function saveQueue(queue: SermonRecording[]) {
+export async function saveQueue(queue: SermonRecording[]) {
   await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+}
+
+// Lets the notes/highlights screen save manual edits to a transcript (add,
+// remove, or rewrite any part of the recognized text) without re-recording.
+export async function updateRecordingText(id: string, formattedText: string) {
+  const queue = await loadQueue();
+  const idx = queue.findIndex((q) => q.id === id);
+  if (idx >= 0) {
+    queue[idx] = { ...queue[idx], formattedText, edited: true };
+    await saveQueue(queue);
+  }
+  return queue;
+}
+
+// A device can report `isConnected: true` while still having no real route
+// to the internet (captive wifi portals, airplane-mode edge cases, etc).
+// `isInternetReachable` is the more accurate signal when available; only
+// fall back to `isConnected` if the platform hasn't determined it yet.
+function hasRealConnection(state: { isConnected: boolean | null; isInternetReachable: boolean | null }) {
+  if (state.isInternetReachable !== null) return !!state.isInternetReachable;
+  return !!state.isConnected;
 }
 
 let processing = false;
 
-async function processQueue(onUpdate: (queue: SermonRecording[]) => void) {
+export async function processQueue(onUpdate: (queue: SermonRecording[]) => void) {
   if (processing) return;
   processing = true;
   try {
     const net = await NetInfo.fetch();
-    if (!net.isConnected) return;
+    if (!hasRealConnection(net)) return;
 
     let queue = await loadQueue();
     let changed = false;
     for (let i = 0; i < queue.length; i++) {
       const rec = queue[i];
       if (rec.status !== "queued") continue;
-      queue[i] = { ...rec, status: "transcribing" };
+      queue[i] = { ...rec, status: "transcribing", error: undefined };
       changed = true;
       await saveQueue(queue);
       onUpdate(queue);
@@ -102,11 +127,16 @@ async function processQueue(onUpdate: (queue: SermonRecording[]) => void) {
   }
 }
 
+// The single audio-recorder + transcription-queue instance for the whole
+// app. This is deliberately called ONCE, from RecordingContext at the app
+// root — not from the Notes screen — so recording keeps going regardless of
+// which screen the user navigates to.
 export function useSermonRecordings() {
   const [recordings, setRecordings] = useState<SermonRecording[]>([]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
   const netUnsub = useRef<(() => void) | undefined>(undefined);
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     setRecordings((await loadQueue()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
@@ -118,9 +148,19 @@ export function useSermonRecordings() {
     // Auto-retry the moment connectivity returns — this is what lets
     // transcription finish even if the user only reconnects much later.
     netUnsub.current = NetInfo.addEventListener((state) => {
-      if (state.isConnected) processQueue(setRecordings);
+      if (hasRealConnection(state)) processQueue(setRecordings);
     });
-    return () => netUnsub.current?.();
+    // Belt-and-suspenders: some devices/emulators don't fire a NetInfo
+    // event reliably when connectivity flips back on, so also poll
+    // periodically — this is what fixes items getting stuck showing
+    // "queued, waiting for connection" even though the device is online.
+    pollRef.current = setInterval(() => {
+      processQueue(setRecordings);
+    }, 15000);
+    return () => {
+      netUnsub.current?.();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [refresh]);
 
   const startRecording = useCallback(async () => {
@@ -188,6 +228,11 @@ export function useSermonRecordings() {
     setRecordings(next);
   }, []);
 
+  const editText = useCallback(async (id: string, text: string) => {
+    const queue = await updateRecordingText(id, text);
+    setRecordings(queue);
+  }, []);
+
   return {
     recordings,
     isRecording: recorderState.isRecording,
@@ -196,5 +241,6 @@ export function useSermonRecordings() {
     stopRecording,
     retry,
     remove,
+    editText,
   };
 }

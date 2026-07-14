@@ -51,6 +51,7 @@ export default function BookPickerScreen({ navigation, route }: Props) {
         </Pressable>
         <Text style={styles.bookTitle}>{activeBook.name}</Text>
         <FlatList
+          key="chapters-grid"
           data={chapters}
           keyExtractor={(c) => String(c)}
           numColumns={5}
@@ -88,6 +89,7 @@ export default function BookPickerScreen({ navigation, route }: Props) {
         onChangeText={setQuery}
       />
       <FlatList
+        key="books-list"
         data={filtered}
         keyExtractor={(b) => String(b.id)}
         renderItem={({ item }) => (
