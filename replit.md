@@ -97,6 +97,13 @@ Two workflows start automatically:
 - **Backend API** — Express on port 5000
 - **Mobile (Expo)** — Metro + ngrok tunnel (scan QR with Expo Go on your phone)
 
+**Setup status (verified 2026-07-14):** all four required secrets (`SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`) are configured in this workspace. `server/` and `mobile/`
+dependencies are installed. Verified both workflows come up cleanly:
+- Backend API logs `The Living Olive API listening on port 5000` and `GET /health` returns `{"ok":true,"service":"the-living-olive-api"}`.
+- Mobile (Expo) reports `Tunnel ready` and prints the `exp://` QR code for scanning with Expo Go.
+Optional secrets `CRON_SECRET` and `EXPO_ACCESS_TOKEN` are not yet set — add them when wiring the scheduled-notify cron job or Expo push service access.
+
 The Expo workflow exports `EXPO_PUBLIC_API_URL=https://livingolive.adroomai.com` — the real production backend — so the dev tunnel behaves exactly like an installed build. `mobile/src/lib/api.ts` also falls back to that same URL if the env var is ever unset, so there is no path in the app that can end up pointing at a Replit URL. Only override `EXPO_PUBLIC_API_URL` in the workflow command if you need to test against the backend running live in this workspace instead.
 
 ## Regenerating the lockfile inside Replit
