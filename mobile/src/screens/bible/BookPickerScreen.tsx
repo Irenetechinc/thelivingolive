@@ -1,22 +1,22 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   Pressable,
-  TextInput,
-  ActivityIndicator,
+  Modal,
   ScrollView,
-  Animated,
-  LayoutAnimation,
-  UIManager,
+  ActivityIndicator,
+  TextInput,
   Platform,
+  UIManager,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { loadBibleBooks, type BibleBookMeta } from "../../data/bibleLoader";
+import { kjvBooks } from "../../data/bible/kjvBooks";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import type { BibleVersion } from "./BibleHomeScreen";
 
@@ -24,68 +24,76 @@ if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
 
-// Standard canon split: 1–39 = Old Testament, 40–66 = New Testament
 const OT_MAX_ID = 39;
 
 type Props = NativeStackScreenProps<RootStackParamList, "BookPicker">;
 
+type PickerModal = "ot" | "nt" | "chapter" | "verse" | null;
+
+function getVerseCount(bookId: number, chapter: number): number {
+  const bookData = kjvBooks[bookId];
+  if (!bookData) return 30;
+  const chapterData = bookData[chapter - 1];
+  return chapterData ? chapterData.length : 30;
+}
+
+function getChapterCount(books: BibleBookMeta[], bookId: number): number {
+  return books.find((b) => b.id === bookId)?.chapterCount ?? 1;
+}
+
 export default function BookPickerScreen({ navigation, route }: Props) {
   const version: BibleVersion = route.params?.version ?? "KJV";
 
-  const [query, setQuery] = useState("");
-  const [selectedBook, setSelectedBook] = useState<BibleBookMeta | null>(null);
   const [bibleBooks, setBibleBooks] = useState<BibleBookMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [otOpen, setOtOpen] = useState(true);
-  const [ntOpen, setNtOpen] = useState(false);
 
-  // Fade-in animation for the chapter grid
-  const chapterFade = useRef(new Animated.Value(0)).current;
+  // Selected state
+  const [selectedBook, setSelectedBook] = useState<BibleBookMeta | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState(1);
+  const [selectedVerse, setSelectedVerse] = useState(1);
+
+  // Which modal is open
+  const [openModal, setOpenModal] = useState<PickerModal>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     loadBibleBooks()
       .then(setBibleBooks)
-      .catch((e) => setError(e.message ?? "Couldn't load the Bible book list."))
+      .catch((e) => setError(e.message ?? "Couldn't load books."))
       .finally(() => setLoading(false));
   }, []);
 
-  const ot = bibleBooks.filter((b) => b.id <= OT_MAX_ID);
-  const nt = bibleBooks.filter((b) => b.id > OT_MAX_ID);
-  const sq = query.toLowerCase();
-  const filteredOt = ot.filter((b) => b.name.toLowerCase().includes(sq));
-  const filteredNt = nt.filter((b) => b.name.toLowerCase().includes(sq));
-  const isSearching = query.length > 0;
+  const otBooks = bibleBooks.filter((b) => b.id <= OT_MAX_ID);
+  const ntBooks = bibleBooks.filter((b) => b.id > OT_MAX_ID);
 
-  function toggleSection(section: "ot" | "nt") {
-    LayoutAnimation.configureNext({
-      duration: 280,
-      create: { type: "easeInEaseOut", property: "opacity" },
-      update: { type: "easeInEaseOut" },
-      delete: { type: "easeInEaseOut", property: "opacity" },
-    });
-    if (section === "ot") setOtOpen((v) => !v);
-    else setNtOpen((v) => !v);
-  }
+  const chapterCount = selectedBook
+    ? getChapterCount(bibleBooks, selectedBook.id)
+    : 1;
+  const verseCount = selectedBook
+    ? getVerseCount(selectedBook.id, selectedChapter)
+    : 1;
 
-  function openBook(book: BibleBookMeta) {
-    chapterFade.setValue(0);
+  function selectBook(book: BibleBookMeta) {
     setSelectedBook(book);
-    Animated.spring(chapterFade, {
-      toValue: 1,
-      useNativeDriver: true,
-      tension: 80,
-      friction: 12,
-    }).start();
+    setSelectedChapter(1);
+    setSelectedVerse(1);
+    setOpenModal(null);
+    setSearchQuery("");
   }
 
-  function goBackToBooks() {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setSelectedBook(null);
+  function locate() {
+    if (!selectedBook) return;
+    navigation.navigate("ChapterReader", {
+      bookId: selectedBook.id,
+      bookName: selectedBook.name,
+      chapter: selectedChapter,
+      version,
+      initialVerse: selectedVerse,
+    });
   }
 
-  // ─── Loading / error states ──────────────────────────────────────────────────
-
+  // ─── Loading / error ─────────────────────────────────────────────────────────
   if (loading) {
     return (
       <View style={[styles.container, styles.centered]}>
@@ -103,157 +111,356 @@ export default function BookPickerScreen({ navigation, route }: Props) {
     );
   }
 
-  // ─── Chapter grid ────────────────────────────────────────────────────────────
-
-  if (selectedBook) {
-    const chapters = Array.from({ length: selectedBook.chapterCount }, (_, i) => i + 1);
-    const isNT = selectedBook.id > OT_MAX_ID;
-    return (
-      <Animated.View style={[styles.container, { opacity: chapterFade }]}>
-        <LinearGradient colors={["#1F2B12", "#2E3A1F", "#3E4A2F"]} style={styles.chapterHeader}>
-          <Pressable onPress={goBackToBooks} style={styles.backBtn} hitSlop={12}>
-            <Text style={styles.backBtnText}>‹ All books</Text>
-          </Pressable>
-          <Text style={styles.chapterBookName}>{selectedBook.name}</Text>
-          <Text style={styles.chapterBookSub}>
-            {isNT ? "New Testament" : "Old Testament"} · {selectedBook.chapterCount} chapters · {version}
-          </Text>
-        </LinearGradient>
-
-        <FlatList
-          key="chapters-grid"
-          data={chapters}
-          keyExtractor={(c) => String(c)}
-          numColumns={4}
-          contentContainerStyle={styles.chapterGrid}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [styles.chapterTile, pressed && styles.chapterTilePressed]}
-              onPress={() =>
-                navigation.navigate("ChapterReader", {
-                  bookId: selectedBook.id,
-                  bookName: selectedBook.name,
-                  chapter: item,
-                  version,
-                })
-              }
-            >
-              <Text style={styles.chapterTileNum}>{item}</Text>
-            </Pressable>
-          )}
-        />
-      </Animated.View>
-    );
-  }
-
-  // ─── Book list with OT/NT accordion ─────────────────────────────────────────
-
-  const renderBook = (book: BibleBookMeta) => (
-    <Pressable
-      key={book.id}
-      style={({ pressed }) => [styles.bookRow, pressed && styles.bookRowPressed]}
-      onPress={() => openBook(book)}
-    >
-      <View style={styles.bookRowLeft}>
-        <Text style={styles.bookId}>{book.id}</Text>
-        <Text style={styles.bookName}>{book.name}</Text>
-      </View>
-      <Text style={styles.bookChCount}>{book.chapterCount} ch ›</Text>
-    </Pressable>
+  const filteredBooks = (openModal === "ot" ? otBooks : ntBooks).filter((b) =>
+    b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const renderSection = (
-    title: string,
-    books: BibleBookMeta[],
-    open: boolean,
-    section: "ot" | "nt"
-  ) => {
-    const fullCount = section === "ot" ? ot.length : nt.length;
-    return (
-      <View style={styles.sectionWrap}>
-        <Pressable
-          style={({ pressed }) => [styles.sectionHeader, pressed && { opacity: 0.85 }]}
-          onPress={() => toggleSection(section)}
-        >
-          <View style={styles.sectionHeaderLeft}>
-            <Text style={styles.sectionArrow}>{open ? "▾" : "▸"}</Text>
-            <View>
-              <Text style={styles.sectionTitle}>{title}</Text>
-              <Text style={styles.sectionMeta}>{fullCount} books</Text>
-            </View>
-          </View>
-          <View style={[styles.testamentTag, section === "nt" && styles.testamentTagNT]}>
-            <Text style={styles.testamentTagText}>{section === "ot" ? "OT" : "NT"}</Text>
-          </View>
-        </Pressable>
+  const isNT = selectedBook ? selectedBook.id > OT_MAX_ID : false;
+  const selectedTestamentLabel = selectedBook
+    ? isNT
+      ? "NT"
+      : "OT"
+    : null;
 
-        {open && (
-          <View style={styles.sectionBooks}>
-            {books.length === 0 && isSearching ? (
-              <Text style={styles.noResults}>No books match "{query}"</Text>
-            ) : (
-              books.map(renderBook)
-            )}
-          </View>
-        )}
-      </View>
-    );
-  };
-
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       {/* Header */}
-      <LinearGradient colors={["#1F2B12", "#2E3A1F", "#4A5A36"]} style={styles.header}>
+      <LinearGradient
+        colors={["#1F2B12", "#2E3A1F", "#4A5A36"]}
+        style={styles.header}
+      >
         <View style={styles.versionPill}>
           <Text style={styles.versionPillText}>{version}</Text>
         </View>
-        <Text style={styles.headerTitle}>Choose a Book</Text>
-        <Text style={styles.headerSub}>66 books · Old &amp; New Testament</Text>
+        <Text style={styles.headerTitle}>Locator</Text>
+        <Text style={styles.headerSub}>
+          Jump to any book · chapter · verse
+        </Text>
       </LinearGradient>
 
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Search */}
-        <View style={styles.searchWrap}>
-          <TextInput
-            style={styles.search}
-            placeholder="Search books…"
-            placeholderTextColor={colors.inkSoft}
-            value={query}
-            onChangeText={setQuery}
-            returnKeyType="search"
-          />
+      <ScrollView
+        contentContainerStyle={styles.body}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Locator Card */}
+        <View style={styles.card}>
+          {/* Row 1: OT | NT */}
+          <View style={styles.testamentRow}>
+            {/* OT Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.testamentBtn,
+                selectedBook && !isNT && styles.testamentBtnActive,
+                pressed && styles.testamentBtnPressed,
+              ]}
+              onPress={() => {
+                setSearchQuery("");
+                setOpenModal("ot");
+              }}
+            >
+              <Text
+                style={[
+                  styles.testamentBtnLabel,
+                  selectedBook && !isNT && styles.testamentBtnLabelActive,
+                ]}
+              >
+                {selectedBook && !isNT ? selectedBook.name : "OT"}
+              </Text>
+              <Text
+                style={[
+                  styles.testamentBtnArrow,
+                  selectedBook && !isNT && styles.testamentBtnArrowActive,
+                ]}
+              >
+                ▾
+              </Text>
+            </Pressable>
+
+            <View style={styles.testamentDivider} />
+
+            {/* NT Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.testamentBtn,
+                selectedBook && isNT && styles.testamentBtnActive,
+                pressed && styles.testamentBtnPressed,
+              ]}
+              onPress={() => {
+                setSearchQuery("");
+                setOpenModal("nt");
+              }}
+            >
+              <Text
+                style={[
+                  styles.testamentBtnLabel,
+                  selectedBook && isNT && styles.testamentBtnLabelActive,
+                ]}
+              >
+                {selectedBook && isNT ? selectedBook.name : "NT"}
+              </Text>
+              <Text
+                style={[
+                  styles.testamentBtnArrow,
+                  selectedBook && isNT && styles.testamentBtnArrowActive,
+                ]}
+              >
+                ▾
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          {/* Row 2: Chapter */}
+          <Pressable
+            style={({ pressed }) => [
+              styles.pickerRow,
+              pressed && styles.pickerRowPressed,
+              !selectedBook && styles.pickerRowDisabled,
+            ]}
+            onPress={() => selectedBook && setOpenModal("chapter")}
+            disabled={!selectedBook}
+          >
+            <Text style={styles.pickerLabel}>Chapter</Text>
+            <View style={styles.pickerValueWrap}>
+              <Text style={styles.pickerValue}>{selectedChapter}</Text>
+              <Text style={styles.pickerArrow}>▾</Text>
+            </View>
+          </Pressable>
+
+          <View style={styles.cardDividerLight} />
+
+          {/* Row 3: Verse */}
+          <Pressable
+            style={({ pressed }) => [
+              styles.pickerRow,
+              pressed && styles.pickerRowPressed,
+              !selectedBook && styles.pickerRowDisabled,
+            ]}
+            onPress={() => selectedBook && setOpenModal("verse")}
+            disabled={!selectedBook}
+          >
+            <Text style={styles.pickerLabel}>Verse</Text>
+            <View style={styles.pickerValueWrap}>
+              <Text style={styles.pickerValue}>{selectedVerse}</Text>
+              <Text style={styles.pickerArrow}>▾</Text>
+            </View>
+          </Pressable>
         </View>
 
-        {isSearching ? (
-          // Flat search results grouped by testament
-          <View>
-            {filteredOt.length > 0 && (
-              <View style={styles.sectionWrap}>
-                <Text style={styles.searchGroupLabel}>OLD TESTAMENT</Text>
-                {filteredOt.map(renderBook)}
-              </View>
-            )}
-            {filteredNt.length > 0 && (
-              <View style={styles.sectionWrap}>
-                <Text style={styles.searchGroupLabel}>NEW TESTAMENT</Text>
-                {filteredNt.map(renderBook)}
-              </View>
-            )}
-            {filteredOt.length === 0 && filteredNt.length === 0 && (
-              <Text style={styles.noResults}>No books match "{query}"</Text>
-            )}
-          </View>
-        ) : (
-          // Accordion
-          <View>
-            {renderSection("Old Testament", filteredOt, otOpen, "ot")}
-            {renderSection("New Testament", filteredNt, ntOpen, "nt")}
-          </View>
+        {/* Selected book hint */}
+        {selectedBook && (
+          <Text style={styles.hint}>
+            {selectedBook.name} · {selectedBook.chapterCount} chapters ·{" "}
+            {selectedTestamentLabel === "OT"
+              ? "Old Testament"
+              : "New Testament"}
+          </Text>
+        )}
+        {!selectedBook && (
+          <Text style={styles.hint}>
+            Tap OT or NT to choose a book
+          </Text>
         )}
 
-        <View style={{ height: spacing.xl }} />
+        {/* Locate button */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.locateBtn,
+            !selectedBook && styles.locateBtnDisabled,
+            pressed && selectedBook && styles.locateBtnPressed,
+          ]}
+          onPress={locate}
+          disabled={!selectedBook}
+        >
+          <Text style={styles.locateBtnIcon}>⊕</Text>
+          <Text
+            style={[
+              styles.locateBtnText,
+              !selectedBook && styles.locateBtnTextDisabled,
+            ]}
+          >
+            Locate
+          </Text>
+        </Pressable>
       </ScrollView>
+
+      {/* ── Book Picker Modal (OT / NT) ─────────────────────────────────── */}
+      <Modal
+        visible={openModal === "ot" || openModal === "nt"}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setOpenModal(null);
+          setSearchQuery("");
+        }}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {openModal === "ot" ? "Old Testament" : "New Testament"}
+            </Text>
+            <Pressable
+              onPress={() => {
+                setOpenModal(null);
+                setSearchQuery("");
+              }}
+              hitSlop={12}
+            >
+              <Text style={styles.modalClose}>✕</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.modalSearchWrap}>
+            <TextInput
+              style={styles.modalSearch}
+              placeholder="Search books…"
+              placeholderTextColor={colors.inkSoft}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+              returnKeyType="search"
+            />
+          </View>
+
+          <FlatList
+            data={filteredBooks}
+            keyExtractor={(b) => String(b.id)}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.bookRow,
+                  selectedBook?.id === item.id && styles.bookRowSelected,
+                  pressed && styles.bookRowPressed,
+                ]}
+                onPress={() => selectBook(item)}
+              >
+                <View style={styles.bookRowLeft}>
+                  <Text style={styles.bookIndex}>{item.id}</Text>
+                  <Text
+                    style={[
+                      styles.bookName,
+                      selectedBook?.id === item.id && styles.bookNameSelected,
+                    ]}
+                  >
+                    {item.name}
+                  </Text>
+                </View>
+                <Text style={styles.bookChCount}>{item.chapterCount} ch</Text>
+              </Pressable>
+            )}
+            ListEmptyComponent={
+              <Text style={styles.noResults}>
+                No books match "{searchQuery}"
+              </Text>
+            }
+          />
+        </View>
+      </Modal>
+
+      {/* ── Chapter Picker Modal ────────────────────────────────────────── */}
+      <Modal
+        visible={openModal === "chapter"}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setOpenModal(null)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {selectedBook?.name ?? "Chapter"}
+            </Text>
+            <Pressable onPress={() => setOpenModal(null)} hitSlop={12}>
+              <Text style={styles.modalClose}>✕</Text>
+            </Pressable>
+          </View>
+          <FlatList
+            data={Array.from({ length: chapterCount }, (_, i) => i + 1)}
+            keyExtractor={(c) => String(c)}
+            numColumns={5}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.numberGrid}
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.numberTile,
+                  selectedChapter === item && styles.numberTileSelected,
+                  pressed && styles.numberTilePressed,
+                ]}
+                onPress={() => {
+                  setSelectedChapter(item);
+                  setSelectedVerse(1);
+                  setOpenModal(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.numberTileText,
+                    selectedChapter === item && styles.numberTileTextSelected,
+                  ]}
+                >
+                  {item}
+                </Text>
+              </Pressable>
+            )}
+          />
+        </View>
+      </Modal>
+
+      {/* ── Verse Picker Modal ──────────────────────────────────────────── */}
+      <Modal
+        visible={openModal === "verse"}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setOpenModal(null)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {selectedBook?.name} {selectedChapter} · Verse
+            </Text>
+            <Pressable onPress={() => setOpenModal(null)} hitSlop={12}>
+              <Text style={styles.modalClose}>✕</Text>
+            </Pressable>
+          </View>
+          <FlatList
+            data={Array.from({ length: verseCount }, (_, i) => i + 1)}
+            keyExtractor={(v) => String(v)}
+            numColumns={5}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.numberGrid}
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.numberTile,
+                  selectedVerse === item && styles.numberTileSelected,
+                  pressed && styles.numberTilePressed,
+                ]}
+                onPress={() => {
+                  setSelectedVerse(item);
+                  setOpenModal(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.numberTileText,
+                    selectedVerse === item && styles.numberTileTextSelected,
+                  ]}
+                >
+                  {item}
+                </Text>
+              </Pressable>
+            )}
+          />
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -261,10 +468,19 @@ export default function BookPickerScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
   centered: { alignItems: "center", justifyContent: "center", gap: spacing.md },
-  loadingText: { ...typography.caption, color: colors.inkSoft, marginTop: spacing.sm },
-  errorText: { ...typography.body, color: colors.terracotta, textAlign: "center", padding: spacing.lg },
+  loadingText: {
+    ...typography.caption,
+    color: colors.inkSoft,
+    marginTop: spacing.sm,
+  },
+  errorText: {
+    ...typography.body,
+    color: colors.terracotta,
+    textAlign: "center",
+    padding: spacing.lg,
+  },
 
-  // ── Header ──────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────────────
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
@@ -278,16 +494,225 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     marginBottom: spacing.sm,
   },
-  versionPillText: { color: "rgba(255,255,255,0.9)", fontSize: 11, fontWeight: "700", letterSpacing: 1 },
-  headerTitle: { fontSize: 26, fontWeight: "700", color: colors.white, letterSpacing: -0.3 },
-  headerSub: { ...typography.caption, color: "rgba(255,255,255,0.5)", marginTop: 3, letterSpacing: 0.5 },
+  versionPillText: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: "700",
+    color: colors.white,
+    letterSpacing: -0.3,
+  },
+  headerSub: {
+    ...typography.caption,
+    color: "rgba(255,255,255,0.5)",
+    marginTop: 3,
+    letterSpacing: 0.5,
+  },
 
-  // ── Search ───────────────────────────────────────────────
-  searchWrap: { padding: spacing.lg, paddingBottom: spacing.sm },
-  search: {
+  // ── Body ──────────────────────────────────────────────────────────────────────
+  body: {
+    padding: spacing.lg,
+    alignItems: "stretch",
+  },
+
+  // ── Locator Card ─────────────────────────────────────────────────────────────
+  card: {
+    backgroundColor: colors.white,
+    borderRadius: radii.lg,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+    overflow: "hidden",
+    ...shadows.card,
+  },
+
+  // OT | NT row
+  testamentRow: {
+    flexDirection: "row",
+    height: 72,
+  },
+  testamentBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.white,
+  },
+  testamentBtnActive: {
+    backgroundColor: "#F0F5E8",
+  },
+  testamentBtnPressed: {
+    backgroundColor: "#EAF0E0",
+  },
+  testamentBtnLabel: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.ink,
+    letterSpacing: -0.3,
+    flexShrink: 1,
+    maxWidth: "80%",
+  },
+  testamentBtnLabelActive: {
+    color: colors.oliveDark,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  testamentBtnArrow: {
+    fontSize: 13,
+    color: colors.inkSoft,
+    marginTop: 2,
+  },
+  testamentBtnArrowActive: {
+    color: colors.olive,
+  },
+  testamentDivider: {
+    width: 1,
+    backgroundColor: colors.parchmentDark,
+    marginVertical: spacing.md,
+  },
+
+  cardDivider: {
+    height: 1.5,
+    backgroundColor: colors.parchmentDark,
+  },
+  cardDividerLight: {
+    height: 1,
+    backgroundColor: colors.parchmentDark,
+    marginHorizontal: spacing.lg,
+  },
+
+  // Picker rows (Chapter / Verse)
+  pickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
+    backgroundColor: colors.white,
+  },
+  pickerRowPressed: {
+    backgroundColor: "#F8F8F5",
+  },
+  pickerRowDisabled: {
+    opacity: 0.4,
+  },
+  pickerLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: colors.ink,
+  },
+  pickerValueWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  pickerValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.oliveDark,
+    minWidth: 28,
+    textAlign: "right",
+  },
+  pickerArrow: {
+    fontSize: 13,
+    color: colors.inkSoft,
+    marginTop: 2,
+  },
+
+  // ── Hint ─────────────────────────────────────────────────────────────────────
+  hint: {
+    ...typography.caption,
+    color: colors.inkSoft,
+    textAlign: "center",
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.3,
+  },
+
+  // ── Locate button ─────────────────────────────────────────────────────────────
+  locateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    backgroundColor: colors.olive,
+    borderRadius: radii.pill,
+    paddingVertical: spacing.md + 2,
+    paddingHorizontal: spacing.xl,
+    alignSelf: "center",
+    ...shadows.card,
+  },
+  locateBtnDisabled: {
+    backgroundColor: colors.parchmentDark,
+    ...shadows.subtle,
+  },
+  locateBtnPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.97 }],
+  },
+  locateBtnIcon: {
+    fontSize: 22,
+    color: colors.white,
+  },
+  locateBtnText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: colors.white,
+    letterSpacing: 0.2,
+  },
+  locateBtnTextDisabled: {
+    color: colors.inkSoft,
+  },
+
+  // ── Modals ────────────────────────────────────────────────────────────────────
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.parchment,
+    paddingTop: spacing.sm,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.parchmentDark,
+    alignSelf: "center",
+    marginBottom: spacing.sm,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.parchmentDark,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.ink,
+    letterSpacing: -0.3,
+  },
+  modalClose: {
+    fontSize: 18,
+    color: colors.inkSoft,
+    fontWeight: "400",
+  },
+  modalSearchWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.parchmentDark,
+  },
+  modalSearch: {
     backgroundColor: colors.white,
     borderRadius: radii.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm + 2,
     paddingHorizontal: spacing.md,
     borderWidth: 1.5,
     borderColor: colors.parchmentDark,
@@ -295,50 +720,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     ...shadows.subtle,
   },
-
-  // ── Section accordion ────────────────────────────────────
-  sectionWrap: { marginBottom: spacing.xs },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.parchment,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.parchmentDark,
-  },
-  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  sectionArrow: { fontSize: 14, color: colors.olive, width: 14 },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: colors.oliveDark },
-  sectionMeta: { ...typography.micro, color: colors.inkSoft, marginTop: 1, letterSpacing: 0.5 },
-  testamentTag: {
-    backgroundColor: colors.olive,
-    borderRadius: radii.pill,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-  },
-  testamentTagNT: { backgroundColor: colors.terracotta },
-  testamentTagText: { color: colors.white, fontSize: 11, fontWeight: "700" },
-
-  sectionBooks: { backgroundColor: colors.white },
-  searchGroupLabel: {
-    ...typography.micro,
-    color: colors.inkSoft,
-    letterSpacing: 1.5,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
-    backgroundColor: colors.parchment,
-  },
-  noResults: {
-    ...typography.caption,
-    color: colors.inkSoft,
-    padding: spacing.lg,
-    fontStyle: "italic",
-  },
-
-  // ── Book rows ────────────────────────────────────────────
   bookRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -349,30 +730,53 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.parchmentDark,
     backgroundColor: colors.white,
   },
-  bookRowPressed: { backgroundColor: "#F0F4E8" },
-  bookRowLeft: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  bookId: {
+  bookRowSelected: {
+    backgroundColor: "#EDF2E0",
+  },
+  bookRowPressed: {
+    backgroundColor: "#F5F5EE",
+  },
+  bookRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    flex: 1,
+  },
+  bookIndex: {
     width: 26,
     fontSize: 11,
     fontWeight: "700",
     color: colors.inkFaint,
     textAlign: "right",
   },
-  bookName: { ...typography.body, color: colors.ink, fontWeight: "500" },
-  bookChCount: { ...typography.caption, color: colors.olive, fontWeight: "600" },
-
-  // ── Chapter grid ─────────────────────────────────────────
-  chapterHeader: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
+  bookName: {
+    ...typography.body,
+    color: colors.ink,
+    fontWeight: "500",
   },
-  backBtn: { alignSelf: "flex-start", marginBottom: spacing.md },
-  backBtnText: { color: "rgba(255,255,255,0.75)", fontWeight: "600", fontSize: 15 },
-  chapterBookName: { fontSize: 28, fontWeight: "800", color: colors.white, letterSpacing: -0.5 },
-  chapterBookSub: { ...typography.caption, color: "rgba(255,255,255,0.5)", marginTop: 4, letterSpacing: 0.5 },
-  chapterGrid: { padding: spacing.md, gap: spacing.sm },
-  chapterTile: {
+  bookNameSelected: {
+    color: colors.oliveDark,
+    fontWeight: "700",
+  },
+  bookChCount: {
+    ...typography.caption,
+    color: colors.olive,
+    fontWeight: "600",
+  },
+  noResults: {
+    ...typography.caption,
+    color: colors.inkSoft,
+    padding: spacing.lg,
+    fontStyle: "italic",
+    textAlign: "center",
+  },
+
+  // ── Number grids (chapter / verse pickers) ────────────────────────────────────
+  numberGrid: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  numberTile: {
     flex: 1,
     margin: spacing.xs,
     aspectRatio: 1,
@@ -384,6 +788,20 @@ const styles = StyleSheet.create({
     borderColor: colors.parchmentDark,
     ...shadows.subtle,
   },
-  chapterTilePressed: { backgroundColor: "#EDF2E0", borderColor: colors.olive, transform: [{ scale: 0.94 }] },
-  chapterTileNum: { fontSize: 17, fontWeight: "700", color: colors.ink },
+  numberTileSelected: {
+    backgroundColor: colors.oliveDark,
+    borderColor: colors.oliveDark,
+  },
+  numberTilePressed: {
+    backgroundColor: "#EDF2E0",
+    borderColor: colors.olive,
+  },
+  numberTileText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  numberTileTextSelected: {
+    color: colors.white,
+  },
 });

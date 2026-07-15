@@ -29,7 +29,11 @@ if (Platform.OS === "android") {
 type Props = NativeStackScreenProps<RootStackParamList, "ChapterReader">;
 
 export default function ChapterReaderScreen({ route }: Props) {
-  const { bookId, bookName, chapter, version: versionProp = "KJV" } = route.params;
+  const { bookId, bookName, chapter, version: versionProp = "KJV", initialVerse } = route.params;
+
+  // ── Verse scroll-to (from Locator) ───────────────────────────────────────────
+  const scrollRef = useRef<ScrollView>(null);
+  const verseOffsets = useRef<Record<number, number>>({});
 
   // ── Chapter data ─────────────────────────────────────────────────────────────
   const [verses, setVerses] = useState<string[]>([]);
@@ -42,6 +46,7 @@ export default function ChapterReaderScreen({ route }: Props) {
     setLoadingChapter(true);
     setLoadError(null);
     setFallbackNotice(null);
+    verseOffsets.current = {};
     loadChapterVerses(bookId, chapter, versionProp)
       .then((result) => {
         setVerses(result.verses);
@@ -53,6 +58,18 @@ export default function ChapterReaderScreen({ route }: Props) {
       .catch((e) => setLoadError(e.message ?? "Couldn't load this chapter."))
       .finally(() => setLoadingChapter(false));
   }, [bookId, chapter, versionProp]);
+
+  // Scroll to initialVerse once content is rendered
+  useEffect(() => {
+    if (!initialVerse || initialVerse <= 1 || verses.length === 0) return;
+    const timer = setTimeout(() => {
+      const y = verseOffsets.current[initialVerse];
+      if (y != null && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [initialVerse, verses]);
 
   // ── Highlights ───────────────────────────────────────────────────────────────
   const [highlighted, setHighlighted] = useState<Record<number, string>>({});
@@ -340,13 +357,19 @@ export default function ChapterReaderScreen({ route }: Props) {
         </View>
       )}
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         {verses.map((text, i) => {
           const verseNum = i + 1;
           const isStudyExpanded = studyMode && studyVerseNum === verseNum;
+          const isLocatorTarget = initialVerse === verseNum;
 
           return (
-            <View key={verseNum}>
+            <View
+              key={verseNum}
+              onLayout={(e) => {
+                verseOffsets.current[verseNum] = e.nativeEvent.layout.y;
+              }}
+            >
               <Pressable
                 onPress={() => openVerse(verseNum)}
                 style={({ pressed }) => [
@@ -360,6 +383,7 @@ export default function ChapterReaderScreen({ route }: Props) {
                   style={[
                     styles.verse,
                     highlighted[verseNum] ? { backgroundColor: highlighted[verseNum] } : null,
+                    isLocatorTarget && !highlighted[verseNum] && styles.verseLocatorTarget,
                     studyMode && styles.verseStudy,
                     isStudyExpanded && styles.verseExpanded,
                   ]}
@@ -676,6 +700,7 @@ const styles = StyleSheet.create({
   versePressablePressed: { opacity: 0.75 },
 
   verse: { ...typography.body, color: colors.ink, borderRadius: 4 },
+  verseLocatorTarget: { backgroundColor: "#D9EAC8" },
   verseStudy: { color: colors.ink },
   verseExpanded: { fontWeight: "600", color: colors.oliveDark },
   verseNumber: { color: colors.oliveLight, fontWeight: "700", fontSize: 12 },

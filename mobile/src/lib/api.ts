@@ -1,16 +1,39 @@
 import { supabase } from "./supabase";
 
-// The Living Olive backend, deployed independently of Replit (Railway,
-// behind this custom domain). This is the single source of truth for every
-// build — dev, EAS preview/production — so the app never depends on a
-// Replit-hosted URL. Override with EXPO_PUBLIC_API_URL only for local
-// backend development against this same repl.
+// The Living Olive backend — deployed on Railway behind this custom domain.
+// This is the single source of truth for every build (dev, EAS preview,
+// production). The app never depends on a Replit-hosted or localhost URL.
+//
+// EXPO_PUBLIC_API_URL can override this *only* for testing against the local
+// Replit server during development. Leave it unset for all EAS builds so
+// the app always points at the real Railway backend.
 const PRODUCTION_API_URL = "https://livingolive.adroomai.com";
-const API_URL = process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_URL;
+
+// Reject any override that points at Replit dev domains or localhost so a
+// stale environment variable can never break a real device in production.
+function resolveApiUrl(): string {
+  const override = process.env.EXPO_PUBLIC_API_URL ?? "";
+  if (
+    override &&
+    !override.includes(".replit.dev") &&
+    !override.includes("localhost") &&
+    !override.includes("127.0.0.1")
+  ) {
+    return override.replace(/\/$/, ""); // strip trailing slash
+  }
+  return PRODUCTION_API_URL;
+}
+
+const API_URL = resolveApiUrl();
 
 function requireApiUrl() {
   return API_URL;
 }
+
+// Shared request timeout. Railway's free tier can cold-start in ~10 s; 20 s
+// gives enough headroom while still surfacing a clear error if the server is
+// genuinely unreachable rather than leaving the UI in a silent spinner.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 // The server always replies with JSON (including on errors — see the
 // global JSON error handler in server/src/index.js). If we ever get
@@ -49,9 +72,17 @@ async function authedFetch(path: string, body: unknown) {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
-    throw new Error("Couldn't reach the server. Check your internet connection and try again.");
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new Error(
+        "The server is taking too long to respond. Check your connection and try again."
+      );
+    }
+    throw new Error(
+      "Couldn't reach the server (livingolive.adroomai.com). Check your internet connection and try again."
+    );
   }
   return parseJsonResponse(res);
 }
@@ -164,9 +195,16 @@ export async function transcribeSermon(fileUri: string, fileName: string): Promi
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: form,
+      // Audio uploads can be large; allow more time than regular API calls.
+      signal: AbortSignal.timeout(60_000),
     });
-  } catch {
-    throw new Error("Couldn't reach the server. Check your internet connection and try again.");
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new Error("Transcription timed out. The recording may be too long — try a shorter clip.");
+    }
+    throw new Error(
+      "Couldn't reach the server (livingolive.adroomai.com). Check your internet connection and try again."
+    );
   }
   return parseJsonResponse(res);
 }

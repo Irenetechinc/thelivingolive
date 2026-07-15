@@ -25,7 +25,7 @@ export type RootStackParamList = {
   Home: undefined;
   BibleHome: undefined;
   BookPicker: { version?: BibleVersion } | undefined;
-  ChapterReader: { bookId: number; bookName: string; chapter: number; version?: BibleVersion };
+  ChapterReader: { bookId: number; bookName: string; chapter: number; version?: BibleVersion; initialVerse?: number };
   Notes: undefined;
   HymnsList: undefined;
   HymnDetail: { hymnId: string };
