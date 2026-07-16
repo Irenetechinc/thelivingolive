@@ -29,17 +29,21 @@ function loadBibleBook(bookId) {
   return bibleBookCache.get(bookId);
 }
 
-// Only Supabase keys are strictly required; OPENAI_API_KEY is optional and
-// only used for the sermon transcription feature — all other features
-// (Bible reading, verse explanation, prayer, devotion) run without it.
-const requiredEnv = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    console.warn(`[WARN] Missing environment variable: ${key} — some features will be unavailable`);
-  }
+// Supabase keys are required for auth and all database-backed features.
+// OPENAI_API_KEY is optional — only needed for sermon transcription, prayer,
+// and devotion generation. All Bible reading, verse explanation, and
+// rule-based prayer/devotion features run without it.
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    "[FATAL] Missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY environment variables. " +
+    "Auth verification will be unavailable. Set these in your Railway environment variables."
+  );
 }
 if (!process.env.OPENAI_API_KEY) {
-  console.warn("[WARN] OPENAI_API_KEY not set — sermon transcription feature will be unavailable. All other features run without it.");
+  console.warn("[WARN] OPENAI_API_KEY not set — sermon transcription, AI prayer, and AI devotion features will be unavailable. All other features run without it.");
 }
 
 const app = express();
@@ -72,11 +76,14 @@ function getOpenAI() {
   return _openai;
 }
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL ?? "https://placeholder.supabase.co",
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? "placeholder",
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+// Build the admin Supabase client only when credentials are present.
+// If missing, every route that calls requireUser() will return a clear
+// 503 instead of making a network call to a non-existent host.
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+  : null;
 const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
 
 // In-memory upload handling for sermon audio — files are transcribed and
@@ -86,6 +93,11 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 
 
 // Verify the caller's Supabase access token and attach the user to the request.
 async function requireUser(req, res, next) {
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: "Authentication unavailable: server is missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY environment variables. Contact the administrator.",
+    });
+  }
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Missing bearer token" });
@@ -510,6 +522,7 @@ app.post("/api/push/register", requireUser, async (req, res) => {
 // Helper: send push to a single user (all their devices)
 // ──────────────────────────────────────────────
 async function sendPushToUser(userId, { title, body, data }) {
+  if (!supabaseAdmin) return; // no-op when Supabase is unconfigured
   const { data: rows, error } = await supabaseAdmin
     .from("push_tokens")
     .select("token")
@@ -538,6 +551,9 @@ async function sendPushToUser(userId, { title, body, data }) {
 // Requires X-Cron-Secret header = CRON_SECRET env var.
 // ──────────────────────────────────────────────
 app.post("/api/push/notify-scheduled", async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Database unavailable: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured." });
+  }
   const secret = process.env.CRON_SECRET;
   if (secret && req.headers["x-cron-secret"] !== secret) {
     return res.status(401).json({ error: "Unauthorized" });
