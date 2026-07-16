@@ -7,16 +7,31 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://glsjjrktrighwqeodhfp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdsc2pqcmt0cmlnaHdxZW9kaGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2OTIxNjYsImV4cCI6MjA4MjI2ODE2Nn0.3ymy6mvVxm58dH7CS7ARULTKQxHiXpGjggepe-HJREo",
+        "EXPO_PUBLIC_API_URL": "https://livingolive.adroomai.com"
+      }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://glsjjrktrighwqeodhfp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdsc2pqcmt0cmlnaHdxZW9kaGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2OTIxNjYsImV4cCI6MjA4MjI2ODE2Nn0.3ymy6mvVxm58dH7CS7ARULTKQxHiXpGjggepe-HJREo",
+        "EXPO_PUBLIC_API_URL": "https://livingolive.adroomai.com"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://glsjjrktrighwqeodhfp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdsc2pqcmt0cmlnaHdxZW9kaGZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2OTIxNjYsImV4cCI6MjA4MjI2ODE2Nn0.3ymy6mvVxm58dH7CS7ARULTKQxHiXpGjggepe-HJREo",
+        "EXPO_PUBLIC_API_URL": "https://livingolive.adroomai.com"
+      }
     }
   },
   "submit": {

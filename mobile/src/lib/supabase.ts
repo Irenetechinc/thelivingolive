@@ -6,31 +6,37 @@ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
+  console.error(
     "[supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY are not set. " +
-      "Supabase features will not work until the app is rebuilt with these env vars."
+      "The app was built without these env vars — rebuild with them configured in eas.json."
   );
 }
 
-// Guard: createClient throws on empty/invalid URL. Return a dummy that
-// surfaces a clear error rather than crashing the whole app.
+// Guard: if env vars are missing at build time, return a stub whose every
+// method throws a clear, human-readable error instead of silently hitting
+// "placeholder.supabase.co" and showing a cryptic network error.
 function buildClient() {
   if (!supabaseUrl || !supabaseAnonKey) {
-    // Return a minimal stub so the rest of the app can import `supabase`
-    // without crashing; auth calls will fail gracefully with a thrown error.
-    return createClient(
-      "https://placeholder.supabase.co",
-      "placeholder-anon-key",
-      {
-        auth: {
-          storage: AsyncStorage,
-          autoRefreshToken: false,
-          persistSession: false,
-          detectSessionInUrl: false,
-        },
-      }
+    const missingError = new Error(
+      "Supabase is not configured: EXPO_PUBLIC_SUPABASE_URL and " +
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY must be set at build time. " +
+        "Contact the app developer."
     );
+    // Return a proxy that throws on any property access so the error
+    // surfaces immediately at the call-site, not as a network failure.
+    return new Proxy({} as ReturnType<typeof createClient>, {
+      get(_target, prop) {
+        // Allow symbol/toString checks used by React DevTools etc.
+        if (typeof prop === "symbol" || prop === "toString" || prop === "then") {
+          return undefined;
+        }
+        return () => {
+          throw missingError;
+        };
+      },
+    });
   }
+
   return createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       storage: AsyncStorage,
