@@ -61,7 +61,8 @@
           "microphonePermission": "Allow The Living Olive to record so you can capture sermon notes to be transcribed."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {
