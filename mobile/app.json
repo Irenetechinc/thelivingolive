@@ -58,12 +58,6 @@
         }
       ],
       "expo-asset"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "8d3faba2-00ef-4584-a32a-4cf63794178a"
-      }
-    },
-    "owner": "iamnewtech"
+    ]
   }
 }
