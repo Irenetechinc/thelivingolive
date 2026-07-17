@@ -195,8 +195,9 @@ export async function transcribeSermon(fileUri: string, fileName: string): Promi
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: form,
-      // Audio uploads can be large; allow more time than regular API calls.
-      signal: AbortSignal.timeout(60_000),
+      // Audio uploads can be large and Whisper can take time on long clips —
+      // allow up to 2 minutes before surfacing a timeout to the user.
+      signal: AbortSignal.timeout(120_000),
     });
   } catch (err: any) {
     if (err?.name === "TimeoutError" || err?.name === "AbortError") {

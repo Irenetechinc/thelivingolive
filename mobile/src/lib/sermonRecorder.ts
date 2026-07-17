@@ -127,11 +127,25 @@ export async function processQueue(onUpdate: (queue: SermonRecording[]) => void)
         queue = await loadQueue();
         const idx = queue.findIndex((q) => q.id === rec.id);
         if (idx >= 0) {
-          queue[idx] = { ...queue[idx], status: "queued", error: e.message };
+          // Timeout / server error → mark failed so the user sees a Retry button
+          // rather than the spinner cycling forever. Network-connectivity errors
+          // are reset to "queued" so the automatic online-listener can retry them.
+          const isTimeout =
+            e?.name === "TimeoutError" ||
+            e?.name === "AbortError" ||
+            (typeof e?.message === "string" && e.message.toLowerCase().includes("timed out"));
+          const isNetworkError =
+            !isTimeout &&
+            typeof e?.message === "string" &&
+            (e.message.toLowerCase().includes("network") ||
+              e.message.toLowerCase().includes("reach") ||
+              e.message.toLowerCase().includes("connection"));
+          const nextStatus: "queued" | "failed" = isNetworkError ? "queued" : "failed";
+          queue[idx] = { ...queue[idx], status: nextStatus, error: e.message };
           await saveQueue(queue);
           onUpdate(queue);
         }
-        break; // stop on first failure (likely still offline/flaky), retry later
+        break; // stop on first failure, retry later
       }
     }
     if (changed) onUpdate(await loadQueue());

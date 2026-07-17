@@ -6,7 +6,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
-import { randomQuote, type Quote } from "../../data/bibleQuotes";
+import { randomQuoteIndex, quoteAtIndex, type Quote } from "../../data/bibleQuotes";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BibleHome">;
 
@@ -40,10 +40,9 @@ const VERSION_PREF_KEY = "bible:preferred_version";
 
 export default function BibleHomeScreen({ navigation }: Props) {
   const [version, setVersion] = useState<BibleVersion>("KJV");
-  const [quotes, setQuotes] = useState<Record<BibleVersion, Quote>>({
-    KJV: randomQuote("KJV"),
-    WEB: randomQuote("WEB"),
-    ASV: randomQuote("ASV"),
+  const [quotes, setQuotes] = useState<Record<BibleVersion, Quote>>(() => {
+    const idx = randomQuoteIndex();
+    return { KJV: quoteAtIndex("KJV", idx), WEB: quoteAtIndex("WEB", idx), ASV: quoteAtIndex("ASV", idx) };
   });
 
   useEffect(() => {
@@ -52,11 +51,13 @@ export default function BibleHomeScreen({ navigation }: Props) {
     });
   }, []);
 
-  // A fresh quote from each translation every time this screen is revisited
-  // — makes the version picker feel alive rather than a static settings list.
+  // A fresh quote — same verse, all three translations — every time this
+  // screen is revisited, so each card feels alive and they clearly show
+  // how the same passage reads differently across translations.
   useFocusEffect(
     React.useCallback(() => {
-      setQuotes({ KJV: randomQuote("KJV"), WEB: randomQuote("WEB"), ASV: randomQuote("ASV") });
+      const idx = randomQuoteIndex();
+      setQuotes({ KJV: quoteAtIndex("KJV", idx), WEB: quoteAtIndex("WEB", idx), ASV: quoteAtIndex("ASV", idx) });
     }, [])
   );
 
@@ -115,9 +116,6 @@ export default function BibleHomeScreen({ navigation }: Props) {
                       </View>
                     )}
                   </View>
-                  <Text style={[styles.versionDesc, active && styles.versionDescActive]}>
-                    {v.description}
-                  </Text>
                   <View style={styles.quoteRow}>
                     <View style={[styles.quoteBar, active && styles.quoteBarActive]} />
                     <Text

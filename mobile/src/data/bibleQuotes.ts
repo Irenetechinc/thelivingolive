@@ -43,3 +43,16 @@ export function randomQuote(version: "KJV" | "WEB" | "ASV"): Quote {
   const list = bibleQuotes[version];
   return list[Math.floor(Math.random() * list.length)];
 }
+
+// Returns the same verse index across all three translations — used on the
+// Bible home screen so every card shows the *same* scripture passage in its
+// own translation style, rather than a completely different random verse per card.
+export function randomQuoteIndex(): number {
+  // All three arrays have the same length and same reference order.
+  return Math.floor(Math.random() * bibleQuotes.KJV.length);
+}
+
+export function quoteAtIndex(version: "KJV" | "WEB" | "ASV", index: number): Quote {
+  const list = bibleQuotes[version];
+  return list[Math.min(index, list.length - 1)];
+}

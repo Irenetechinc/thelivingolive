@@ -113,6 +113,12 @@ export default function PrayerScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      // Check for alarm-triggered navigation from notification tap
+      const alarm = consumePendingAlarm();
+      if (alarm?.type === "prayer" && alarm.desires && Date.now() - alarm.timestamp < 30000) {
+        setDesires(alarm.desires);
+        setAlarmBanner(true);
+      }
       (async () => {
         setLoadingEntries(true);
         const { data } = await supabase
@@ -130,19 +136,23 @@ export default function PrayerScreen() {
     setError(null);
     if (!desires.trim()) { setError("Share the desire of your heart first."); return; }
     const n = parseInt(count, 10);
-    const h = parseInt(hour, 10);
-    const m = parseInt(minute, 10);
     if (Number.isNaN(n) || n < 1 || n > 10) { setError("Prayer points must be between 1 and 10."); return; }
-    if (Number.isNaN(h) || h < 0 || h > 23 || Number.isNaN(m) || m < 0 || m > 59) {
-      setError("Enter a valid time (hour 0-23, minute 0-59)."); return;
+
+    // Convert 12h + AM/PM to 24h
+    const h12Num = parseInt(hour12, 10);
+    const m = parseInt(minute, 10);
+    if (Number.isNaN(h12Num) || h12Num < 1 || h12Num > 12 || Number.isNaN(m) || m < 0 || m > 59) {
+      setError("Enter a valid time (1–12 for hour, 0–59 for minutes)."); return;
     }
+    const h = amPm === "AM" ? (h12Num === 12 ? 0 : h12Num) : (h12Num === 12 ? 12 : h12Num + 12);
+
     setBusy(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not signed in");
       const { data: plan, error: planError } = await supabase
         .from("prayer_plans")
-        .insert({ user_id: userData.user.id, desires: desires.trim(), prayer_type: type, point_count: n, preferred_time: `${hour}:${minute}:00` })
+        .insert({ user_id: userData.user.id, desires: desires.trim(), prayer_type: type, point_count: n, preferred_time: `${h}:${m.toString().padStart(2, "0")}:00` })
         .select().single();
       if (planError) throw planError;
       const result = await generatePrayer({ desires: desires.trim(), count: n, type });
@@ -165,7 +175,10 @@ export default function PrayerScreen() {
         title: "Time to pray 🙏",
         body: `${type} prayer points are ready`,
         hour: h, minute: m, frequency: "daily",
+        sound: ringtone,
+        data: { type: "prayer", desires: desiresText },
       });
+      setAlarmBanner(false);
       setDesires("");
     } catch (e: any) {
       setError(e.message ?? "Couldn't generate prayers. Try again.");
@@ -212,6 +225,12 @@ export default function PrayerScreen() {
       </LinearGradient>
 
       <View style={styles.body}>
+        {alarmBanner && (
+          <View style={styles.alarmBanner}>
+            <Text style={styles.alarmBannerText}>🙏 Your prayer reminder fired — your desire is pre-filled below. Tap Generate to create today's prayer points.</Text>
+          </View>
+        )}
+
         {/* Form card */}
         <View style={styles.formCard}>
           <Text style={styles.formTitle}>{selectedType.label} Prayer</Text>
@@ -240,30 +259,56 @@ export default function PrayerScreen() {
                 placeholderTextColor={colors.inkFaint}
               />
             </View>
-            <View style={styles.inlineField}>
-              <Text style={styles.fieldLabel}>REMINDER</Text>
+            <View style={[styles.inlineField, { flex: 2 }]}>
+              <Text style={styles.fieldLabel}>REMINDER TIME</Text>
               <View style={styles.timeRow}>
                 <TextInput
                   style={styles.timeInput}
-                  value={hour}
-                  onChangeText={setHour}
+                  value={hour12}
+                  onChangeText={(v) => setHour12(v.replace(/[^0-9]/g, ""))}
                   keyboardType="number-pad"
                   maxLength={2}
-                  placeholder="06"
+                  placeholder="6"
                   placeholderTextColor={colors.inkFaint}
                 />
                 <Text style={styles.timeSep}>:</Text>
                 <TextInput
                   style={styles.timeInput}
                   value={minute}
-                  onChangeText={setMinute}
+                  onChangeText={(v) => setMinute(v.replace(/[^0-9]/g, ""))}
                   keyboardType="number-pad"
                   maxLength={2}
                   placeholder="00"
                   placeholderTextColor={colors.inkFaint}
                 />
+                <View style={styles.amPmRow}>
+                  {(["AM", "PM"] as const).map((p) => (
+                    <Pressable
+                      key={p}
+                      style={[styles.amPmBtn, amPm === p && styles.amPmBtnActive]}
+                      onPress={() => setAmPm(p)}
+                    >
+                      <Text style={[styles.amPmText, amPm === p && styles.amPmTextActive]}>{p}</Text>
+                    </Pressable>
+                  ))}
+                </View>
               </View>
             </View>
+          </View>
+
+          <Text style={styles.fieldLabel}>RINGTONE</Text>
+          <View style={styles.ringtoneRow}>
+            {(["default", "gentle", "bell", "silent"] as const).map((r) => (
+              <Pressable
+                key={r}
+                style={[styles.ringtoneChip, ringtone === r && styles.ringtoneChipActive]}
+                onPress={() => setRingtone(r)}
+              >
+                <Text style={[styles.ringtoneText, ringtone === r && styles.ringtoneTextActive]}>
+                  {r === "default" ? "Default" : r === "gentle" ? "Gentle" : r === "bell" ? "Bell" : "Silent"}
+                </Text>
+              </Pressable>
+            ))}
           </View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -337,6 +382,15 @@ const styles = StyleSheet.create({
   typeChipText: { fontSize: 13, fontWeight: "600", color: "rgba(255,255,255,0.8)" },
   typeChipTextActive: { color: colors.oliveDark },
   body: { padding: spacing.lg },
+  alarmBanner: {
+    backgroundColor: "#EDF2E0",
+    padding: spacing.md,
+    borderRadius: radii.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: "#C2D4A0",
+  },
+  alarmBannerText: { ...typography.bodySmall, color: colors.oliveDark, lineHeight: 20 },
   formCard: {
     backgroundColor: colors.white,
     borderRadius: radii.xl,
@@ -380,13 +434,37 @@ const styles = StyleSheet.create({
     borderColor: colors.parchmentDark,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
-    width: 44,
+    width: 42,
     textAlign: "center",
     fontSize: 16,
     fontWeight: "700",
     color: colors.ink,
   },
   timeSep: { fontSize: 20, fontWeight: "700", color: colors.ink },
+  amPmRow: { flexDirection: "row", gap: 3, marginLeft: 2 },
+  amPmBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.parchment,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  amPmBtnActive: { backgroundColor: colors.olive, borderColor: colors.olive },
+  amPmText: { fontSize: 11, fontWeight: "700", color: colors.inkSoft },
+  amPmTextActive: { color: colors.white },
+  ringtoneRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg, flexWrap: "wrap" },
+  ringtoneChip: {
+    paddingVertical: 6,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    backgroundColor: colors.parchment,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  ringtoneChipActive: { backgroundColor: colors.oliveDark, borderColor: colors.oliveDark },
+  ringtoneText: { fontSize: 13, fontWeight: "600", color: colors.inkSoft },
+  ringtoneTextActive: { color: colors.white },
   errorText: { color: colors.danger, fontSize: 14, marginBottom: spacing.sm, fontWeight: "500" },
   generateBtn: { borderRadius: radii.md, overflow: "hidden", ...shadows.card },
   generateBtnPressed: { opacity: 0.88, transform: [{ scale: 0.98 }] },
