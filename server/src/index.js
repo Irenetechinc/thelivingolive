@@ -380,7 +380,7 @@ app.post("/api/prayer-engine/prayer", requireUser, async (req, res) => {
     const { desires, count, type } = req.body;
     if (!desires) return res.status(400).json({ error: "desires is required" });
 
-    const { prayerPoints, detectedCategory } = generatePrayerPoints({
+    const { prayerPoints, detectedCategory, uncuratedVerses } = generatePrayerPoints({
       desires,
       type,
       count,
@@ -391,6 +391,11 @@ app.post("/api/prayer-engine/prayer", requireUser, async (req, res) => {
       title: "Prayer Points Ready 🙏",
       body: `Your ${detectedCategory} prayer points have been generated`,
     }).catch((e) => console.warn("push send failed:", e.message));
+
+    // Log uncurated verses used — auto-discovery loop picks them up daily
+    if (uncuratedVerses?.length) {
+      console.info(`[prayer-engine] ${uncuratedVerses.length} uncurated verse(s) used (candidates for auto-discovery):`, uncuratedVerses.map(v => v.ref).join(", "));
+    }
 
     res.json({ prayerPoints, detectedCategory, engine: "rule-based" });
   } catch (err) {

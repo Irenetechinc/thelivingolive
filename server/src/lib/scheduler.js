@@ -25,11 +25,13 @@
 // keywords are already in play before the GA re-optimizes weights.
 
 import cron from "node-cron";
-import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses } from "../data/prayerVerses.js";
+import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses, addDiscoveredVerse, VERSE_BANK } from "../data/prayerVerses.js";
 import { runWebCrawl } from "./webCrawler.js";
 import { runGeneticOptimization } from "./geneticAlgorithm.js";
 import { logger } from "./logger.js";
 import { loadExplanationLearning, loadTeachingContextFromDb, scoreExplanation } from "./verseExplainEngine.js";
+import { getBibleIndex, warmBibleIndex } from "./bibleIndex.js";
+import { getMarkov, warmMarkov } from "./markovBible.js";
 
 const log = logger("scheduler");
 
@@ -211,6 +213,110 @@ async function loadExplanationLearningFromDb(supabase) {
   log.info(`loaded explanation learning data for ${data?.length ?? 0} verse(s)`);
 }
 
+// ── Auto-discovery: promote highly-rated uncurated verses into verse bank ────
+// Runs daily at 06:00, after crawl+learning+genetics have all run.
+// For every prayer_entries row with a high rating whose verse_ref is NOT in
+// the hand-curated bank, we check whether the full-Bible index can validate it
+// (i.e. the verse actually exists in the local KJV data) and then upsert it
+// into discovered_verses so it becomes available to future prayer generation.
+// This means the system grows its verse bank automatically from the prayers
+// users actually liked — not just from what the web crawler happened to find.
+const CURATED_REFS_SET = new Set(VERSE_BANK.map(v => v.ref));
+
+async function runAutoDiscovery(supabase) {
+  log.info("auto-discovery: scanning for highly-rated uncurated verses...");
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // last 7 days
+  const { data: feedback, error } = await supabase
+    .from("generation_feedback")
+    .select("verse_ref, category, rating")
+    .gte("created_at", since)
+    .gte("rating", 4)
+    .not("verse_ref", "is", null);
+
+  if (error) { log.warn("auto-discovery: feedback query failed:", error.message); return; }
+
+  // Count high-rated appearances per (verse_ref, category)
+  const counts = new Map(); // `${ref}::${cat}` → count
+  for (const row of feedback ?? []) {
+    if (!row.verse_ref || CURATED_REFS_SET.has(row.verse_ref)) continue;
+    const key = `${row.verse_ref}::${row.category}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const idx = getBibleIndex();
+  if (!idx.isBuilt) { log.info("auto-discovery: index not ready, skipping"); return; }
+
+  let added = 0;
+  for (const [key, count] of counts) {
+    if (count < 2) continue; // need at least 2 independent high ratings
+    const [ref, category] = key.split("::");
+    const entry = idx.byRef(ref);
+    if (!entry) continue; // can't validate — skip
+
+    // Add to in-memory pool
+    const didAdd = addDiscoveredVerse({
+      ref, bookId: entry.bookId, chapter: entry.ch,
+      verseStart: entry.v, category,
+      keywords: [], source: "auto-discovery",
+    });
+    if (!didAdd) continue; // already known
+
+    // Persist to Supabase
+    await supabase.from("discovered_verses").upsert(
+      {
+        ref, category, book_id: entry.bookId,
+        chapter: entry.ch, verse_start: entry.v,
+        keywords: [], source: "auto-discovery",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "ref,category" }
+    ).then(({ error: e }) => { if (e) log.warn(`auto-discovery: upsert failed for ${ref}:`, e.message); });
+    added++;
+    log.info(`auto-discovery: promoted ${ref} → ${category} (${count} high ratings)`);
+  }
+
+  log.info(`auto-discovery complete — ${added} new verse(s) added to bank`);
+}
+
+// ── Pool-level feedback learner ──────────────────────────────────────────────
+// Tracks which prayer quality scores correlate with which verses across
+// the feedback table. Verses that consistently appear in high-quality prayers
+// (high quality_score in prayer_entries) get an additional weight nudge on
+// top of the genetic algorithm, reinforcing agreement between the two loops.
+async function runPrayerQualitySync(supabase) {
+  const { data, error } = await supabase
+    .from("prayer_entries")
+    .select("scripture_reference, quality_score")
+    .not("quality_score", "is", null)
+    .gte("quality_score", 70)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) { log.warn("prayer quality sync failed:", error.message); return; }
+
+  const verseQuality = new Map(); // ref → {sum, count}
+  for (const row of data ?? []) {
+    const r = row.scripture_reference;
+    if (!r) continue;
+    const prev = verseQuality.get(r) ?? { sum: 0, count: 0 };
+    verseQuality.set(r, { sum: prev.sum + (row.quality_score / 100), count: prev.count + 1 });
+  }
+
+  let nudged = 0;
+  for (const [ref, { sum, count }] of verseQuality) {
+    if (count < 3) continue; // need sample size
+    const avgScore = sum / count; // 0.7 – 1.0 range
+    const delta = (avgScore - 0.8) * 0.1; // small nudge, won't dominate GA
+    const current = weightsCache[ref] ?? 1;
+    const next = Math.min(3, Math.max(0.2, current + delta));
+    if (Math.abs(next - current) > 0.01) {
+      weightsCache[ref] = next;
+      nudged++;
+    }
+  }
+  log.info(`prayer quality sync: nudged weights for ${nudged} verse(s) based on quality scores`);
+}
+
 // ── Autonomous quality benchmarking ─────────────────────────────────────────
 // Scores each explanation in cache against the scraped teaching snippets
 // using three axes: vocabulary diversity, sentence-length variance, and
@@ -286,25 +392,43 @@ export async function startPrayerEngineScheduler(supabase) {
   // after the day's crawl + keyword learning have already run.
   cron.schedule("0 4 * * *", () => runGeneticJob(supabase));
 
-  // Daily at 05:00: autonomous quality benchmark — scores recent explanations
-  // against teaching snippets and logs a report visible in `railway logs`.
-  // If explanations consistently score below 55, clears old low-quality
-  // cached entries so they regenerate fresh on the next request.
+  // Daily at 05:00: autonomous quality benchmark.
   cron.schedule("0 5 * * *", () => {
     runQualityBenchmark(supabase).catch((e) => log.warn("quality benchmark failed:", e.message));
   });
 
-  log.info("scheduler started — hourly weight sync, daily web crawl (02:00), keyword learning (03:00), genetic optimization (04:00), quality benchmark (05:00)");
+  // Daily at 06:00: auto-discovery — promotes highly-rated uncurated verses
+  // (surfaced by the full-Bible TF-IDF index) into the persistent verse bank.
+  cron.schedule("0 6 * * *", () => {
+    runAutoDiscovery(supabase).catch((e) => log.warn("auto-discovery failed:", e.message));
+  });
 
-  // Run the full pipeline once shortly after boot too, so activity is
-  // visible in the logs immediately after a deploy rather than only once a
-  // day — genuinely useful for a fresh Railway deploy, and harmless to run
-  // an extra time since every step is idempotent (upserts).
+  // Daily at 06:30: prayer quality score sync — nudges verse weights upward
+  // for verses that consistently appear in high-quality generated prayers.
+  cron.schedule("30 6 * * *", () => {
+    runPrayerQualitySync(supabase).catch((e) => log.warn("prayer quality sync failed:", e.message));
+  });
+
+  log.info(
+    "scheduler started — " +
+    "hourly weight sync, " +
+    "web crawl (02:00), keyword learning (03:00), genetic optimization (04:00), " +
+    "quality benchmark (05:00), auto-discovery (06:00), quality sync (06:30)"
+  );
+
+  // Warm the full-Bible index and Markov model in background at startup.
+  // They build once and stay in memory. The index takes ~1-2s, the Markov
+  // model ~3-4s — both are ready well before the first user request.
+  warmBibleIndex();
+  warmMarkov();
+
+  // Run the full pipeline once shortly after boot.
   setTimeout(() => {
-    log.info("running startup pipeline pass (crawl → keyword learning → genetic optimization)");
+    log.info("running startup pipeline pass (crawl → keyword learning → genetic optimization → auto-discovery)");
     runCrawlJob(supabase)
       .then(() => runDailyKeywordLearning(supabase).catch((e) => log.warn("startup keyword learning failed:", e.message)))
       .then(() => runGeneticJob(supabase))
+      .then(() => runAutoDiscovery(supabase).catch((e) => log.warn("startup auto-discovery failed:", e.message)))
       .catch((e) => log.warn("startup pipeline failed:", e.message));
   }, 15000);
 }

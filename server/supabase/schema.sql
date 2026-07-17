@@ -77,8 +77,14 @@ create table if not exists public.prayer_entries (
   title text not null,
   prayer_text text not null,
   scripture_reference text,
+  -- quality_score (0-100): automatically computed by prayerEngine.scorePrayer()
+  -- on vocabulary richness, scripture density, and desire relevance.
+  -- Used by runPrayerQualitySync() in scheduler.js to nudge verse weights.
+  quality_score int,
   created_at timestamptz not null default now()
 );
+-- Allow the backend (service role) to add quality_score without user auth
+alter table public.prayer_entries add column if not exists quality_score int;
 
 -- Expo push tokens for server-driven notifications
 create table if not exists public.push_tokens (
