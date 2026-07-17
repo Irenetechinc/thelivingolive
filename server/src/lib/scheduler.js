@@ -32,6 +32,7 @@ import { logger } from "./logger.js";
 import { loadExplanationLearning, loadTeachingContextFromDb, scoreExplanation } from "./verseExplainEngine.js";
 import { getBibleIndex, warmBibleIndex } from "./bibleIndex.js";
 import { getMarkov, warmMarkov } from "./markovBible.js";
+import { adminBus } from "./adminBus.js";
 
 const log = logger("scheduler");
 
@@ -42,15 +43,18 @@ export function getWeights() {
 }
 
 async function refreshWeightsCache(supabase) {
+  adminBus.agentStart("weightSync", "Refreshing verse weights from Supabase…");
   const { data, error } = await supabase.from("verse_category_weights").select("verse_ref, weight");
   if (error) {
     log.warn("failed to refresh weights cache:", error.message);
+    adminBus.agentError("weightSync", `Weight refresh failed: ${error.message}`);
     return;
   }
   const next = {};
   for (const row of data ?? []) next[row.verse_ref] = Number(row.weight);
   weightsCache = next;
   log.info(`weights cache refreshed — ${Object.keys(next).length} verse weight(s) loaded`);
+  adminBus.agentDone("weightSync", `${Object.keys(next).length} verse weights loaded`);
 }
 
 async function loadLearnedKeywordsFromDb(supabase) {
@@ -121,6 +125,7 @@ const STOPWORDS = new Set([
 ]);
 
 async function runDailyKeywordLearning(supabase) {
+  adminBus.agentStart("keywordLearner", "Scanning 24h feedback for new keyword patterns…");
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from("generation_feedback")
@@ -131,6 +136,7 @@ async function runDailyKeywordLearning(supabase) {
 
   if (error) {
     log.warn("daily keyword learning query failed:", error.message);
+    adminBus.agentError("keywordLearner", `Query failed: ${error.message}`);
     return;
   }
 
@@ -170,25 +176,34 @@ async function runDailyKeywordLearning(supabase) {
 
   if (promotions.length) {
     log.info(`promoted ${promotions.length} learned keyword(s):`, promotions.map((p) => `${p.keyword}→${p.category}`).join(", "));
+    adminBus.agentDone("keywordLearner", `Promoted ${promotions.length} keyword(s): ${promotions.slice(0,3).map(p=>`${p.keyword}→${p.category}`).join(", ")}${promotions.length>3?'…':''}`);
   } else {
     log.info("daily keyword learning: no new keywords qualified for promotion today");
+    adminBus.agentDone("keywordLearner", "No new keywords qualified for promotion today");
   }
 }
 
 async function runCrawlJob(supabase) {
+  adminBus.agentStart("webCrawler", "Starting web crawl across 37 scripture topic pages…");
   try {
     await runWebCrawl(supabase);
+    adminBus.agentDone("webCrawler", "Web crawl complete — verse candidates updated");
   } catch (e) {
     log.warn("web crawl job failed:", e.message);
+    adminBus.agentError("webCrawler", `Crawl failed: ${e.message}`);
   }
 }
 
 async function runGeneticJob(supabase) {
+  adminBus.agentStart("geneticAlgorithm", "Running 40-generation genetic optimization on verse weights…");
   try {
+    adminBus.agentProgress("geneticAlgorithm", "Building population from feedback history…");
     const { updatedWeights } = await runGeneticOptimization(supabase, weightsCache);
     weightsCache = updatedWeights;
+    adminBus.agentDone("geneticAlgorithm", `Optimized ${Object.keys(updatedWeights).length} verse weights via genetic algorithm`);
   } catch (e) {
     log.warn("genetic optimization job failed:", e.message);
+    adminBus.agentError("geneticAlgorithm", `Genetic optimization failed: ${e.message}`);
   }
 }
 
@@ -224,6 +239,7 @@ async function loadExplanationLearningFromDb(supabase) {
 const CURATED_REFS_SET = new Set(VERSE_BANK.map(v => v.ref));
 
 async function runAutoDiscovery(supabase) {
+  adminBus.agentStart("autoDiscovery", "Scanning 7-day feedback for highly-rated uncurated verses…");
   log.info("auto-discovery: scanning for highly-rated uncurated verses...");
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // last 7 days
   const { data: feedback, error } = await supabase
@@ -233,7 +249,7 @@ async function runAutoDiscovery(supabase) {
     .gte("rating", 4)
     .not("verse_ref", "is", null);
 
-  if (error) { log.warn("auto-discovery: feedback query failed:", error.message); return; }
+  if (error) { log.warn("auto-discovery: feedback query failed:", error.message); adminBus.agentError("autoDiscovery", `Query failed: ${error.message}`); return; }
 
   // Count high-rated appearances per (verse_ref, category)
   const counts = new Map(); // `${ref}::${cat}` → count
@@ -244,7 +260,7 @@ async function runAutoDiscovery(supabase) {
   }
 
   const idx = getBibleIndex();
-  if (!idx.isBuilt) { log.info("auto-discovery: index not ready, skipping"); return; }
+  if (!idx.isBuilt) { log.info("auto-discovery: index not ready, skipping"); adminBus.agentDone("autoDiscovery", "Bible index not ready — skipped"); return; }
 
   let added = 0;
   for (const [key, count] of counts) {
@@ -276,6 +292,7 @@ async function runAutoDiscovery(supabase) {
   }
 
   log.info(`auto-discovery complete — ${added} new verse(s) added to bank`);
+  adminBus.agentDone("autoDiscovery", `${added} uncurated verse(s) promoted to permanent bank`);
 }
 
 // ── Pool-level feedback learner ──────────────────────────────────────────────
@@ -284,6 +301,7 @@ async function runAutoDiscovery(supabase) {
 // (high quality_score in prayer_entries) get an additional weight nudge on
 // top of the genetic algorithm, reinforcing agreement between the two loops.
 async function runPrayerQualitySync(supabase) {
+  adminBus.agentStart("qualitySync", "Syncing prayer quality scores → verse weight nudges…");
   const { data, error } = await supabase
     .from("prayer_entries")
     .select("scripture_reference, quality_score")
@@ -292,7 +310,7 @@ async function runPrayerQualitySync(supabase) {
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (error) { log.warn("prayer quality sync failed:", error.message); return; }
+  if (error) { log.warn("prayer quality sync failed:", error.message); adminBus.agentError("qualitySync", `Query failed: ${error.message}`); return; }
 
   const verseQuality = new Map(); // ref → {sum, count}
   for (const row of data ?? []) {
@@ -315,6 +333,7 @@ async function runPrayerQualitySync(supabase) {
     }
   }
   log.info(`prayer quality sync: nudged weights for ${nudged} verse(s) based on quality scores`);
+  adminBus.agentDone("qualitySync", `Weight nudges applied to ${nudged} verse(s) from quality scores`);
 }
 
 // ── Autonomous quality benchmarking ─────────────────────────────────────────
@@ -325,14 +344,15 @@ async function runPrayerQualitySync(supabase) {
 // rows are deleted so they regenerate on next access with the improved engine.
 // Runs daily at 05:00 after the crawl + learning + genetic passes have run.
 async function runQualityBenchmark(supabase) {
+  adminBus.agentStart("qualityBenchmark", "Scoring cached explanations against teaching snippets…");
   const { data: explanations, error } = await supabase
     .from("verse_explanations")
     .select("id, verse_ref, explanation, quality_score, generated_at")
     .order("generated_at", { ascending: false })
     .limit(100);
 
-  if (error) { log.warn("quality benchmark: could not load explanations:", error.message); return; }
-  if (!explanations?.length) { log.info("quality benchmark: no explanations in cache yet"); return; }
+  if (error) { log.warn("quality benchmark: could not load explanations:", error.message); adminBus.agentError("qualityBenchmark", `Load failed: ${error.message}`); return; }
+  if (!explanations?.length) { log.info("quality benchmark: no explanations in cache yet"); adminBus.agentDone("qualityBenchmark", "No cached explanations yet"); return; }
 
   let rescored = 0, low = 0, purged = 0;
   const toDelete = [];
@@ -365,6 +385,7 @@ async function runQualityBenchmark(supabase) {
     `quality benchmark complete — checked=${explanations.length} avg=${avg.toFixed(1)} ` +
     `low-quality=${low} rescored=${rescored} purged=${purged}`
   );
+  adminBus.agentDone("qualityBenchmark", `Checked ${explanations.length} entries, avg score ${avg.toFixed(0)}/100, purged ${purged} low-quality`);
 }
 
 export async function startPrayerEngineScheduler(supabase) {

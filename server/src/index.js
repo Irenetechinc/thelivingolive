@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import session from "express-session";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import { Expo } from "expo-server-sdk";
@@ -13,6 +14,7 @@ import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/sc
 import { logger } from "./lib/logger.js";
 import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
 import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
+import { adminRouter } from "./routes/admin.js";
 
 const log = logger("api");
 
@@ -49,6 +51,15 @@ if (!process.env.OPENAI_API_KEY) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // needed for admin login form
+
+// Session — used only by the admin dashboard (cookie-based, never shared with mobile app)
+app.use(session({
+  secret: process.env.SESSION_SECRET || "living-olive-admin-fallback-secret-2024",
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: "lax", maxAge: 8 * 60 * 60 * 1000 }, // 8h
+}));
 
 // ──────────────────────────────────────────────
 // Request logging — every API call, printed to stdout so it shows up in
@@ -85,6 +96,14 @@ const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
     })
   : null;
 const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
+
+// Expose supabaseAdmin to admin routes via app.locals
+app.locals.supabaseAdmin = supabaseAdmin;
+
+// ── Admin dashboard (no CORS, session-protected) ──────────────────────────────
+// Must be mounted BEFORE the global requireUser middleware so admin pages
+// can use their own cookie-based session instead of a Bearer token.
+app.use("/admin", adminRouter);
 
 // In-memory upload handling for sermon audio — files are transcribed and
 // discarded immediately, never written to disk. Cap keeps a single request
