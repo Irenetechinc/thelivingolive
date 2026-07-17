@@ -184,6 +184,11 @@ async function runDailyKeywordLearning(supabase) {
 }
 
 async function runCrawlJob(supabase) {
+  if (!adminBus.isEnabled("web_crawler")) {
+    log.info("web crawler skipped — disabled by admin feature flag");
+    adminBus.agentLog("webCrawler", "Skipped — web_crawler feature flag is OFF");
+    return;
+  }
   adminBus.agentStart("webCrawler", "Starting web crawl across 37 scripture topic pages…");
   try {
     await runWebCrawl(supabase);
@@ -195,6 +200,11 @@ async function runCrawlJob(supabase) {
 }
 
 async function runGeneticJob(supabase) {
+  if (!adminBus.isEnabled("genetic_algorithm")) {
+    log.info("genetic optimizer skipped — disabled by admin feature flag");
+    adminBus.agentLog("geneticAlgorithm", "Skipped — genetic_algorithm feature flag is OFF");
+    return;
+  }
   adminBus.agentStart("geneticAlgorithm", "Running 40-generation genetic optimization on verse weights…");
   try {
     adminBus.agentProgress("geneticAlgorithm", "Building population from feedback history…");
@@ -239,6 +249,11 @@ async function loadExplanationLearningFromDb(supabase) {
 const CURATED_REFS_SET = new Set(VERSE_BANK.map(v => v.ref));
 
 async function runAutoDiscovery(supabase) {
+  if (!adminBus.isEnabled("auto_discovery")) {
+    log.info("auto-discovery skipped — disabled by admin feature flag");
+    adminBus.agentLog("autoDiscovery", "Skipped — auto_discovery feature flag is OFF");
+    return;
+  }
   adminBus.agentStart("autoDiscovery", "Scanning 7-day feedback for highly-rated uncurated verses…");
   log.info("auto-discovery: scanning for highly-rated uncurated verses...");
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // last 7 days
@@ -301,6 +316,11 @@ async function runAutoDiscovery(supabase) {
 // (high quality_score in prayer_entries) get an additional weight nudge on
 // top of the genetic algorithm, reinforcing agreement between the two loops.
 async function runPrayerQualitySync(supabase) {
+  if (!adminBus.isEnabled("rule_prayer")) {
+    log.info("prayer quality sync skipped — rule_prayer feature flag is OFF");
+    adminBus.agentLog("qualitySync", "Skipped — rule_prayer feature flag is OFF");
+    return;
+  }
   adminBus.agentStart("qualitySync", "Syncing prayer quality scores → verse weight nudges…");
   const { data, error } = await supabase
     .from("prayer_entries")
@@ -344,6 +364,11 @@ async function runPrayerQualitySync(supabase) {
 // rows are deleted so they regenerate on next access with the improved engine.
 // Runs daily at 05:00 after the crawl + learning + genetic passes have run.
 async function runQualityBenchmark(supabase) {
+  if (!adminBus.isEnabled("quality_benchmark")) {
+    log.info("quality benchmark skipped — disabled by admin feature flag");
+    adminBus.agentLog("qualityBenchmark", "Skipped — quality_benchmark feature flag is OFF");
+    return;
+  }
   adminBus.agentStart("qualityBenchmark", "Scoring cached explanations against teaching snippets…");
   const { data: explanations, error } = await supabase
     .from("verse_explanations")
@@ -387,6 +412,9 @@ async function runQualityBenchmark(supabase) {
   );
   adminBus.agentDone("qualityBenchmark", `Checked ${explanations.length} entries, avg score ${avg.toFixed(0)}/100, purged ${purged} low-quality`);
 }
+
+// ── Exported job runners so the admin dashboard can trigger them manually ────
+export { runCrawlJob, runGeneticJob, runDailyKeywordLearning, runAutoDiscovery, runQualityBenchmark, runPrayerQualitySync };
 
 export async function startPrayerEngineScheduler(supabase) {
   await loadLearnedKeywordsFromDb(supabase);

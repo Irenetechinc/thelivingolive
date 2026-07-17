@@ -15,6 +15,7 @@ import { logger } from "./lib/logger.js";
 import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
 import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
 import { adminRouter } from "./routes/admin.js";
+import { adminBus } from "./lib/adminBus.js";
 
 const log = logger("api");
 
@@ -37,6 +38,7 @@ function loadBibleBook(bookId) {
 // rule-based prayer/devotion features run without it.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const isProd = process.env.NODE_ENV === "production";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error(
@@ -47,18 +49,37 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 if (!process.env.OPENAI_API_KEY) {
   console.warn("[WARN] OPENAI_API_KEY not set — sermon transcription, AI prayer, and AI devotion features will be unavailable. All other features run without it.");
 }
+if (isProd && !process.env.SESSION_SECRET) {
+  console.error(
+    "[FATAL] SESSION_SECRET is not set in production. Admin sessions use a weak hardcoded " +
+    "fallback that could be guessed. Set SESSION_SECRET to a long random string in Railway → Variables."
+  );
+}
 
 const app = express();
+
+// Trust Railway's reverse proxy so express-session secure cookies work over HTTPS
+app.set("trust proxy", 1);
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // needed for admin login form
 
 // Session — used only by the admin dashboard (cookie-based, never shared with mobile app)
+// sameSite:"lax" is intentional — it blocks CSRF by refusing cross-site POSTs while still
+// allowing the same-origin admin tab to function. "none" is NOT used because it would expose
+// all admin write endpoints to cross-site request forgery. secure:true in production ensures
+// the cookie is never sent over plain HTTP behind Railway's HTTPS proxy.
 app.use(session({
   secret: process.env.SESSION_SECRET || "living-olive-admin-fallback-secret-2024",
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", maxAge: 8 * 60 * 60 * 1000 }, // 8h
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",   // CSRF-resistant: blocks cross-site POSTs in all environments
+    secure: isProd,    // HTTPS-only in production (works because trust proxy is set above)
+    maxAge: 8 * 60 * 60 * 1000, // 8h
+  },
 }));
 
 // ──────────────────────────────────────────────
@@ -109,6 +130,20 @@ app.use("/admin", adminRouter);
 // discarded immediately, never written to disk. Cap keeps a single request
 // from exhausting server memory on a long recording.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
+
+// ── Feature flag guard — returns 503 when a feature is disabled by admin ──────
+function requireFlag(flag) {
+  return (req, res, next) => {
+    if (!adminBus.isEnabled(flag)) {
+      return res.status(503).json({
+        error: `This feature is currently disabled by the system administrator.`,
+        feature: flag,
+        disabled: true,
+      });
+    }
+    next();
+  };
+}
 
 // Verify the caller's Supabase access token and attach the user to the request.
 async function requireUser(req, res, next) {
@@ -170,12 +205,18 @@ async function fetchBibleApiChapter(bookName, chapter, translation) {
   return verses;
 }
 
-app.get("/api/bible/books", (_req, res) => {
+app.get("/api/bible/books", (req, res) => {
+  if (!adminBus.isEnabled("bible_reader")) {
+    return res.status(503).json({ error: "Bible reader is currently disabled by the system administrator.", disabled: true });
+  }
   res.set("Cache-Control", "public, max-age=86400");
   res.json(bibleIndex);
 });
 
 app.get("/api/bible/:bookId/:chapter", async (req, res) => {
+  if (!adminBus.isEnabled("bible_reader")) {
+    return res.status(503).json({ error: "Bible reader is currently disabled by the system administrator.", disabled: true });
+  }
   const bookId = parseInt(req.params.bookId, 10);
   const chapter = parseInt(req.params.chapter, 10);
   const version = (req.query.version || "KJV").toString().toUpperCase();
@@ -198,6 +239,16 @@ app.get("/api/bible/:bookId/:chapter", async (req, res) => {
 
   // Other versions: proxy to bible-api.com (free, public-domain versions)
   // Supported: WEB (World English Bible), ASV (American Standard Version)
+  if (!adminBus.isEnabled("translation_switcher")) {
+    // Fall back to KJV when translation switcher is disabled by admin
+    try {
+      const chapters = loadBibleBook(bookId);
+      const verses = chapters[chapter - 1];
+      if (!verses) return res.status(404).json({ error: "Unknown chapter" });
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.json({ bookId, bookName: meta.name, chapter, version: "KJV", verses, fallback: true, fallbackReason: "Translation switcher is currently disabled" });
+    } catch { return res.status(500).json({ error: "Failed to load chapter" }); }
+  }
   const translationMap = { WEB: "web", ASV: "asv" };
   const translation = translationMap[version];
   if (!translation) {
@@ -239,7 +290,7 @@ app.get("/api/bible/:bookId/:chapter", async (req, res) => {
 // scraped teaching context + cross-references). Same response shape as
 // before so the mobile app needs no changes.
 // ──────────────────────────────────────────────
-app.post("/api/ai/explain-verse", requireUser, async (req, res) => {
+app.post("/api/ai/explain-verse", requireUser, requireFlag("verse_explain"), async (req, res) => {
   try {
     const { reference, text, version } = req.body;
     if (!reference || !text) return res.status(400).json({ error: "reference and text are required" });
@@ -259,7 +310,7 @@ app.post("/api/ai/explain-verse", requireUser, async (req, res) => {
 
 // User can rate an explanation (1-5 stars) — drives the explanation engine's
 // self-learning loop via verseExplainEngine.recordExplanationFeedback.
-app.post("/api/ai/explain-verse/feedback", requireUser, async (req, res) => {
+app.post("/api/ai/explain-verse/feedback", requireUser, requireFlag("verse_explain"), async (req, res) => {
   try {
     const { verseRef, rating } = req.body;
     if (!verseRef || !rating) return res.status(400).json({ error: "verseRef and rating are required" });
@@ -311,7 +362,7 @@ app.post("/api/ai/explain-verse/feedback", requireUser, async (req, res) => {
 // ──────────────────────────────────────────────
 // AI devotionals
 // ──────────────────────────────────────────────
-app.post("/api/ai/devotion", requireUser, async (req, res) => {
+app.post("/api/ai/devotion", requireUser, requireFlag("ai_devotion"), async (req, res) => {
   try {
     const { goal, duration, dayNumber } = req.body;
     if (!goal || !duration) return res.status(400).json({ error: "goal and duration are required" });
@@ -350,7 +401,7 @@ app.post("/api/ai/devotion", requireUser, async (req, res) => {
 // ──────────────────────────────────────────────
 // AI prayer
 // ──────────────────────────────────────────────
-app.post("/api/ai/prayer", requireUser, async (req, res) => {
+app.post("/api/ai/prayer", requireUser, requireFlag("ai_prayer"), async (req, res) => {
   try {
     const { desires, count, type } = req.body;
     if (!desires || !type) return res.status(400).json({ error: "desires and type are required" });
@@ -394,7 +445,7 @@ app.post("/api/ai/prayer", requireUser, async (req, res) => {
 // OpenAI-based /api/ai/prayer and /api/ai/devotion routes above, which stay
 // as-is since they're already used elsewhere in the app.
 // ──────────────────────────────────────────────
-app.post("/api/prayer-engine/prayer", requireUser, async (req, res) => {
+app.post("/api/prayer-engine/prayer", requireUser, requireFlag("rule_prayer"), async (req, res) => {
   try {
     const { desires, count, type } = req.body;
     if (!desires) return res.status(400).json({ error: "desires is required" });
@@ -423,7 +474,7 @@ app.post("/api/prayer-engine/prayer", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/prayer-engine/devotion", requireUser, async (req, res) => {
+app.post("/api/prayer-engine/devotion", requireUser, requireFlag("rule_devotion"), async (req, res) => {
   try {
     const { goal, dayNumber } = req.body;
     if (!goal) return res.status(400).json({ error: "goal is required" });
@@ -445,7 +496,7 @@ app.post("/api/prayer-engine/devotion", requireUser, async (req, res) => {
 // Lets the app collect a 1-5 star rating on a generated prayer point or
 // devotional; this is what actually drives the "self-evolving" behavior —
 // see lib/scheduler.js for how it's applied.
-app.post("/api/prayer-engine/feedback", requireUser, async (req, res) => {
+app.post("/api/prayer-engine/feedback", requireUser, requireFlag("rule_prayer"), async (req, res) => {
   try {
     const { entryType, category, verseRef, rating, sourceText } = req.body;
     if (!entryType || !category || !rating) {
@@ -478,7 +529,7 @@ app.post("/api/prayer-engine/feedback", requireUser, async (req, res) => {
 // ──────────────────────────────────────────────
 // Sermon recording transcription
 // ──────────────────────────────────────────────
-app.post("/api/ai/transcribe", requireUser, upload.single("audio"), async (req, res) => {
+app.post("/api/ai/transcribe", requireUser, requireFlag("sermon_transcription"), upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "audio file is required" });
 
@@ -517,7 +568,7 @@ app.post("/api/ai/transcribe", requireUser, upload.single("audio"), async (req, 
 // ──────────────────────────────────────────────
 // Push notification token registration
 // ──────────────────────────────────────────────
-app.post("/api/push/register", requireUser, async (req, res) => {
+app.post("/api/push/register", requireUser, requireFlag("push_notifications"), async (req, res) => {
   try {
     const { token, platform } = req.body;
     if (!token) return res.status(400).json({ error: "token is required" });
@@ -575,6 +626,9 @@ async function sendPushToUser(userId, { title, body, data }) {
 // Requires X-Cron-Secret header = CRON_SECRET env var.
 // ──────────────────────────────────────────────
 app.post("/api/push/notify-scheduled", async (req, res) => {
+  if (!adminBus.isEnabled("push_notifications")) {
+    return res.status(503).json({ error: "Push notifications are currently disabled by the system administrator.", disabled: true });
+  }
   if (!supabaseAdmin) {
     return res.status(503).json({ error: "Database unavailable: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured." });
   }
