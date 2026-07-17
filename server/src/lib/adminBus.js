@@ -124,6 +124,27 @@ class AdminBus extends EventEmitter {
   getAgentState() {
     return this._agentState;
   }
+
+  // ── Feature flag persistence ───────────────────────────────────────────────
+  // Called once at server startup to restore any flags the admin changed before
+  // the last restart. Merges DB values on top of in-memory defaults so new flags
+  // added to code still appear as enabled=true even if not yet in the database.
+  async loadFlagsFromDb(supabase) {
+    try {
+      const { data, error } = await supabase.from('feature_flags').select('key, enabled');
+      if (error) { console.warn('[adminBus] Could not load flags from DB:', error.message); return; }
+      let loaded = 0;
+      for (const row of data ?? []) {
+        if (this._featureFlags[row.key] !== undefined) {
+          this._featureFlags[row.key].enabled = Boolean(row.enabled);
+          loaded++;
+        }
+      }
+      if (loaded) console.info(`[adminBus] Restored ${loaded} persisted feature flag(s) from Supabase`);
+    } catch (e) {
+      console.warn('[adminBus] loadFlagsFromDb error:', e.message);
+    }
+  }
 }
 
 export const adminBus = new AdminBus();

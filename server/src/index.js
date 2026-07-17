@@ -121,6 +121,18 @@ const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
 // Expose supabaseAdmin to admin routes via app.locals
 app.locals.supabaseAdmin = supabaseAdmin;
 
+// Push stats — in-memory counters shared across routes; reset on restart.
+// Delivery history (last 50 pushes) is available to the admin dashboard.
+app.locals.pushStats = { sent: 0, failed: 0, recentPushes: [] };
+
+// Restore persisted feature flags from Supabase so admin toggles survive restarts.
+// This runs in the background; the server serves traffic immediately on startup.
+if (supabaseAdmin) {
+  adminBus.loadFlagsFromDb(supabaseAdmin).catch((e) =>
+    console.warn("[adminBus] Could not restore feature flags:", e.message)
+  );
+}
+
 // ── Admin dashboard (no CORS, session-protected) ──────────────────────────────
 // Must be mounted BEFORE the global requireUser middleware so admin pages
 // can use their own cookie-based session instead of a Bearer token.
@@ -611,13 +623,28 @@ async function sendPushToUser(userId, { title, body, data }) {
   if (!messages.length) return;
 
   const chunks = expo.chunkPushNotifications(messages);
+  let chunkFailed = false;
   for (const chunk of chunks) {
     try {
       await expo.sendPushNotificationsAsync(chunk);
     } catch (err) {
       console.warn("expo push chunk failed:", err.message);
+      chunkFailed = true;
     }
   }
+
+  // Update in-memory push stats and broadcast to the admin dashboard in real time
+  const ps = app.locals.pushStats;
+  if (ps) {
+    if (chunkFailed) {
+      ps.failed++;
+    } else {
+      ps.sent++;
+      ps.recentPushes.unshift({ userId, title, body, ts: Date.now() });
+      if (ps.recentPushes.length > 50) ps.recentPushes.pop();
+    }
+  }
+  adminBus.broadcast({ type: "push", userId, title, body, failed: chunkFailed, ts: Date.now() });
 }
 
 // ──────────────────────────────────────────────

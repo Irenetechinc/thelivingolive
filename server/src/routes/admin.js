@@ -5,6 +5,7 @@
  */
 
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -17,6 +18,20 @@ import {
   runQualityBenchmark,
   runPrayerQualitySync,
 } from '../lib/scheduler.js';
+
+// Rate-limit admin login: max 10 attempts per 15 minutes per IP.
+// This prevents brute-force credential attacks without blocking legitimate admins.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).send(loginPage(
+      'Too many login attempts. Please wait 15 minutes before trying again.'
+    ));
+  },
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -57,7 +72,7 @@ router.get('/login', (req, res) => {
   res.send(loginPage());
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', loginLimiter, (req, res) => {
   // Refuse login entirely when production credentials are not configured
   if (!ADMIN_USER || !ADMIN_PASS) {
     return res.send(loginPage(
@@ -202,7 +217,51 @@ router.post('/api/flags/:key', requireAdmin, (req, res) => {
   const updated = adminBus.setFlag(key, enabled);
   if (!updated) return res.status(404).json({ ok: false, error: 'Unknown flag' });
   adminBus.agentLog('admin', `Feature "${key}" ${enabled ? 'ENABLED' : 'DISABLED'} by admin`);
+
+  // Persist the change to Supabase so it survives Railway restarts.
+  // Fire-and-forget — the in-memory change is immediate; DB write is best-effort.
+  const supabase = req.app.locals.supabaseAdmin;
+  if (supabase) {
+    supabase.from('feature_flags').upsert(
+      { key, enabled: !!enabled, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    ).then(({ error }) => {
+      if (error) console.warn(`[admin] Failed to persist flag "${key}":`, error.message);
+    });
+  }
+
   res.json({ ok: true, key, enabled });
+});
+
+// ── Push notification stats API ───────────────────────────────────────────────
+router.get('/api/push-stats', requireAdmin, async (req, res) => {
+  try {
+    const supabase = req.app.locals.supabaseAdmin;
+    const ps = req.app.locals.pushStats ?? { sent: 0, failed: 0, recentPushes: [] };
+
+    // Count registered device tokens from Supabase
+    let tokenCount = 0;
+    let uniqueUsers = 0;
+    if (supabase) {
+      const [tokensRes, usersRes] = await Promise.allSettled([
+        supabase.from('push_tokens').select('id', { count: 'exact', head: true }),
+        supabase.from('push_tokens').select('user_id', { count: 'exact', head: true }),
+      ]);
+      tokenCount  = tokensRes.value?.count  ?? 0;
+      uniqueUsers = usersRes.value?.count   ?? 0;
+    }
+
+    res.json({
+      ok: true,
+      tokens: tokenCount,
+      uniqueUsers,
+      sent: ps.sent,
+      failed: ps.failed,
+      recentPushes: ps.recentPushes.slice(0, 20),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ── Agent manual trigger API ──────────────────────────────────────────────────

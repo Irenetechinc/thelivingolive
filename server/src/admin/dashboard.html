@@ -138,6 +138,21 @@ td.uid{color:rgba(184,207,232,0.25);font-size:8px}
 #radar-wrap h3{font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
 #radar-canvas{display:block;margin:0 auto}
 
+/* ── Push Stats ───────────────────────────────────────────────────────────*/
+#push-section{background:var(--bg2);border:1px solid rgba(157,78,255,0.18);border-radius:10px;padding:12px}
+.push-title{font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--purple);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border2);display:flex;align-items:center;gap:6px}
+.push-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.push-stat-box{background:var(--bg3);border:1px solid rgba(255,255,255,0.05);border-radius:7px;padding:8px 10px;text-align:center}
+.push-stat-box .psv{font-size:18px;font-weight:700;color:var(--purple);display:block;line-height:1;font-variant-numeric:tabular-nums}
+.push-stat-box .psl{font-size:7px;letter-spacing:1.5px;color:var(--text-dim);text-transform:uppercase;margin-top:3px;display:block}
+.push-stat-box.full{grid-column:1/-1}
+.push-stat-box.failed-box .psv{color:var(--amber)}
+.push-log-header{font-size:7.5px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:5px}
+#push-log{max-height:90px;overflow-y:auto}
+.push-log-row{font-size:8px;color:rgba(184,207,232,0.5);border-bottom:1px solid rgba(255,255,255,0.03);padding:2px 0;display:flex;gap:6px;align-items:flex-start}
+.push-log-row .plt{color:rgba(157,78,255,0.5);flex-shrink:0;width:48px;font-size:7.5px}
+.push-log-row .plb{flex:1;word-break:break-word;color:var(--text-dim)}
+
 .flag-section-title{font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--purple);padding:5px 4px;border-bottom:1px solid var(--border2);margin-bottom:8px;display:flex;align-items:center;gap:5px}
 .flag-group{margin-bottom:14px}
 .flag-row{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;background:var(--bg2);border:1px solid rgba(255,255,255,0.04);margin-bottom:5px;transition:all .2s}
@@ -277,12 +292,38 @@ td.uid{color:rgba(184,207,232,0.25);font-size:8px}
       </div>
     </div>
 
-    <!-- ── Right: Radar + Feature Flags ──────────────────────────────────── -->
+    <!-- ── Right: Radar + Push Stats + Feature Flags ────────────────────── -->
     <div id="right-panel">
       <div id="radar-wrap">
         <h3>⬡ Agent Activity Matrix</h3>
         <canvas id="radar-canvas" width="272" height="190"></canvas>
       </div>
+
+      <!-- Push notification delivery panel -->
+      <div id="push-section">
+        <div class="push-title">📲 Push Notifications</div>
+        <div class="push-grid">
+          <div class="push-stat-box">
+            <span class="psv" id="ps-tokens">—</span>
+            <span class="psl">Tokens</span>
+          </div>
+          <div class="push-stat-box">
+            <span class="psv" id="ps-users">—</span>
+            <span class="psl">Users</span>
+          </div>
+          <div class="push-stat-box">
+            <span class="psv" id="ps-sent">—</span>
+            <span class="psl">Sent (session)</span>
+          </div>
+          <div class="push-stat-box failed-box">
+            <span class="psv" id="ps-failed">—</span>
+            <span class="psl">Failed</span>
+          </div>
+        </div>
+        <div class="push-log-header">Recent deliveries</div>
+        <div id="push-log"></div>
+      </div>
+
       <div>
         <div class="flag-section-title">⚙ Feature Control Panel</div>
         <div id="flags-list"></div>
@@ -696,6 +737,19 @@ function connectSSE(){
       appendLog(d.ts,'admin',`⚑ "${d.label||d.key}" ${d.enabled?'ENABLED':'DISABLED'}`,AGENT_META['admin']?.color,'type-admin');
       return;
     }
+    if(d.type==='push'){
+      // Live push delivery — update session counters and prepend to delivery log
+      const sentEl=document.getElementById('ps-sent');
+      const failEl=document.getElementById('ps-failed');
+      if(d.failed){
+        if(failEl)failEl.textContent=String((parseInt(failEl.textContent)||0)+1);
+      }else{
+        if(sentEl)sentEl.textContent=String((parseInt(sentEl.textContent)||0)+1);
+        prependPushLog(d.ts,d.title,d.body);
+      }
+      appendLog(d.ts,'push',`📲 ${d.failed?'FAILED':'Sent'}: ${d.title}`,AGENT_META['push']?.color||'#9d4eff',d.failed?'type-error':'');
+      return;
+    }
   };
 
   es.onerror=()=>{
@@ -737,12 +791,48 @@ async function loadSystem(){
   }catch(e){console.warn('system load failed',e);}
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// PUSH STATS
+// ═══════════════════════════════════════════════════════════════════════
+function prependPushLog(ts,title,body){
+  const wrap=document.getElementById('push-log');
+  if(!wrap)return;
+  const row=document.createElement('div');
+  row.className='push-log-row';
+  const t=new Date(ts);
+  const hm=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
+  row.innerHTML=`<span class="plt">${hm}</span><span class="plb">${title}${body?' — '+body:''}</span>`;
+  wrap.insertBefore(row,wrap.firstChild);
+  // Keep at most 20 rows
+  while(wrap.children.length>20)wrap.removeChild(wrap.lastChild);
+}
+
+async function loadPushStats(){
+  try{
+    const r=await fetch('/admin/api/push-stats');
+    const d=await r.json();
+    if(!d.ok)return;
+    const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??'—';};
+    set('ps-tokens',d.tokens);
+    set('ps-users',d.uniqueUsers);
+    set('ps-sent',d.sent);
+    set('ps-failed',d.failed);
+    // Render recent pushes (server-side history, lost on restart but shown on first load)
+    const wrap=document.getElementById('push-log');
+    if(wrap&&d.recentPushes?.length){
+      wrap.innerHTML='';
+      for(const p of d.recentPushes){prependPushLog(p.ts,p.title,p.body);}
+    }
+  }catch(e){console.warn('push-stats load failed',e);}
+}
+
 // Initial load
-loadStats();loadUsers();loadFlags();loadSystem();renderAgents();
+loadStats();loadUsers();loadFlags();loadSystem();loadPushStats();renderAgents();
 // Periodic refresh
 setInterval(loadStats,30000);
 setInterval(loadSystem,10000);
 setInterval(loadUsers,60000);
+setInterval(loadPushStats,60000);
 </script>
 </body>
 </html>

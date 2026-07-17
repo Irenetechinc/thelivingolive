@@ -238,7 +238,18 @@ alter table public.prayer_plans enable row level security;
 alter table public.prayer_entries enable row level security;
 alter table public.push_tokens enable row level security;
 
-do $$
+-- ── Feature flags — persists admin toggle state across Railway restarts ──────
+-- Accessed only via the service role key (admin routes); never from the mobile app.
+-- Run this block if you are adding feature_flags for the first time:
+create table if not exists public.feature_flags (
+  key        text        primary key,
+  enabled    boolean     not null default true,
+  updated_at timestamptz not null default now()
+);
+-- No RLS policies needed — service role bypasses RLS; anon/user roles never touch this table.
+alter table public.feature_flags enable row level security;
+
+do $
 declare
   t text;
 begin
