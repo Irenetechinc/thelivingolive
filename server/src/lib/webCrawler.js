@@ -50,11 +50,29 @@ function loadBook(bookId) {
 // One or more openbible.info topic pages to crawl per category — each is a
 // real page listing verses the community associates with that theme.
 const CRAWL_TARGETS = {
-  Warfare: ["spiritual_warfare", "protection", "fear"],
-  Adoration: ["worship", "praise", "gods_glory"],
-  Thanksgiving: ["thanksgiving", "gratitude"],
-  Petition: ["prayer", "asking_god_for_help", "wisdom"],
-  Intercession: ["intercession", "praying_for_others", "healing"],
+  Warfare: [
+    "spiritual_warfare", "protection", "fear", "anxiety", "temptation",
+    "overcoming_evil", "putting_on_the_armor_of_god", "strongholds",
+    "resisting_the_devil", "victory_in_christ",
+  ],
+  Adoration: [
+    "worship", "praise", "gods_glory", "holiness_of_god", "gods_greatness",
+    "exalting_god", "reverence", "magnifying_god", "gods_majesty",
+  ],
+  Thanksgiving: [
+    "thanksgiving", "gratitude", "counting_your_blessings", "gods_goodness",
+    "praising_god_for_his_blessings", "contentment", "joy_in_the_lord",
+  ],
+  Petition: [
+    "prayer", "asking_god_for_help", "wisdom", "guidance", "direction_from_god",
+    "gods_provision", "financial_help", "healing", "answered_prayer",
+    "faith_in_god", "trusting_god", "gods_will",
+  ],
+  Intercession: [
+    "intercession", "praying_for_others", "healing", "praying_for_the_sick",
+    "praying_for_family", "praying_for_enemies", "praying_for_the_nation",
+    "prayer_for_the_church", "compassion",
+  ],
 };
 
 const USER_AGENT = "TheLivingOliveApp/1.0 (+scripture-discovery-crawler; non-commercial ministry app)";
