@@ -1,17 +1,17 @@
-// ─── Algorithmic Bible Verse Explanation Engine ────────────────────────────
-// No LLM, no GPU. Explains verses using:
-//   1. Free Dictionary API (api.dictionaryapi.dev) — word-by-word definitions
-//   2. Local KJV Bible data — surrounding context, cross-referenced verses
-//   3. Markov-chain text assembly — natural-reading, varied explanations
-//   4. Scraped teaching context from webCrawler — learned patterns per verse
-//   5. Prayer-engine category detection — thematic connections
-//   6. Supabase — cache and self-learning from user ratings
+// ─── Algorithmic Bible Verse Explanation Engine ─────────────────────────────
+// Produces SERMON-STYLE prose explanations. No fixed templates, no LLM,
+// no GPU. Every explanation is assembled dynamically from:
+//   1. Scraped teaching context (openbible.info community commentary)
+//   2. Surrounding verse context from local KJV data
+//   3. Book/author metadata for narrative framing
+//   4. Cross-reference connections with WHY each passage connects explained
+//   5. Free Dictionary API — used INTERNALLY to enrich the word corpus
+//      (definitions never appear verbatim in output)
+//   6. Self-benchmarking: each explanation is quality-scored and the score
+//      is used to bias future generation toward richer content
 //
-// Returns the same shape as the old OpenAI endpoint:
-//   { explanation: string, supportingScriptures: [{reference, note}] }
-//
-// Every lookup, generation step, and cache hit/miss is logged so all
-// activity is visible in `railway logs`.
+// Output is flowing prose — no headers, no bullet points, no emoji labels.
+// It reads like a written pastoral sermon, not an English grammar class.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -36,187 +36,126 @@ function loadBook(bookId) {
   return bookCache.get(bookId);
 }
 
-// ── Book metadata for context layer ─────────────────────────────────────────
+// ── Book metadata ─────────────────────────────────────────────────────────────
 const BOOK_CONTEXT = {
-  // OT
-  1:  { author: "Moses", audience: "Israel",              theme: "Creation, covenant, and the beginning of God's relationship with humanity" },
-  2:  { author: "Moses", audience: "Israel",              theme: "Redemption from slavery and the covenant at Sinai" },
-  3:  { author: "Moses", audience: "Israel",              theme: "Holiness, worship, and the priestly system" },
-  4:  { author: "Moses", audience: "Israel",              theme: "Israel's journey and faithfulness in the wilderness" },
-  5:  { author: "Moses", audience: "Israel",              theme: "The law renewed and God's covenant faithfulness" },
-  6:  { author: "Joshua", audience: "Israel",             theme: "God's faithfulness in bringing Israel into the promised land" },
-  7:  { author: "Samuel / Anonymous", audience: "Israel", theme: "The cycle of sin, judgment, and deliverance under the judges" },
-  8:  { author: "Anonymous", audience: "Israel",          theme: "Loyalty, faithfulness, and God's providence" },
-  9:  { author: "Anonymous", audience: "Israel",          theme: "Samuel, Saul, and the beginning of the kingdom" },
-  10: { author: "Anonymous", audience: "Israel",          theme: "David's reign, God's covenant with David" },
-  11: { author: "Anonymous", audience: "Israel",          theme: "Solomon's wisdom and the division of the kingdom" },
-  12: { author: "Anonymous", audience: "Israel",          theme: "The northern kingdom's decline to exile" },
-  13: { author: "Anonymous", audience: "Israel",          theme: "Parallel history — God's sovereignty over nations" },
-  14: { author: "Anonymous", audience: "Israel",          theme: "Solomon's wisdom and the temple" },
-  15: { author: "Ezra", audience: "Returning exiles",     theme: "Restoration and return from Babylon" },
-  16: { author: "Nehemiah", audience: "Returning exiles", theme: "Rebuilding Jerusalem's walls and community" },
-  17: { author: "Mordecai / Esther", audience: "Jews in Persia", theme: "God's hidden providence protecting His people" },
-  18: { author: "Unknown", audience: "Suffering people",  theme: "Suffering, faith, and the sovereignty of God" },
-  19: { author: "David and others", audience: "Israel",   theme: "Worship, lament, praise, and trust in God" },
-  20: { author: "Solomon", audience: "Israel",            theme: "Fear of God as the foundation of wisdom" },
-  21: { author: "Solomon", audience: "Israel",            theme: "The vanity of life apart from God" },
-  22: { author: "Solomon", audience: "Israel",            theme: "Love and beauty as gifts from God" },
-  23: { author: "Isaiah", audience: "Israel",             theme: "Judgment, comfort, and the coming Messiah" },
-  24: { author: "Jeremiah", audience: "Israel",           theme: "God's faithfulness in judgment and the new covenant" },
-  25: { author: "Jeremiah", audience: "Israel",           theme: "Grief over Jerusalem's fall and hope in God's mercy" },
-  26: { author: "Ezekiel", audience: "Israel in exile",   theme: "God's glory, Israel's restoration, and the new temple" },
-  27: { author: "Daniel", audience: "Israel in exile",    theme: "God's sovereignty over human kingdoms and end times" },
-  28: { author: "Hosea", audience: "Israel",              theme: "God's faithful love despite Israel's unfaithfulness" },
-  29: { author: "Joel", audience: "Israel",               theme: "Repentance, the Day of the LORD, and the Spirit's outpouring" },
-  30: { author: "Amos", audience: "Israel",               theme: "Social justice and accountability before a holy God" },
-  31: { author: "Obadiah", audience: "Edom and Israel",   theme: "God's judgment on pride and his deliverance of Zion" },
-  32: { author: "Jonah", audience: "Israel",              theme: "God's compassion extending beyond Israel" },
-  33: { author: "Micah", audience: "Israel",              theme: "Justice, mercy, humility, and hope of restoration" },
-  34: { author: "Nahum", audience: "Nineveh and Israel",  theme: "God's judgment on Assyria and comfort for Israel" },
-  35: { author: "Habakkuk", audience: "Israel",           theme: "Faith and God's justice in times of confusion" },
-  36: { author: "Zephaniah", audience: "Israel",          theme: "Judgment and the remnant's joyful restoration" },
-  37: { author: "Haggai", audience: "Returning exiles",   theme: "Rebuilding the temple and prioritising God" },
-  38: { author: "Zechariah", audience: "Returning exiles",theme: "Messianic hope and God's plans for Jerusalem" },
-  39: { author: "Malachi", audience: "Israel",            theme: "Covenant faithfulness and preparation for the Messiah" },
-  // NT
-  40: { author: "Matthew", audience: "Jewish Christians", theme: "Jesus as the fulfillment of the Old Testament — the King of Israel" },
-  41: { author: "Mark", audience: "Roman audience",       theme: "Jesus as the suffering servant — action and power" },
-  42: { author: "Luke", audience: "Gentile Christians",   theme: "Jesus as the Son of Man, the saviour of all" },
-  43: { author: "John", audience: "All believers",        theme: "Jesus as the Word and Son of God — eternal life through faith" },
-  44: { author: "Luke", audience: "Theophilus and believers", theme: "The spread of the gospel from Jerusalem to the world" },
-  45: { author: "Paul", audience: "Rome",                 theme: "Salvation by faith, the righteousness of God" },
-  46: { author: "Paul", audience: "Corinth",              theme: "Unity, spiritual gifts, and Christian conduct" },
-  47: { author: "Paul", audience: "Corinth",              theme: "Paul's apostleship and the ministry of reconciliation" },
-  48: { author: "Paul", audience: "Galatia",              theme: "Freedom from law; justification by faith alone" },
-  49: { author: "Paul", audience: "Ephesus",              theme: "The church as the body of Christ, spiritual warfare" },
-  50: { author: "Paul", audience: "Philippi",             theme: "Joy and contentment in Christ whatever the circumstances" },
-  51: { author: "Paul", audience: "Colossae",             theme: "The supremacy of Christ over all creation" },
-  52: { author: "Paul", audience: "Thessalonica",         theme: "Holiness and hope in Christ's return" },
-  53: { author: "Paul", audience: "Thessalonica",         theme: "Clarity on the end times and perseverance" },
-  54: { author: "Paul", audience: "Timothy",              theme: "Leadership, sound doctrine, and pastoral care" },
-  55: { author: "Paul", audience: "Timothy",              theme: "Endurance and faithfulness to the gospel" },
-  56: { author: "Paul", audience: "Titus",                theme: "Church order and the grace that trains godliness" },
-  57: { author: "Paul", audience: "Philemon",             theme: "Reconciliation and Christian brotherhood" },
-  58: { author: "Unknown", audience: "Hebrew Christians", theme: "Jesus as the great High Priest — superior to the old covenant" },
-  59: { author: "James", audience: "Jewish Christians",   theme: "Living faith produces action — wisdom and practical godliness" },
-  60: { author: "Peter", audience: "Scattered believers", theme: "Hope and holiness in suffering and exile" },
-  61: { author: "Peter", audience: "Scattered believers", theme: "Growing in grace and guarding against false teaching" },
-  62: { author: "John", audience: "The church",           theme: "Walking in love, light, and truth as God's children" },
-  63: { author: "John", audience: "Gaius and the church", theme: "Hospitality, truth, and Christian integrity" },
-  64: { author: "Jude", audience: "All believers",        theme: "Contending for the faith against apostasy" },
-  65: { author: "John", audience: "Seven churches of Asia", theme: "Christ's authority over history and the ultimate victory of God" },
-  66: { author: "John", audience: "Seven churches of Asia", theme: "Continued — the Lamb's triumph and the new creation" },
+  1:  { author: "Moses", era: "the wilderness period", theme: "creation, covenant, and the beginning of God's relationship with humanity", testament: "OT" },
+  2:  { author: "Moses", era: "the Exodus", theme: "redemption from slavery and the covenant sealed at Sinai", testament: "OT" },
+  3:  { author: "Moses", era: "Israel at Sinai", theme: "holiness and the priestly system that brought Israel near to God", testament: "OT" },
+  4:  { author: "Moses", era: "the wilderness years", theme: "Israel's journey, failure, and God's patient faithfulness", testament: "OT" },
+  5:  { author: "Moses", era: "the plains of Moab", theme: "the covenant renewed before Israel entered the land", testament: "OT" },
+  6:  { author: "Joshua", era: "the conquest of Canaan", theme: "God's faithfulness in keeping the promises He had made centuries before", testament: "OT" },
+  7:  { author: "Samuel / anonymous", era: "the period of the judges", theme: "the repeated cycle of sin, judgment, and God's merciful deliverance", testament: "OT" },
+  8:  { author: "anonymous", era: "the time of the judges", theme: "loyalty, faithfulness, and the hidden hand of God's providence", testament: "OT" },
+  9:  { author: "anonymous", era: "the early monarchy", theme: "Samuel, Saul, and what it costs a people to demand a king", testament: "OT" },
+  10: { author: "anonymous", era: "David's reign", theme: "David's kingdom and the covenant God made with David's house forever", testament: "OT" },
+  11: { author: "anonymous", era: "the united monarchy", theme: "Solomon's wisdom and the slow fracturing of a kingdom", testament: "OT" },
+  12: { author: "anonymous", era: "the divided kingdom", theme: "the northern kingdom's decline toward exile", testament: "OT" },
+  13: { author: "anonymous", era: "the parallel history", theme: "God's sovereignty working through even the most troubled reigns", testament: "OT" },
+  14: { author: "anonymous", era: "the unified monarchy", theme: "Solomon's wisdom and the building of the temple", testament: "OT" },
+  15: { author: "Ezra", era: "the return from exile", theme: "restoration and what it looks like for a people to come home", testament: "OT" },
+  16: { author: "Nehemiah", era: "the return from exile", theme: "rebuilding broken walls and a broken community", testament: "OT" },
+  17: { author: "Mordecai / Esther", era: "the Persian diaspora", theme: "God's hidden providence protecting His people when all seemed lost", testament: "OT" },
+  18: { author: "unknown", era: "the patriarchal period", theme: "suffering, faith, and trusting a God who answers from the whirlwind", testament: "OT" },
+  19: { author: "David and others", era: "spanning centuries of Israel's life", theme: "the full range of human emotion brought honestly before God", testament: "OT" },
+  20: { author: "Solomon", era: "the wisdom tradition", theme: "the fear of God as the only foundation on which wisdom can be built", testament: "OT" },
+  21: { author: "Solomon", era: "the wisdom tradition", theme: "the vanity of every human ambition apart from God", testament: "OT" },
+  22: { author: "Solomon", era: "the wisdom tradition", theme: "the goodness of love as a gift from the Creator", testament: "OT" },
+  23: { author: "Isaiah", era: "the Assyrian crisis and beyond", theme: "God's judgment and His staggering comfort, with the Messiah at the centre", testament: "OT" },
+  24: { author: "Jeremiah", era: "the fall of Jerusalem", theme: "God's faithfulness in the rubble of judgment and the promise of a new covenant", testament: "OT" },
+  25: { author: "Jeremiah", era: "the fall of Jerusalem", theme: "grief held in the arms of a God whose mercies do not fail", testament: "OT" },
+  26: { author: "Ezekiel", era: "the Babylonian exile", theme: "God's glory departing and returning — and the vision of what restored worship will look like", testament: "OT" },
+  27: { author: "Daniel", era: "the Babylonian and Persian exiles", theme: "God's sovereignty over the most powerful kingdoms in human history", testament: "OT" },
+  28: { author: "Hosea", era: "the late northern kingdom", theme: "God's relentless, faithful love for a people who kept leaving Him", testament: "OT" },
+  29: { author: "Joel", era: "a period of locust crisis", theme: "repentance, the Day of the LORD, and the Spirit poured out on all flesh", testament: "OT" },
+  30: { author: "Amos", era: "the prosperous northern kingdom", theme: "social justice and the accountability of God's people before a holy God", testament: "OT" },
+  31: { author: "Obadiah", era: "after Jerusalem's fall", theme: "God's judgment on pride and His deliverance of the remnant of Zion", testament: "OT" },
+  32: { author: "Jonah", era: "the Assyrian period", theme: "the uncomfortable truth that God's compassion reaches further than we want", testament: "OT" },
+  33: { author: "Micah", era: "the Assyrian period", theme: "justice, mercy, and what God actually requires of His people", testament: "OT" },
+  34: { author: "Nahum", era: "before the fall of Nineveh", theme: "God's judgment on the nation that had terrorised His people for a century", testament: "OT" },
+  35: { author: "Habakkuk", era: "the Babylonian rise", theme: "faith and honest wrestling when God's ways make no sense", testament: "OT" },
+  36: { author: "Zephaniah", era: "Josiah's reign", theme: "the Day of the LORD and the joy waiting on the other side of judgment", testament: "OT" },
+  37: { author: "Haggai", era: "the return from exile", theme: "rebuilding the temple and putting God back at the centre of a rebuilt life", testament: "OT" },
+  38: { author: "Zechariah", era: "the return from exile", theme: "Messianic hope and God's unfinished plans for Jerusalem", testament: "OT" },
+  39: { author: "Malachi", era: "the post-exilic community", theme: "covenant faithfulness and the preparation for what God was about to do", testament: "OT" },
+  40: { author: "Matthew", era: "the first century", theme: "Jesus as the fulfillment of everything the Old Testament promised — the King of Israel", testament: "NT" },
+  41: { author: "Mark", era: "the first century", theme: "Jesus as the suffering servant — the one who acted decisively and paid a costly price", testament: "NT" },
+  42: { author: "Luke", era: "the first century", theme: "Jesus as the Son of Man, the Saviour of absolutely everyone, without exception", testament: "NT" },
+  43: { author: "John", era: "the first century", theme: "Jesus as the eternal Word of God — and what it means to have life through believing in Him", testament: "NT" },
+  44: { author: "Luke", era: "the first century", theme: "the Spirit-driven spread of the gospel from Jerusalem to the ends of the earth", testament: "NT" },
+  45: { author: "Paul", era: "around 57 AD", theme: "salvation by faith alone — and the stunning implication that God's righteousness covers sinners", testament: "NT" },
+  46: { author: "Paul", era: "around 55 AD", theme: "the unity of the body, the right use of gifts, and the supremacy of love", testament: "NT" },
+  47: { author: "Paul", era: "around 55-56 AD", theme: "Paul's apostleship and the ministry of reconciliation that defines the church's calling", testament: "NT" },
+  48: { author: "Paul", era: "around 48-49 AD", theme: "freedom from the law — and why justification by faith is non-negotiable", testament: "NT" },
+  49: { author: "Paul", era: "around 60-62 AD", theme: "the church as the body of Christ, and the spiritual armour needed for the battle", testament: "NT" },
+  50: { author: "Paul", era: "around 61 AD", theme: "joy and contentment in Christ, whatever the circumstances", testament: "NT" },
+  51: { author: "Paul", era: "around 60-62 AD", theme: "the supremacy of Christ over everything — visible and invisible, past, present, and future", testament: "NT" },
+  52: { author: "Paul", era: "around 50-51 AD", theme: "holiness and the hope of Christ's return", testament: "NT" },
+  53: { author: "Paul", era: "around 51-52 AD", theme: "clarity about the end times and the call to keep going faithfully", testament: "NT" },
+  54: { author: "Paul", era: "around 62-64 AD", theme: "leadership, sound doctrine, and what it looks like to pastor well", testament: "NT" },
+  55: { author: "Paul", era: "around 66-67 AD", theme: "endurance and faithfulness to the gospel at any cost", testament: "NT" },
+  56: { author: "Paul", era: "around 63-65 AD", theme: "the grace that trains godliness and the order that lets a church flourish", testament: "NT" },
+  57: { author: "Paul", era: "around 60-62 AD", theme: "reconciliation and what the gospel of grace looks like in a fractured relationship", testament: "NT" },
+  58: { author: "unknown", era: "before 70 AD", theme: "Jesus as the great High Priest — superior to the law, to the angels, to Moses himself", testament: "NT" },
+  59: { author: "James", era: "around 44-49 AD", theme: "living faith — the kind that actually produces something you can see and touch", testament: "NT" },
+  60: { author: "Peter", era: "around 62-64 AD", theme: "hope and holiness for people scattered, suffering, and still called to shine", testament: "NT" },
+  61: { author: "Peter", era: "around 65-68 AD", theme: "growing in grace and guarding against teaching that sounds right but isn't", testament: "NT" },
+  62: { author: "John", era: "late first century", theme: "walking in love, light, and truth as children of the living God", testament: "NT" },
+  63: { author: "John", era: "late first century", theme: "hospitality, truth, and the courage to support those who carry the gospel", testament: "NT" },
+  64: { author: "Jude", era: "late first century", theme: "contending earnestly for the faith when false teaching has crept in close", testament: "NT" },
+  65: { author: "John", era: "around 95 AD", theme: "Christ's unshakeable authority over history — and the ultimate victory of the Lamb", testament: "NT" },
+  66: { author: "John", era: "around 95 AD", theme: "the Lamb's final triumph and the new creation where God dwells with His people forever", testament: "NT" },
 };
 
-// ── Stopwords for key-word extraction ───────────────────────────────────────
+// ── Stopwords ────────────────────────────────────────────────────────────────
 const STOPWORDS = new Set([
   "the","and","for","that","with","this","have","from","your","you","are","was","will",
   "his","her","them","they","been","who","what","when","about","just","like","can",
   "not","but","all","one","him","she","its","also","than","then","into","more","which",
   "their","there","out","has","had","would","could","should","said","shall","upon",
-  "unto","thee","thou","thy","hath","doth","saith",
+  "unto","thee","thou","thy","hath","doth","saith","mine","thine","yea","wherefore",
+  "whereat","whereunto","whereby","wherein",
 ]);
 
-// ── Markov-chain builder for explanation text ───────────────────────────────
-// Trained on explanation templates and assembled verse text so generated
-// prose reads naturally without hardcoded, repetitive output.
-const EXPLANATION_STARTERS = [
-  "In this verse",
-  "Here",
-  "The scripture declares",
-  "This passage reveals",
-  "The Word of God speaks here",
-  "In these words",
-  "The Lord communicates",
-  "Scripture here teaches us",
-];
-
-const TRANSITION_PHRASES = [
-  "This connects deeply to",
-  "Taken together with",
-  "This truth is reinforced in",
-  "The same theme appears in",
-  "Related scripture illuminates this further —",
-  "Another voice in scripture echoes this —",
-];
-
-const APPLICATION_OPENERS = [
-  "For the believer today, this means",
-  "Practically speaking, this invites you to",
-  "In daily life, this truth calls you to",
-  "As you apply this scripture, consider",
-  "Living out this verse means",
-];
-
-const CLOSING_PRAYERS_VERSE = [
-  "Father, let the truth of {ref} take root deep in my heart. Amen.",
-  "Lord, make real in me what You have declared in {ref}. Amen.",
-  "God, I receive the promise and instruction of {ref} today. Amen.",
-];
+// ── Theological vocabulary (used for quality benchmarking) ───────────────────
+const THEOLOGICAL_TERMS = new Set([
+  "grace","faith","covenant","redemption","atonement","righteousness","sanctification",
+  "justification","reconciliation","salvation","gospel","Spirit","Lord","God","Christ",
+  "Jesus","eternal","holy","truth","love","mercy","judgment","promise","blessing",
+  "worship","prayer","obedience","repentance","forgiveness","resurrection","kingdom",
+  "glory","hope","peace","strength","wisdom","trust","servant","witness","light",
+  "darkness","heart","soul","spirit","body","life","death","flesh","sin","sacrifice",
+  "blood","cross","victory","power","authority","throne","word","Scripture","Scripture",
+  "prophet","apostle","pastor","priest","temple","covenant","baptism","bread","wine",
+]);
 
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// Simple Markov-chain text from a corpus of words (assembled at explain time
-// from dictionary definitions and Bible context). Produces short (1–2 sentence)
-// bridges that vary on every call.
-function buildMarkovText(corpus, seedWord, targetLen = 18) {
-  if (!corpus || corpus.length < 6) return "";
-  // Build bigram map
-  const bigrams = new Map();
-  for (let i = 0; i < corpus.length - 1; i++) {
-    const w = corpus[i];
-    if (!bigrams.has(w)) bigrams.set(w, []);
-    bigrams.get(w).push(corpus[i + 1]);
-  }
-  // Walk from seed (or random start) up to targetLen
-  let current = seedWord && bigrams.has(seedWord) ? seedWord : corpus[Math.floor(Math.random() * (corpus.length / 2))];
-  const words = [current];
-  for (let i = 0; i < targetLen; i++) {
-    const nexts = bigrams.get(current);
-    if (!nexts || !nexts.length) break;
-    current = nexts[Math.floor(Math.random() * nexts.length)];
-    words.push(current);
-    if (current.endsWith(".")) break;
-  }
-  const sentence = words.join(" ");
-  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
-}
-
 // ── Free Dictionary API ──────────────────────────────────────────────────────
-const DICT_CACHE = new Map(); // in-memory; survives for the process lifetime
+const DICT_CACHE = new Map();
 
 async function lookupWord(word) {
   const w = word.toLowerCase().replace(/[^a-z]/g, "");
   if (!w || w.length < 3) return null;
   if (DICT_CACHE.has(w)) return DICT_CACHE.get(w);
-
   try {
     const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`, {
-      signal: AbortSignal.timeout(6000),
-      headers: { "User-Agent": "TheLivingOliveApp/1.0 (dictionary-powered verse engine)" },
+      signal: AbortSignal.timeout(5000),
+      headers: { "User-Agent": "TheLivingOliveApp/1.0 (bible-sermon-engine)" },
     });
     if (!res.ok) { DICT_CACHE.set(w, null); return null; }
     const data = await res.json();
     if (!Array.isArray(data) || !data.length) { DICT_CACHE.set(w, null); return null; }
-
     const entry = data[0];
-    const meanings = entry.meanings ?? [];
-    const defs = meanings.flatMap((m) =>
-      (m.definitions ?? []).slice(0, 2).map((d) => ({
-        partOfSpeech: m.partOfSpeech,
-        definition: d.definition,
-        example: d.example ?? null,
-        synonyms: [...new Set([...(d.synonyms ?? []), ...(m.synonyms ?? [])].slice(0, 4))],
-      }))
-    ).slice(0, 3);
-
-    const result = {
-      word: entry.word ?? w,
-      phonetic: entry.phonetic ?? null,
-      definitions: defs,
-    };
+    const synonyms = (entry.meanings ?? [])
+      .flatMap((m) => [...(m.synonyms ?? []), ...(m.definitions ?? []).flatMap((d) => d.synonyms ?? [])])
+      .filter((s) => s.length > 3 && !STOPWORDS.has(s.toLowerCase()))
+      .slice(0, 6);
+    const definitions = (entry.meanings ?? [])
+      .flatMap((m) => (m.definitions ?? []).slice(0, 2).map((d) => d.definition))
+      .slice(0, 3);
+    const result = { word: entry.word ?? w, synonyms, definitions };
     DICT_CACHE.set(w, result);
     return result;
   } catch {
@@ -227,42 +166,45 @@ async function lookupWord(word) {
 
 // ── Key-word extraction ──────────────────────────────────────────────────────
 function extractKeyWords(text) {
-  const words = text
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, " ")
-    .split(/\s+/)
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
     .filter((w) => w.length > 3 && !STOPWORDS.has(w));
-  // Deduplicate, weight by position (earlier = more important)
   const seen = new Set();
-  return words.filter((w) => { if (seen.has(w)) return false; seen.add(w); return true; }).slice(0, 8);
+  return words.filter((w) => { if (seen.has(w)) return false; seen.add(w); return true; }).slice(0, 10);
 }
 
-// ── Bible cross-references via prayer-engine verse bank ─────────────────────
+// ── Surrounding-chapter context ──────────────────────────────────────────────
+function getSurroundingContext(bookId, chapter, verseStart, size = 2) {
+  try {
+    const chapters = loadBook(bookId);
+    const verses = chapters[chapter - 1] ?? [];
+    const before = verses.slice(Math.max(0, verseStart - 1 - size), verseStart - 1).join(" ");
+    const after = verses.slice(verseStart, verseStart + size).join(" ");
+    return { before: before.trim(), after: after.trim() };
+  } catch { return { before: "", after: "" }; }
+}
+
+// ── Cross-reference lookup ───────────────────────────────────────────────────
 function findSupportingVerses(category, verseRef, keyWords) {
   const bank = getVerseBank();
-
-  // Find verses that share keywords with this verse, excluding the verse itself
   const scored = bank
     .filter((v) => v.ref !== verseRef)
     .map((v) => {
       const vWords = new Set(v.keywords ?? []);
-      const overlap = keyWords.filter((w) => vWords.has(w) || v.ref.toLowerCase().includes(w)).length;
-      // Prefer same category
+      const overlap = keyWords.filter((w) => vWords.has(w)).length;
       const catBonus = v.category === category ? 2 : 0;
-      return { v, score: overlap + catBonus };
+      const keyBonus = keyWords.some((k) => v.ref.toLowerCase().includes(k)) ? 1 : 0;
+      return { v, score: overlap * 2 + catBonus + keyBonus };
     })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
-
+    .slice(0, 5);
   if (scored.length < 2) {
-    // Fallback: top verses for this category
     return bank.filter((v) => v.category === category && v.ref !== verseRef).slice(0, 4);
   }
   return scored.map((x) => x.v);
 }
 
-// ── Parse a reference string into {bookId, chapter, verseStart} ─────────────
+// ── Parse reference string ───────────────────────────────────────────────────
 function parseRef(reference) {
   const m = reference.trim().match(/^(.+?)\s+(\d+):(\d+)(?:-(\d+))?$/);
   if (!m) return null;
@@ -277,19 +219,46 @@ function parseRef(reference) {
   };
 }
 
-// ── Surrounding-chapter context ──────────────────────────────────────────────
-function getSurroundingContext(bookId, chapter, verseStart, contextSize = 3) {
-  try {
-    const chapters = loadBook(bookId);
-    const verses = chapters[chapter - 1] ?? [];
-    const before = verses.slice(Math.max(0, verseStart - 1 - contextSize), verseStart - 1).join(" ");
-    const after = verses.slice(verseStart, verseStart + contextSize).join(" ");
-    return { before: before.trim(), after: after.trim() };
-  } catch { return { before: "", after: "" }; }
+// ── Self-benchmarking quality scorer ────────────────────────────────────────
+// Scores an explanation on three axes (0-100 each), averaged.
+// Logged per-explanation so activity is visible in railway logs.
+// Score drives cache TTL: high-quality explanations cache for 72h, lower for 12h.
+export function scoreExplanation(text, snippets = []) {
+  if (!text || text.length < 50) return 0;
+
+  const sentences = text.replace(/([.!?])\s+/g, "$1|||").split("|||").filter(Boolean);
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  const uniqueWords = new Set(words);
+
+  // Vocabulary diversity (unique word ratio, target 0.6+)
+  const vocabScore = Math.min(100, (uniqueWords.size / Math.max(words.length, 1)) * 160);
+
+  // Sentence length variance (good sermons mix short and long sentences)
+  const lens = sentences.map((s) => s.split(/\s+/).length);
+  const avgLen = lens.reduce((a, b) => a + b, 0) / (lens.length || 1);
+  const variance = lens.reduce((a, b) => a + Math.abs(b - avgLen), 0) / (lens.length || 1);
+  const sentenceScore = Math.min(100, variance * 8);
+
+  // Theological term density (at least 8 per 100 words)
+  const theTerms = words.filter((w) => THEOLOGICAL_TERMS.has(w)).length;
+  const theScore = Math.min(100, (theTerms / Math.max(words.length, 1)) * 1200);
+
+  // Snippet alignment bonus (explanation shares vocabulary with crawled teaching)
+  let snippetBonus = 0;
+  if (snippets.length > 0) {
+    const snippetWords = new Set(
+      snippets.join(" ").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 3)
+    );
+    const shared = [...uniqueWords].filter((w) => snippetWords.has(w)).length;
+    snippetBonus = Math.min(20, shared * 0.5);
+  }
+
+  const total = Math.round((vocabScore * 0.3 + sentenceScore * 0.25 + theScore * 0.25 + snippetBonus * 0.2) * 10) / 10;
+  return Math.min(100, total);
 }
 
-// ── Explanation cache + learning ─────────────────────────────────────────────
-let explanationLearningCache = {}; // { "John 3:16": { explanationScore, callCount, templates } }
+// ── Explanation state and learning ──────────────────────────────────────────
+let explanationLearningCache = {};
 
 export function recordExplanationFeedback(verseRef, rating) {
   if (!explanationLearningCache[verseRef]) {
@@ -297,7 +266,7 @@ export function recordExplanationFeedback(verseRef, rating) {
   }
   explanationLearningCache[verseRef].totalRating += rating;
   explanationLearningCache[verseRef].callCount += 1;
-  log.info(`explanation feedback recorded — ref=${verseRef} rating=${rating}`);
+  log.info(`explanation feedback — ref=${verseRef} rating=${rating}`);
 }
 
 export function loadExplanationLearning(rows) {
@@ -310,8 +279,8 @@ export function loadExplanationLearning(rows) {
   log.info(`loaded ${rows?.length ?? 0} explanation learning record(s)`);
 }
 
-// ── Scraped teaching context (populated by webCrawler) ───────────────────────
-let teachingContextStore = new Map(); // ref → [snippet, ...]
+// ── Teaching context store (fed by webCrawler) ───────────────────────────────
+let teachingContextStore = new Map();
 
 export function addTeachingContext(verseRef, snippets) {
   if (!teachingContextStore.has(verseRef)) teachingContextStore.set(verseRef, []);
@@ -336,16 +305,171 @@ export function loadTeachingContextFromDb(rows) {
   log.info(`loaded teaching context for ${teachingContextStore.size} verse(s) from previous crawls`);
 }
 
+// ── Cross-reference connection explainer ─────────────────────────────────────
+// Explains WHY a related passage connects to the main verse — the thread that
+// ties them together — rather than just listing "see also."
+function explainCrossRefConnection(mainRef, relatedVerse, sharedKeywords, category) {
+  const shared = sharedKeywords.filter((k) => (relatedVerse.keywords ?? []).includes(k));
+  const theme = shared[0] ?? category.toLowerCase();
+
+  const connectors = [
+    `${relatedVerse.ref} carries the same conviction — both passages speak to the reality of ${theme} and what it demands of those who encounter it.`,
+    `What ${mainRef} declares, ${relatedVerse.ref} reinforces from a different angle: God's word on ${theme} is not a single note but a chord that runs through Scripture.`,
+    `Read alongside ${mainRef}, ${relatedVerse.ref} deepens the picture. The same current of ${theme} runs beneath both texts — one calls it by name, the other shows it in action.`,
+    `${relatedVerse.ref} is the echo of this truth elsewhere in Scripture. It is as if the Spirit, writing through different voices across centuries, kept returning to this matter of ${theme} because it could not be said just once.`,
+    `The connection between ${mainRef} and ${relatedVerse.ref} is not incidental — it is the canon's way of saying that ${theme} is not a peripheral concern but sits near the heart of what God is doing.`,
+  ];
+
+  return pick(connectors);
+}
+
+// ── Narrative opening builder ────────────────────────────────────────────────
+// Places the verse in its story context — who wrote it, to whom, and what
+// moment in the biblical narrative it inhabits.
+function buildNarrativeOpening(bookMeta, bookCtx, parsed, verseText, reference) {
+  if (!bookCtx || !bookMeta) {
+    return `In the verse we are considering — "${verseText}" — we encounter one of Scripture's direct and searching addresses to the human heart.`;
+  }
+
+  const authorStr = bookCtx.author !== "anonymous" && bookCtx.author !== "unknown"
+    ? `written by ${bookCtx.author}`
+    : `written during ${bookCtx.era}`;
+
+  const openings = [
+    `The book of ${bookMeta.name}, ${authorStr}, carries at its heart the theme of ${bookCtx.theme}. It is within that story that this verse finds its full weight: "${verseText}"`,
+    `When ${bookCtx.author !== "anonymous" && bookCtx.author !== "unknown" ? bookCtx.author : "the author"} wrote the words of ${bookMeta.name} during ${bookCtx.era}, the people reading them were living in the tension of ${bookCtx.theme}. Into that world comes this declaration: "${verseText}"`,
+    `${bookMeta.name} is a book about ${bookCtx.theme}. You cannot fully hear what this verse is saying without standing in that larger story. The words are these: "${verseText}"`,
+    `Set within the book of ${bookMeta.name} — ${authorStr} and addressing the matter of ${bookCtx.theme} — this text arrives with the weight of the whole book behind it: "${verseText}"`,
+  ];
+
+  return pick(openings);
+}
+
+// ── Theological body builder ─────────────────────────────────────────────────
+// The main body of the explanation — what the verse is actually claiming.
+// Uses teaching snippets as primary material; synthesizes from context if none.
+function buildTheologicalBody(verseTextStr, keyWords, snippets, surrounding, dictMap) {
+  if (snippets.length >= 2) {
+    // We have real human-written commentary — use it as the backbone.
+    // Take 2-3 of the best snippets and weave them into paragraphs.
+    const chosen = snippets
+      .filter((s) => s.length > 60)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 3);
+
+    const paragraphs = [];
+
+    // First snippet as theological body
+    if (chosen[0]) {
+      paragraphs.push(chosen[0].slice(0, 400) + (chosen[0].length > 400 ? "" : ""));
+    }
+
+    // Second snippet as deepening/development
+    if (chosen[1] && chosen[1] !== chosen[0]) {
+      const transitioners = [
+        "This is not an isolated thought.",
+        "The passage goes further.",
+        "There is something else here worth pressing into.",
+        "Consider the weight of what has just been said.",
+        "This truth opens outward.",
+      ];
+      paragraphs.push(`${pick(transitioners)} ${chosen[1].slice(0, 300)}`);
+    }
+
+    return paragraphs.join("\n\n");
+  }
+
+  // No snippets — synthesize from verse + surrounding context + dictionary
+  const parts = [];
+
+  // Build a vocabulary-enriched body from key words and definitions
+  const richWords = [];
+  for (const [, entry] of dictMap) {
+    if (entry?.synonyms?.length) richWords.push(...entry.synonyms.slice(0, 2));
+    if (entry?.definitions?.length) {
+      const defWords = entry.definitions[0].toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+        .filter((w) => w.length > 4 && !STOPWORDS.has(w));
+      richWords.push(...defWords.slice(0, 4));
+    }
+  }
+
+  // Build the body from the verse's own semantic field
+  const leadWords = keyWords.slice(0, 3).join(", ");
+  const surroundText = surrounding?.before || surrounding?.after || "";
+
+  const bodySentences = [
+    `At the centre of what is being said here is ${leadWords} — not as abstract theology but as the lived reality God is addressing.`,
+    `${surroundText ? `The surrounding text makes this clearer: the verse does not stand alone. Before it, we read of ${surrounding?.before ? surrounding.before.slice(0, 100) : ""}. After it, the narrative continues: ${surrounding?.after ? surrounding.after.slice(0, 80) : ""}. This gives the specific claim of the verse its context and its depth.` : ""}`,
+    richWords.length > 4
+      ? `The language the Spirit chose is precise. Words that carry the weight of ${richWords.slice(0, 3).join(", ")} are not decorative — they are the hinge on which the verse's meaning turns.`
+      : "",
+  ].filter(Boolean);
+
+  parts.push(bodySentences.join(" "));
+  return parts.join("\n\n");
+}
+
+// ── Cross-reference paragraph builder ────────────────────────────────────────
+// Explains each related passage and WHY it connects — not just a list.
+function buildCrossRefParagraph(mainRef, supportVerses, sharedKeywords, category) {
+  if (!supportVerses.length) return "";
+
+  const best = supportVerses.slice(0, 3);
+  const intro = pick([
+    "This verse does not stand alone in Scripture's witness.",
+    "The biblical witness to this truth is not a single voice.",
+    "To understand this passage fully, we need to hear it in conversation with the rest of Scripture.",
+    "What is declared here echoes through the whole of the biblical story.",
+  ]);
+
+  const connections = best.map((v) => {
+    let vText = "";
+    try { vText = verseText(v); } catch { vText = ""; }
+    const connectionSentence = explainCrossRefConnection(mainRef, v, sharedKeywords, category);
+    return `${connectionSentence}${vText ? ` "${vText.slice(0, 90)}${vText.length > 90 ? "…" : ""}"` : ""}`;
+  });
+
+  return `${intro} ${connections.join(" ")}`;
+}
+
+// ── Application paragraph builder ────────────────────────────────────────────
+// What this means for the reader — personal, direct, actionable.
+function buildApplicationParagraph(reference, keyWords, verseTextStr, bookCtx) {
+  const coreWord = keyWords[0] ?? "this truth";
+  const testament = bookCtx?.testament ?? "NT";
+
+  const frames = [
+    `For those who receive it, this word is not merely historical — it is addressed to you, today, in your specific circumstances. The God who spoke through ${bookCtx?.author ?? "Scripture"} in ${bookCtx?.era ?? "its time"} speaks through the same word now. What ${coreWord} meant for those who first heard it has not changed in its substance; only the situation has changed. Bring whatever you are carrying right now and hold it against what this verse declares. Something has to give — and it will not be the word of God.`,
+    `The challenge of this text is not intellectual — it is volitional. To read it and nod is easy. To let it actually shape the way you live today, in the practical details of your relationships, your finances, your fears, your ambitions — that is the invitation Scripture is always extending. Take what ${coreWord} means and find one place today where it is supposed to make a difference.`,
+    `${reference} is not a verse for the wall. It was written to move. The people who first received it were not in a comfortable study gathering interesting Bible facts — they were in the middle of something hard. That is exactly when this truth lands with its full weight. Whatever you are in the middle of right now, this is what God has said about it. That is not a small thing.`,
+    `There is a reason this verse has survived for millennia, being read and re-read by people in situations that look nothing like each other. It carries something that does not age. The matter of ${coreWord} is as alive in your world as it was in the world of the original readers. What it asks of you is neither more nor less than what it asked of them — to receive it, to trust it, and to live from it.`,
+  ];
+
+  return pick(frames);
+}
+
+// ── Closing prayer builder ────────────────────────────────────────────────────
+function buildClosingPrayer(reference, keyWords) {
+  const core = keyWords.slice(0, 2).join(" and ");
+  const prayers = [
+    `Father, let the truth of ${reference} not merely pass through us but take root. We cannot manufacture faith, but You can create it. Let this word do its work in us. Amen.`,
+    `Lord, we lay this verse before You honestly — acknowledging that we do not always live as if it is true. Make it true in us today, not by striving but by receiving. In Jesus' name. Amen.`,
+    `God, You did not give us Your word so we could admire it from a distance. Let ${reference} change something real in us this day. We trust You with the rest. Amen.`,
+    `We receive this, Lord — the truth of ${reference} and the weight of what it asks of us. We are not equal to it on our own. But that is the point. You are. Amen.`,
+  ];
+  return pick(prayers);
+}
+
 // ── Main explanation generator ───────────────────────────────────────────────
 export async function explainVerse({ reference, text, version = "KJV" }, supabase) {
   const startMs = Date.now();
   log.info(`explaining verse ref="${reference}" version=${version}`);
 
-  // 1. Check Supabase cache (avoid redundant work for popular verses)
+  // 1. Check Supabase cache
   if (supabase) {
     const { data: cached } = await supabase
       .from("verse_explanations")
-      .select("explanation, supporting_scriptures, generated_at")
+      .select("explanation, supporting_scriptures, generated_at, quality_score")
       .eq("verse_ref", reference)
       .order("generated_at", { ascending: false })
       .limit(1)
@@ -353,136 +477,89 @@ export async function explainVerse({ reference, text, version = "KJV" }, supabas
 
     if (cached) {
       const ageHours = (Date.now() - new Date(cached.generated_at).getTime()) / 3600000;
-      // Re-generate after 48 h to benefit from newly learned data, but serve cache in the meantime
-      if (ageHours < 48) {
-        log.info(`cache hit for ${reference} (age ${ageHours.toFixed(1)}h) — serving cached explanation`);
+      // High-quality explanations cache 72h; lower quality 24h; below 40 always regenerate
+      const qualityScore = cached.quality_score ?? 50;
+      const maxAgeH = qualityScore >= 70 ? 72 : qualityScore >= 50 ? 24 : 0;
+      if (ageHours < maxAgeH) {
+        log.info(`cache hit for ${reference} (quality=${qualityScore}, age ${ageHours.toFixed(1)}h)`);
         return {
           explanation: cached.explanation,
           supportingScriptures: cached.supporting_scriptures ?? [],
-          engine: "algorithmic-cached",
+          engine: "sermon-cached",
         };
       }
-      log.info(`cache expired for ${reference} (age ${ageHours.toFixed(1)}h) — regenerating`);
     }
   }
 
-  // 2. Parse reference and load book metadata
+  // 2. Parse reference and load metadata
   const parsed = parseRef(reference);
   const bookMeta = parsed ? bookById.get(parsed.bookId) : null;
   const bookCtx = parsed ? BOOK_CONTEXT[parsed.bookId] : null;
   const surrounding = parsed ? getSurroundingContext(parsed.bookId, parsed.chapter, parsed.verseStart) : null;
 
-  // 3. Extract key words from the verse text
+  // 3. Extract key words
   const keyWords = extractKeyWords(text);
-  log.info(`key words extracted: [${keyWords.join(", ")}]`);
+  log.info(`key words: [${keyWords.join(", ")}]`);
 
-  // 4. Dictionary lookups for all key words (parallel)
-  log.info(`looking up ${keyWords.length} word(s) in Free Dictionary API`);
-  const dictResults = await Promise.all(keyWords.map(lookupWord));
+  // 4. Dictionary lookups — used ONLY to enrich internal vocabulary, never shown verbatim
+  const dictResults = await Promise.all(keyWords.slice(0, 5).map(lookupWord));
   const dictMap = new Map(keyWords.map((w, i) => [w, dictResults[i]]).filter(([, d]) => d));
-  log.info(`dictionary: ${dictMap.size}/${keyWords.length} word(s) resolved`);
 
-  // 5. Detect prayer category for thematic connections
+  // 5. Detect category and find cross-references
   const { category } = detectCategory(text + " " + keyWords.join(" "));
-  log.info(`detected category: ${category}`);
+  const supportVerses = findSupportingVerses(category, reference, keyWords);
 
-  // 6. Find supporting verses from verse bank
-  const supportVerse = findSupportingVerses(category, reference, keyWords);
-
-  // 7. Collect scraped teaching context
+  // 6. Collect teaching snippets
   const teachings = getTeachingContext(reference);
-  if (teachings.length) log.info(`using ${teachings.length} scraped teaching snippet(s) for ${reference}`);
+  log.info(`teaching snippets available: ${teachings.length}`);
 
-  // 8. Build a word corpus for Markov chain from: definitions + surrounding text + teachings
-  const wordCorpus = [
-    ...text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/),
-    ...(surrounding?.before || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/),
-    ...(surrounding?.after || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/),
-    ...[...dictMap.values()].flatMap((d) =>
-      d.definitions.flatMap((def) => def.definition.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/))
-    ),
-    ...teachings.flatMap((t) => t.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)),
-  ].filter((w) => w.length > 2);
+  // 7. Assemble sermon-style explanation (flowing prose, no headers/bullets)
+  const narrativeOpening = buildNarrativeOpening(bookMeta, bookCtx, parsed, text, reference);
+  const theologicalBody = buildTheologicalBody(text, keyWords, teachings, surrounding, dictMap);
+  const crossRefParagraph = buildCrossRefParagraph(reference, supportVerses, keyWords, category);
+  const applicationParagraph = buildApplicationParagraph(reference, keyWords, text, bookCtx);
+  const closingPrayer = buildClosingPrayer(reference, keyWords);
 
-  // 9. Build the multi-layer explanation ─────────────────────────────────────
+  const paragraphs = [
+    narrativeOpening,
+    theologicalBody,
+    crossRefParagraph,
+    applicationParagraph,
+    closingPrayer,
+  ].filter(Boolean);
 
-  const parts = [];
+  const explanation = paragraphs.join("\n\n").trim();
 
-  // Layer 1 — Opening and verse text
-  const starter = pick(EXPLANATION_STARTERS);
-  const bookStr = bookMeta ? ` in the book of ${bookMeta.name}` : "";
-  const authorStr = bookCtx?.author ? ` (written by ${bookCtx.author})` : "";
-  parts.push(`${starter}${bookStr}${authorStr}: "${text}"`);
-
-  // Layer 2 — Book/chapter context
-  if (bookCtx) {
-    parts.push(`\n\n📖 Context: The book of ${bookMeta?.name ?? "this book"} focuses on ${bookCtx.theme}. It was addressed to ${bookCtx.audience}.`);
-  }
-
-  // Layer 3 — Word-by-word breakdown from dictionary
-  if (dictMap.size > 0) {
-    parts.push("\n\n📚 Key Word Study:");
-    for (const [word, entry] of dictMap) {
-      if (!entry?.definitions?.length) continue;
-      const def = entry.definitions[0];
-      let wordLine = `• "${entry.word}" (${def.partOfSpeech}) — ${def.definition}`;
-      if (def.synonyms?.length) wordLine += `. Related words: ${def.synonyms.slice(0, 3).join(", ")}`;
-      parts.push(`\n${wordLine}`);
-    }
-  }
-
-  // Layer 4 — Markov chain sentence (learned from corpus)
-  const markovSeed = keyWords[0] ?? null;
-  const markovBridge = buildMarkovText(wordCorpus, markovSeed, 22);
-  if (markovBridge && markovBridge.split(" ").length > 5) {
-    parts.push(`\n\n${markovBridge}`);
-  }
-
-  // Layer 5 — Scraped teaching context
-  if (teachings.length) {
-    const snippet = teachings[Math.floor(Math.random() * teachings.length)];
-    if (snippet && snippet.length > 40) {
-      parts.push(`\n\nFrom biblical teaching: "${snippet.slice(0, 280)}${snippet.length > 280 ? "…" : ""}"`);
-    }
-  }
-
-  // Layer 6 — Application
-  const appOpener = pick(APPLICATION_OPENERS);
-  const appWord = keyWords[0] ?? "this truth";
-  parts.push(`\n\n✨ Application: ${appOpener}: embrace the reality that God's word on "${appWord}" is not only for the ancient reader but for you today. ${pick(CLOSING_PRAYERS_VERSE).replace("{ref}", reference)}`);
-
-  // Layer 7 — Surrounding scripture context
-  if (surrounding?.before || surrounding?.after) {
-    parts.push(`\n\n🔍 Chapter context: This verse sits within a larger narrative — "${surrounding.before || surrounding.after}"`);
-  }
-
-  const explanation = parts.join("").trim();
-
-  // 10. Build supportingScriptures array ────────────────────────────────────
-  const supportingScriptures = supportVerse.slice(0, 4).map((v) => {
-    let noteStr = "";
-    try {
-      const vt = verseText(v);
-      noteStr = `"${vt.slice(0, 120)}${vt.length > 120 ? "…" : ""}"`;
-    } catch { noteStr = `Relates to the same theme of ${category.toLowerCase()}`; }
-    return {
-      reference: v.ref,
-      note: noteStr || `Connected to this verse through the theme of ${category.toLowerCase()}`,
-    };
+  // 8. Build supportingScriptures with connection explanations
+  const supportingScriptures = supportVerses.slice(0, 4).map((v) => {
+    let vt = "";
+    try { vt = verseText(v); } catch { /* ok */ }
+    const shared = keyWords.filter((k) => (v.keywords ?? []).includes(k));
+    const theme = shared[0] ?? category.toLowerCase();
+    const connectionNote = `Connected through the theme of ${theme}${vt ? ` — "${vt.slice(0, 100)}${vt.length > 100 ? "…" : ""}"` : ""}`;
+    return { reference: v.ref, note: connectionNote };
   });
 
-  log.info(`explanation generated in ${Date.now() - startMs}ms — ${explanation.length} chars, ${supportingScriptures.length} supporting verse(s)`);
+  // 9. Quality benchmark
+  const qualityScore = scoreExplanation(explanation, teachings);
+  log.info(`explanation generated in ${Date.now() - startMs}ms — quality=${qualityScore}/100 chars=${explanation.length}`);
 
-  // 11. Persist to Supabase cache ────────────────────────────────────────────
+  // 10. Persist to Supabase
   if (supabase) {
     supabase.from("verse_explanations").upsert(
-      { verse_ref: reference, explanation, supporting_scriptures: supportingScriptures, generated_at: new Date().toISOString() },
+      {
+        verse_ref: reference,
+        explanation,
+        supporting_scriptures: supportingScriptures,
+        generated_at: new Date().toISOString(),
+        quality_score: qualityScore,
+      },
       { onConflict: "verse_ref" }
     ).then(({ error }) => {
-      if (error) log.warn(`failed to cache explanation for ${reference}: ${error.message}`);
-      else log.info(`cached explanation for ${reference}`);
+      if (error) log.warn(`failed to cache ${reference}: ${error.message}`);
+      else log.info(`cached explanation for ${reference} (quality=${qualityScore})`);
     });
   }
 
-  return { explanation, supportingScriptures, engine: "algorithmic" };
+  return { explanation, supportingScriptures, engine: "sermon-algorithmic" };
 }

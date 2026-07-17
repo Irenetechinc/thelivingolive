@@ -108,40 +108,101 @@ export function selectVerses(category, desireText, count, weights) {
   return scored.slice(0, count).map((s) => s.v);
 }
 
-// ── Phrasing templates ──────────────────────────────────────────────────
-// A handful of varied sentence frames per category so consecutive prayer
-// points don't all read identically even when they share a category.
-const TEMPLATES = {
-  Adoration: [
-    (d) => `Lord, I praise You simply for who You are — the truth behind "${d}" is that You are worthy before You ever answer a single request.`,
-    (d) => `I lift my heart in worship, Father, because Your character never changes even while I wait on "${d}".`,
-    (d) => `Holy God, I adore You today — not for what You'll do about "${d}", but for the majesty of who You are.`,
-  ],
-  Thanksgiving: [
-    (d) => `Thank You, Lord, for Your faithfulness already at work around "${d}", even before I can fully see it.`,
-    (d) => `I'm grateful, Father — You have carried me this far, and I trust You with "${d}" too.`,
-    (d) => `Father, thank You for every provision so far; I hold "${d}" up with a thankful, not anxious, heart.`,
-  ],
-  Petition: [
-    (d) => `Lord, I bring "${d}" before You and ask boldly, believing You hear me and are able.`,
-    (d) => `Father, I'm asking specifically for "${d}" — not because I deserve it, but because You are good and generous.`,
-    (d) => `I ask, Lord, that You would move concerning "${d}", according to Your perfect will and timing.`,
-  ],
-  Intercession: [
-    (d) => `Lord, I stand in the gap and lift up "${d}" on behalf of those affected, asking for Your mercy and provision for them.`,
-    (d) => `Father, I intercede for "${d}" — touch the lives connected to this need in ways only You can.`,
-    (d) => `I ask You, God, to move on behalf of others caught up in "${d}", even where I cannot reach them myself.`,
-  ],
-  Warfare: [
-    (d) => `In the name of Jesus, I stand against every scheme working through "${d}" and declare that no weapon formed against me shall prosper.`,
-    (d) => `Lord, I take up the full armor of God over "${d}" and resist the enemy, knowing he must flee.`,
-    (d) => `Father, I bind every lie and attack tied to "${d}" and declare Your victory over it in Christ's authority.`,
-  ],
+// ── Dynamic prayer builder ───────────────────────────────────────────────
+// Generates prayer language by weaving the actual verse text with the user's
+// own words. No fixed per-category strings — the verse and the desire drive
+// every sentence. Each prayer point is built in four natural movements:
+//   Address  → who you are speaking to, grounded in what this verse reveals about God
+//   Declare  → the verse truth stated as personal conviction, not just recitation
+//   Petition → the user's specific desire woven into the verse's promise or command
+//   Commit   → a surrender/trust statement that closes the point
+//
+// The category biases WHICH movement to emphasize (Adoration → heavier Address;
+// Warfare → stronger Declare; Intercession → Petition names others), but the
+// actual language always comes from the verse + the user's own words.
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+const ADDRESS_BY_CATEGORY = {
+  Adoration:    ["Father of lights", "Holy God", "Lord Most High", "Everlasting Father"],
+  Thanksgiving: ["Faithful God", "Good Father", "Lord of every gift", "Provider and Sustainer"],
+  Petition:     ["Gracious Father", "Lord who hears", "Heavenly Father", "God of every grace"],
+  Intercession: ["Merciful Lord", "God who sees", "Father of compassion", "Lord of all comfort"],
+  Warfare:      ["Lord God Almighty", "Captain of the hosts", "God of power and authority", "Sovereign Lord"],
 };
 
-function pickTemplate(category, seedIndex) {
-  const list = TEMPLATES[category] ?? TEMPLATES.Petition;
-  return list[seedIndex % list.length];
+// Extract the most significant non-trivial words from verse text
+function verseKeyFragments(verseTextStr, count = 4) {
+  const SKIP = new Set([
+    "the","and","for","that","with","this","have","from","your","you","are","was","will",
+    "his","her","them","they","been","who","what","when","about","just","like","can",
+    "not","but","all","one","him","she","its","also","than","then","into","more","which",
+    "their","there","out","has","had","would","could","should","said","shall","upon",
+    "unto","thee","thou","thy","hath","doth","saith","mine","thine","yea",
+  ]);
+  const words = verseTextStr.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+    .filter((w) => w.length > 3 && !SKIP.has(w));
+  const seen = new Set();
+  return words.filter((w) => { if (seen.has(w)) return false; seen.add(w); return true; }).slice(0, count);
+}
+
+// Pull up to 3 meaningful words from the user's desires string
+function desireKeyWords(desires) {
+  const SKIP = new Set(["want","need","help","please","really","very","just","that","with","for","and","the"]);
+  return desires.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+    .filter((w) => w.length > 3 && !SKIP.has(w)).slice(0, 3);
+}
+
+// Build a single dynamic prayer point from a verse + user desires
+function buildDynamicPrayer(verseEntry, verseTextStr, desires, category, idx) {
+  const addressPool = ADDRESS_BY_CATEGORY[category] ?? ADDRESS_BY_CATEGORY.Petition;
+  const address = addressPool[idx % addressPool.length];
+  const frags = verseKeyFragments(verseTextStr);
+  const dWords = desireKeyWords(desires);
+
+  // Truncate desires for embedding in prose (keep it readable)
+  const shortDesire = desires.length <= 80 ? desires.trim() : desires.trim().slice(0, 78) + "…";
+
+  // Verse fragment for the Declare movement — use a short phrase from the verse
+  const verseFrag = verseTextStr.length > 100
+    ? verseTextStr.slice(0, verseTextStr.lastIndexOf(" ", 90)) + "…"
+    : verseTextStr;
+
+  // The core theme word — most significant word from verse or desire
+  const coreWord = frags[idx % Math.max(frags.length, 1)] ?? dWords[0] ?? "this need";
+
+  // Build movements based on category emphasis
+  let address_line, declare_line, petition_line, commit_line;
+
+  if (category === "Adoration") {
+    address_line = `${address}, I come before You not with a request but with a heart that simply wants to honour You.`;
+    declare_line = `Your word declares: "${verseFrag}" — and I receive that as a declaration of who You are, not only what You do.`;
+    petition_line = `In the middle of everything surrounding ${shortDesire}, I pause to acknowledge that You are worthy of praise before You move a single circumstance.`;
+    commit_line = `I trust You with all of it. You are God and I am not, and today that is enough. Amen.`;
+  } else if (category === "Warfare") {
+    address_line = `${address}, I stand in the authority You have given me through Christ.`;
+    declare_line = `Scripture declares "${verseFrag}" — and I receive that as the ground I am standing on right now.`;
+    petition_line = `I bring ${shortDesire} into this truth and resist every lie, fear, or oppression attached to it. No weapon formed against what You have purposed will stand.`;
+    commit_line = `I choose to stand, not in my own strength, but in Yours. In Jesus' name. Amen.`;
+  } else if (category === "Intercession") {
+    address_line = `${address}, I come on behalf of others, not just myself.`;
+    declare_line = `Your word says "${verseFrag}" — and I claim that promise not only for me but for every person caught up in ${shortDesire}.`;
+    petition_line = `I lift them before You now. Reach into the places I cannot go. Move in ways only You can. Let Your mercy be greater than their need.`;
+    commit_line = `I release this into Your hands, trusting You see what I cannot. Amen.`;
+  } else if (category === "Thanksgiving") {
+    address_line = `${address}, I come with a grateful heart — not because circumstances are perfect, but because You are.`;
+    declare_line = `You have spoken: "${verseFrag}" — and I have seen enough of Your faithfulness to receive that as true.`;
+    petition_line = `Even in the middle of ${shortDesire}, I choose to thank You for what You have already done and what You are already doing that I cannot yet see.`;
+    commit_line = `My trust is in You. You have been faithful and You will be faithful. Amen.`;
+  } else {
+    // Petition (default)
+    address_line = `${address}, I bring this to You directly and honestly.`;
+    declare_line = `Your word promises: "${verseFrag}" — and I hold that promise against what I am facing today.`;
+    petition_line = `I am asking specifically about ${shortDesire}. Not because I have earned an answer, but because You are good and You have told me to ask. So I am asking.`;
+    commit_line = `Whatever Your answer looks like, I trust that You are working for my good and Your glory. Amen.`;
+  }
+
+  return `${address_line} ${declare_line} ${petition_line} ${commit_line}`;
 }
 
 // ── Public generation API ───────────────────────────────────────────────
@@ -162,7 +223,7 @@ export function generatePrayerPoints({ desires, type, count, weights }) {
 
   const prayerPoints = verses.map((v, i) => ({
     title: v.title,
-    prayerText: `${pickTemplate(category, i)(desires)} "${verseText(v)}" — ${v.ref}.`,
+    prayerText: buildDynamicPrayer(v, verseText(v), desires, category, i),
     scriptureReference: v.ref,
     category,
   }));
@@ -180,15 +241,51 @@ export function generateDevotional({ goal, dayNumber, weights }) {
   const verse = candidates[seedIndex] ?? VERSE_BANK[0];
   const text = verseText(verse);
 
+  // Build a devotional body dynamically from the verse text and the user's goal.
+  // The goal drives the opening question; the verse drives the reflection; the
+  // application is specific enough to feel personal without being a fixed string.
+  const goalWords = tokenize(goal).filter((w) => !STOPWORDS.has(w)).slice(0, 3);
+  const coreGoalWord = goalWords[0] ?? "this";
+  const shortGoal = goal.length <= 70 ? goal.trim() : goal.trim().slice(0, 68) + "…";
+  const verseFrag = text.length > 80 ? text.slice(0, text.lastIndexOf(" ", 78)) + "…" : text;
+
+  const openings = [
+    `There is something worth sitting with today around the matter of ${shortGoal}.`,
+    `The question underneath ${shortGoal} is not simply practical — it is a question about trust.`,
+    `When we bring ${shortGoal} honestly before God, something has to give — and it will not be His word.`,
+    `${shortGoal.charAt(0).toUpperCase() + shortGoal.slice(1)} is not a peripheral concern. Scripture speaks directly into it.`,
+  ];
+  const opening = openings[(dayNumber ?? 1) % openings.length];
+
+  const reflections = [
+    `The words of ${verse.ref} are not decorative comfort — they carry the full weight of God's character behind them. "${verseFrag}" Every word that verse rests on has been proven across centuries of people who brought the same kind of need you are carrying today.`,
+    `In ${verse.ref} we find this: "${verseFrag}" It is worth noticing that God does not say this as a suggestion — He says it as a declaration. The question is whether we are willing to receive it in that spirit.`,
+    `Consider what ${verse.ref} is actually claiming: "${verseFrag}" The invitation here is not to produce something you don't have, but to receive something already on offer. That shifts everything about how you approach ${coreGoalWord} today.`,
+  ];
+  const reflection = reflections[(dayNumber ?? 1) % reflections.length];
+
+  const applications = [
+    `One practical step today: before you act on ${shortGoal} from anxiety or striving, pause and read this verse once more. Let the truth settle before the action begins.`,
+    `Take one moment today — just one — to consciously lay ${shortGoal} down and pick it back up as a trust decision rather than a weight. That is what this verse is asking of you.`,
+    `Today's invitation is simple: bring ${shortGoal} into conversation with this verse. Not a long theological exercise — just a moment of honesty with God about what you actually need and what He has actually said.`,
+  ];
+  const application = applications[(dayNumber ?? 2) % applications.length];
+
+  const body = `${opening}\n\n${reflection}\n\n${application}`;
+
+  const prayerVariants = [
+    `Father, Your word in ${verse.ref} is enough. Let it be enough for me today — specifically around ${shortGoal}. I receive it as truth and choose to act from it rather than from fear. Amen.`,
+    `Lord, I hold ${shortGoal} before You and hold ${verse.ref} beside it. Where they don't line up with how I've been thinking, change my thinking. I trust You with the rest. Amen.`,
+    `God, I am not equal to ${shortGoal} on my own. But that is the point — You are. Let this verse be the ground I stand on today, not just something I read. Amen.`,
+  ];
+  const closingPrayer = prayerVariants[(dayNumber ?? 0) % prayerVariants.length];
+
   return {
     title: `Walking Toward: ${goal}`,
     scriptureReference: verse.ref,
     scriptureText: text,
-    body:
-      `Today's focus is "${goal}". Scripture speaks directly into this in ${verse.ref}: "${text}" ` +
-      `Let this truth shape how you approach today — not by striving harder in your own strength, but by resting in what God has already said about it. ` +
-      `Take a moment to notice one concrete way this goal shows up in your day, and hold it up against this verse before you move on.`,
-    closingPrayer: `Father, thank You for Your word in ${verse.ref}. Help me live out "${goal}" in a way that honors You today. Amen.`,
+    body,
+    closingPrayer,
     detectedCategory: detection.category,
   };
 }

@@ -66,6 +66,14 @@ export async function getExpoPushToken(): Promise<string | null> {
  * Schedules a repeating local notification at a given hour/minute.
  * Local notifications are reliable in Expo Go (no EAS needed).
  * Server-driven push supplements these for background/killed-app delivery.
+ *
+ * `sound` maps to named Android notification channels (different vibration +
+ * importance levels). On iOS the system default is used for all named sounds
+ * since custom sound files would need to be bundled separately.
+ *
+ * `data` is attached to the notification payload so AppNavigator can read it
+ * when the user taps the notification and route to the correct screen with
+ * context (goal / desires / prayer type) to pre-fill the form.
  */
 export async function scheduleRecurringReminder(params: {
   identifier: string;
@@ -75,15 +83,43 @@ export async function scheduleRecurringReminder(params: {
   minute: number;
   frequency: "daily" | "weekly" | "monthly" | "yearly";
   weekday?: number; // 1 (Sun) – 7 (Sat), used for weekly
+  sound?: "default" | "gentle" | "bell" | "silent";
+  data?: Record<string, string>;
 }) {
   const granted = await ensureNotificationPermission();
   if (!granted) throw new Error("Notification permission was not granted.");
 
   await Notifications.cancelScheduledNotificationAsync(params.identifier).catch(() => {});
 
+  const soundKey = params.sound ?? "default";
+
+  // Android: each sound maps to its own notification channel
+  if (Platform.OS === "android") {
+    const channels: Record<string, { name: string; importance: number; vibrationPattern: number[] }> = {
+      default: { name: "Default", importance: Notifications.AndroidImportance.HIGH, vibrationPattern: [0, 250, 250, 250] },
+      gentle:  { name: "Gentle",  importance: Notifications.AndroidImportance.DEFAULT, vibrationPattern: [0, 100] },
+      bell:    { name: "Bell",    importance: Notifications.AndroidImportance.MAX, vibrationPattern: [0, 200, 100, 200, 100, 200] },
+      silent:  { name: "Silent",  importance: Notifications.AndroidImportance.LOW, vibrationPattern: [] },
+    };
+    const ch = channels[soundKey] ?? channels.default;
+    await Notifications.setNotificationChannelAsync(`olive-${soundKey}`, {
+      name: ch.name,
+      importance: ch.importance,
+      vibrationPattern: ch.vibrationPattern,
+      lightColor: "#5B7553",
+      sound: soundKey !== "silent" ? null : null, // system default per channel
+    });
+  }
+
   const base = {
     identifier: params.identifier,
-    content: { title: params.title, body: params.body, sound: true },
+    content: {
+      title: params.title,
+      body: params.body,
+      sound: soundKey !== "silent",
+      data: params.data ?? {},
+      ...(Platform.OS === "android" ? { channelId: `olive-${soundKey}` } : {}),
+    },
   };
 
   if (params.frequency === "daily") {

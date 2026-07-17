@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import * as Notifications from "expo-notifications";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../context/AuthContext";
@@ -8,6 +9,7 @@ import OliveBranch from "../components/OliveBranch";
 import SkeletonHomeLoader from "../components/SkeletonHomeLoader";
 import FloatingRecordingWidget from "../components/FloatingRecordingWidget";
 import { navigationRef } from "./navigationRef";
+import { setPendingAlarm } from "../lib/alarmState";
 
 import SplashScreen from "../screens/SplashScreen";
 import HomeScreen from "../screens/HomeScreen";
@@ -38,6 +40,25 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 export default function AppNavigator() {
   const { session, loading } = useAuth();
   const [splashDone, setSplashDone] = useState(false);
+
+  // Handle notification taps — routes the user to the correct screen and
+  // pre-fills alarm data so the screen can offer a fresh generation.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = (response.notification.request.content.data ?? {}) as Record<string, string>;
+      if (data.type === "devotion") {
+        setPendingAlarm({ type: "devotion", goal: data.goal ?? "", timestamp: Date.now() });
+        // Navigate even if not yet authenticated — NavigationContainer will
+        // show the auth screen, and the pending alarm will be consumed once
+        // the user signs in and reaches the Devotions screen.
+        navigationRef.current?.navigate("Devotions" as never);
+      } else if (data.type === "prayer") {
+        setPendingAlarm({ type: "prayer", desires: data.desires ?? "", prayerType: data.prayerType ?? "Petition", timestamp: Date.now() });
+        navigationRef.current?.navigate("Prayer" as never);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Show splash while auth is loading OR before splash finishes
   if (!splashDone) {

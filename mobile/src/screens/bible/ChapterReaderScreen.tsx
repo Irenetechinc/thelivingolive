@@ -38,6 +38,8 @@ export default function ChapterReaderScreen({ route }: Props) {
   // ── Chapter data ─────────────────────────────────────────────────────────────
   const [verses, setVerses] = useState<string[]>([]);
   const [activeVersion, setActiveVersion] = useState(versionProp);
+  const [requestedVersion, setRequestedVersion] = useState<BibleVersion>(versionProp);
+  const [showTranslationPicker, setShowTranslationPicker] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [loadingChapter, setLoadingChapter] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export default function ChapterReaderScreen({ route }: Props) {
     setLoadError(null);
     setFallbackNotice(null);
     verseOffsets.current = {};
-    loadChapterVerses(bookId, chapter, versionProp)
+    loadChapterVerses(bookId, chapter, requestedVersion)
       .then((result) => {
         setVerses(result.verses);
         setActiveVersion(result.version as BibleVersion);
@@ -57,7 +59,7 @@ export default function ChapterReaderScreen({ route }: Props) {
       })
       .catch((e) => setLoadError(e.message ?? "Couldn't load this chapter."))
       .finally(() => setLoadingChapter(false));
-  }, [bookId, chapter, versionProp]);
+  }, [bookId, chapter, requestedVersion]);
 
   // Scroll to initialVerse once content is rendered
   useEffect(() => {
@@ -323,9 +325,13 @@ export default function ChapterReaderScreen({ route }: Props) {
       {/* Meta bar */}
       <View style={[styles.metaBar, studyMode && styles.metaBarStudy]}>
         <View style={styles.metaBarLeft}>
-          <View style={styles.versionBadge}>
-            <Text style={styles.versionBadgeText}>{activeVersion}</Text>
-          </View>
+          <Pressable
+            style={styles.versionBadge}
+            onPress={() => setShowTranslationPicker(true)}
+            hitSlop={8}
+          >
+            <Text style={styles.versionBadgeText}>{activeVersion} ▾</Text>
+          </Pressable>
           {fallbackNotice ? (
             <Text style={styles.fallbackText} numberOfLines={1}>{fallbackNotice}</Text>
           ) : null}
@@ -620,6 +626,41 @@ export default function ChapterReaderScreen({ route }: Props) {
         chapter={chapter}
         version={activeVersion}
       />
+
+      {/* Translation picker sheet */}
+      <Modal
+        visible={showTranslationPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTranslationPicker(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setShowTranslationPicker(false)} />
+        <View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>Choose Translation</Text>
+          {(
+            [
+              { id: "KJV" as BibleVersion, full: "King James Version", year: "1611" },
+              { id: "WEB" as BibleVersion, full: "World English Bible", year: "2000" },
+              { id: "ASV" as BibleVersion, full: "American Standard Version", year: "1901" },
+            ]
+          ).map((t) => (
+            <Pressable
+              key={t.id}
+              style={[styles.sheetAction, styles.translationOption, requestedVersion === t.id && styles.translationOptionActive]}
+              onPress={() => {
+                setRequestedVersion(t.id);
+                setShowTranslationPicker(false);
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.translationId, requestedVersion === t.id && styles.translationIdActive]}>{t.id}</Text>
+                <Text style={styles.translationFull}>{t.full} · {t.year}</Text>
+              </View>
+              {requestedVersion === t.id && <Text style={styles.translationCheck}>✓</Text>}
+            </Pressable>
+          ))}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -647,7 +688,14 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: spacing.sm,
   },
-  versionBadgeText: { color: colors.white, fontSize: 12, fontWeight: "700" },
+  versionBadgeText: { color: colors.white, fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
+
+  translationOption: { flexDirection: "row", alignItems: "center" },
+  translationOptionActive: { backgroundColor: "#EDF2E0" },
+  translationId: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  translationIdActive: { color: colors.oliveDark },
+  translationFull: { ...typography.caption, color: colors.inkSoft, marginTop: 2 },
+  translationCheck: { fontSize: 16, color: colors.olive, marginLeft: spacing.sm },
   fallbackText: { ...typography.caption, color: colors.terracotta, flex: 1 },
 
   // Study mode toggle

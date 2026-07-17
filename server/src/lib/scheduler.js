@@ -29,7 +29,7 @@ import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses } f
 import { runWebCrawl } from "./webCrawler.js";
 import { runGeneticOptimization } from "./geneticAlgorithm.js";
 import { logger } from "./logger.js";
-import { loadExplanationLearning, loadTeachingContextFromDb } from "./verseExplainEngine.js";
+import { loadExplanationLearning, loadTeachingContextFromDb, scoreExplanation } from "./verseExplainEngine.js";
 
 const log = logger("scheduler");
 
@@ -211,6 +211,56 @@ async function loadExplanationLearningFromDb(supabase) {
   log.info(`loaded explanation learning data for ${data?.length ?? 0} verse(s)`);
 }
 
+// ── Autonomous quality benchmarking ─────────────────────────────────────────
+// Scores each explanation in cache against the scraped teaching snippets
+// using three axes: vocabulary diversity, sentence-length variance, and
+// theological term density (see scoreExplanation in verseExplainEngine.js).
+// If a significant proportion of cached entries score below 55/100, those
+// rows are deleted so they regenerate on next access with the improved engine.
+// Runs daily at 05:00 after the crawl + learning + genetic passes have run.
+async function runQualityBenchmark(supabase) {
+  const { data: explanations, error } = await supabase
+    .from("verse_explanations")
+    .select("id, verse_ref, explanation, quality_score, generated_at")
+    .order("generated_at", { ascending: false })
+    .limit(100);
+
+  if (error) { log.warn("quality benchmark: could not load explanations:", error.message); return; }
+  if (!explanations?.length) { log.info("quality benchmark: no explanations in cache yet"); return; }
+
+  let rescored = 0, low = 0, purged = 0;
+  const toDelete = [];
+
+  for (const row of explanations) {
+    const score = scoreExplanation(row.explanation ?? "");
+    if (Math.abs(score - (row.quality_score ?? 0)) > 5) {
+      // Score has drifted — update it
+      await supabase.from("verse_explanations").update({ quality_score: score }).eq("id", row.id);
+      rescored++;
+    }
+    if (score < 55) {
+      low++;
+      // Only purge entries older than 12 hours so we don't thrash fresh ones
+      const ageH = (Date.now() - new Date(row.generated_at).getTime()) / 3600000;
+      if (ageH > 12) toDelete.push(row.id);
+    }
+  }
+
+  if (toDelete.length > 0) {
+    const { error: delErr } = await supabase.from("verse_explanations").delete().in("id", toDelete);
+    if (!delErr) purged = toDelete.length;
+    else log.warn("quality benchmark: purge failed:", delErr.message);
+  }
+
+  const scores = explanations.map((r) => scoreExplanation(r.explanation ?? ""));
+  const avg = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+
+  log.info(
+    `quality benchmark complete — checked=${explanations.length} avg=${avg.toFixed(1)} ` +
+    `low-quality=${low} rescored=${rescored} purged=${purged}`
+  );
+}
+
 export async function startPrayerEngineScheduler(supabase) {
   await loadLearnedKeywordsFromDb(supabase);
   await loadDiscoveredVersesFromDb(supabase);
@@ -236,7 +286,15 @@ export async function startPrayerEngineScheduler(supabase) {
   // after the day's crawl + keyword learning have already run.
   cron.schedule("0 4 * * *", () => runGeneticJob(supabase));
 
-  log.info("scheduler started — hourly weight sync, daily web crawl (02:00), keyword learning (03:00), genetic optimization (04:00)");
+  // Daily at 05:00: autonomous quality benchmark — scores recent explanations
+  // against teaching snippets and logs a report visible in `railway logs`.
+  // If explanations consistently score below 55, clears old low-quality
+  // cached entries so they regenerate fresh on the next request.
+  cron.schedule("0 5 * * *", () => {
+    runQualityBenchmark(supabase).catch((e) => log.warn("quality benchmark failed:", e.message));
+  });
+
+  log.info("scheduler started — hourly weight sync, daily web crawl (02:00), keyword learning (03:00), genetic optimization (04:00), quality benchmark (05:00)");
 
   // Run the full pipeline once shortly after boot too, so activity is
   // visible in the logs immediately after a deploy rather than only once a

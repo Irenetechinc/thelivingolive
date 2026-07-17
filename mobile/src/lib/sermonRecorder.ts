@@ -55,7 +55,20 @@ function ensureDir() {
 
 export async function loadQueue(): Promise<SermonRecording[]> {
   const raw = await AsyncStorage.getItem(QUEUE_KEY);
-  return raw ? JSON.parse(raw) : [];
+  if (!raw) return [];
+  const queue: SermonRecording[] = JSON.parse(raw);
+  // Items left in "transcribing" at startup mean the app was killed mid-flight.
+  // Reset them to "queued" so processQueue picks them up and retries.
+  let needsSave = false;
+  for (const item of queue) {
+    if (item.status === "transcribing") {
+      item.status = "queued";
+      item.error = undefined;
+      needsSave = true;
+    }
+  }
+  if (needsSave) await saveQueue(queue);
+  return queue;
 }
 
 export async function saveQueue(queue: SermonRecording[]) {

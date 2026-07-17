@@ -14,6 +14,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
+import { consumePendingAlarm } from "../../lib/alarmState";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 
 const prayerTypes: { id: string; label: string; symbol: string; gradient: [string, string] }[] = [
@@ -99,8 +100,11 @@ export default function PrayerScreen() {
   const [desires, setDesires] = useState("");
   const [count, setCount] = useState("3");
   const [type, setType] = useState(prayerTypes[0].id);
-  const [hour, setHour] = useState("6");
+  const [hour12, setHour12] = useState("6");
   const [minute, setMinute] = useState("0");
+  const [amPm, setAmPm] = useState<"AM" | "PM">("AM");
+  const [ringtone, setRingtone] = useState<"default" | "gentle" | "bell" | "silent">("default");
+  const [alarmBanner, setAlarmBanner] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<PrayerEntry[]>([]);

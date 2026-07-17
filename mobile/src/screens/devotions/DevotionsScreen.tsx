@@ -14,6 +14,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import { generateDevotion, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
+import { consumePendingAlarm } from "../../lib/alarmState";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 
 type Duration = "daily" | "weekly" | "monthly" | "yearly";
@@ -124,8 +125,11 @@ function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
 export default function DevotionsScreen() {
   const [goal, setGoal] = useState("");
   const [duration, setDuration] = useState<Duration>("daily");
-  const [hour, setHour] = useState("6");
+  const [hour12, setHour12] = useState("6");
   const [minute, setMinute] = useState("30");
+  const [amPm, setAmPm] = useState<"AM" | "PM">("AM");
+  const [ringtone, setRingtone] = useState<"default" | "gentle" | "bell" | "silent">("default");
+  const [alarmBanner, setAlarmBanner] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<DevotionEntry[]>([]);
@@ -146,6 +150,12 @@ export default function DevotionsScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      // Check for alarm-triggered navigation from notification tap
+      const alarm = consumePendingAlarm();
+      if (alarm?.type === "devotion" && alarm.goal && Date.now() - alarm.timestamp < 30000) {
+        setGoal(alarm.goal);
+        setAlarmBanner(true);
+      }
       (async () => {
         setLoadingEntries(true);
         const { data } = await supabase
@@ -165,18 +175,19 @@ export default function DevotionsScreen() {
   async function handleGenerate() {
     setError(null);
     if (!goal.trim()) { setError("Describe your spiritual goal first."); return; }
-    const h = parseInt(hour, 10);
+    const h12Num = parseInt(hour12, 10);
     const m = parseInt(minute, 10);
-    if (Number.isNaN(h) || h < 0 || h > 23 || Number.isNaN(m) || m < 0 || m > 59) {
-      setError("Enter a valid time (hour 0-23, minute 0-59)."); return;
+    if (Number.isNaN(h12Num) || h12Num < 1 || h12Num > 12 || Number.isNaN(m) || m < 0 || m > 59) {
+      setError("Enter a valid time (1–12 for hour, 0–59 for minutes)."); return;
     }
+    const h = amPm === "AM" ? (h12Num === 12 ? 0 : h12Num) : (h12Num === 12 ? 12 : h12Num + 12);
     setBusy(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not signed in");
       const { data: plan, error: planError } = await supabase
         .from("devotion_plans")
-        .insert({ user_id: userData.user.id, goal: goal.trim(), duration, preferred_time: `${hour}:${minute}:00` })
+        .insert({ user_id: userData.user.id, goal: goal.trim(), duration, preferred_time: `${h}:${m.toString().padStart(2, "0")}:00` })
         .select().single();
       if (planError) throw planError;
       const result = await generateDevotion({ goal: goal.trim(), duration });
@@ -200,7 +211,10 @@ export default function DevotionsScreen() {
         title: "Time for your devotion 🌿",
         body: result.title,
         hour: h, minute: m, frequency: duration,
+        sound: ringtone,
+        data: { type: "devotion", goal: goal.trim() },
       });
+      setAlarmBanner(false);
       setGoal("");
     } catch (e: any) {
       setError(e.message ?? "Couldn't generate your devotion. Try again.");
@@ -223,6 +237,11 @@ export default function DevotionsScreen() {
       </LinearGradient>
 
       <View style={styles.body}>
+        {alarmBanner && (
+          <View style={styles.alarmBanner}>
+            <Text style={styles.alarmBannerText}>🌿 Your devotion reminder fired — your goal is pre-filled below. Tap Generate to create today's devotion.</Text>
+          </View>
+        )}
         {/* Form card */}
         <View style={styles.formCard}>
           <Text style={styles.formTitle}>New devotion</Text>
@@ -260,24 +279,49 @@ export default function DevotionsScreen() {
           <View style={styles.timeRow}>
             <TextInput
               style={styles.timeInput}
-              value={hour}
-              onChangeText={setHour}
+              value={hour12}
+              onChangeText={(v) => setHour12(v.replace(/[^0-9]/g, ""))}
               keyboardType="number-pad"
               maxLength={2}
-              placeholder="06"
+              placeholder="6"
               placeholderTextColor={colors.inkFaint}
             />
             <Text style={styles.timeSep}>:</Text>
             <TextInput
               style={styles.timeInput}
               value={minute}
-              onChangeText={setMinute}
+              onChangeText={(v) => setMinute(v.replace(/[^0-9]/g, ""))}
               keyboardType="number-pad"
               maxLength={2}
               placeholder="30"
               placeholderTextColor={colors.inkFaint}
             />
-            <Text style={styles.timeNote}>24-hour format</Text>
+            <View style={styles.amPmRow}>
+              {(["AM", "PM"] as const).map((p) => (
+                <Pressable
+                  key={p}
+                  style={[styles.amPmBtn, amPm === p && styles.amPmBtnActive]}
+                  onPress={() => setAmPm(p)}
+                >
+                  <Text style={[styles.amPmText, amPm === p && styles.amPmTextActive]}>{p}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          <Text style={styles.fieldLabel}>RINGTONE</Text>
+          <View style={styles.ringtoneRow}>
+            {(["default", "gentle", "bell", "silent"] as const).map((r) => (
+              <Pressable
+                key={r}
+                style={[styles.ringtoneChip, ringtone === r && styles.ringtoneChipActive]}
+                onPress={() => setRingtone(r)}
+              >
+                <Text style={[styles.ringtoneText, ringtone === r && styles.ringtoneTextActive]}>
+                  {r === "default" ? "Default" : r === "gentle" ? "Gentle" : r === "bell" ? "Bell" : "Silent"}
+                </Text>
+              </Pressable>
+            ))}
           </View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -389,7 +433,39 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   timeSep: { fontSize: 22, fontWeight: "700", color: colors.ink },
-  timeNote: { ...typography.caption, color: colors.inkFaint, marginLeft: spacing.xs },
+  amPmRow: { flexDirection: "row", gap: 3, marginLeft: spacing.xs },
+  amPmBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.parchment,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  amPmBtnActive: { backgroundColor: colors.olive, borderColor: colors.olive },
+  amPmText: { fontSize: 12, fontWeight: "700", color: colors.inkSoft },
+  amPmTextActive: { color: colors.white },
+  ringtoneRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg, flexWrap: "wrap" },
+  ringtoneChip: {
+    paddingVertical: 6,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    backgroundColor: colors.parchment,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  ringtoneChipActive: { backgroundColor: colors.oliveDark, borderColor: colors.oliveDark },
+  ringtoneText: { fontSize: 13, fontWeight: "600", color: colors.inkSoft },
+  ringtoneTextActive: { color: colors.white },
+  alarmBanner: {
+    backgroundColor: "#EDF2E0",
+    padding: spacing.md,
+    borderRadius: radii.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: "#C2D4A0",
+  },
+  alarmBannerText: { ...typography.bodySmall, color: colors.oliveDark, lineHeight: 20 },
   errorText: { color: colors.danger, fontSize: 14, marginBottom: spacing.sm, fontWeight: "500" },
   generateBtn: { borderRadius: radii.md, overflow: "hidden", ...shadows.card },
   generateBtnPressed: { opacity: 0.88, transform: [{ scale: 0.98 }] },

@@ -1,0 +1,17 @@
+ensure that the promt below has been fully implimented nothing left, nothing undone and nothining not don at all do not create new files check and improve what already exist 
+
+Promt: Bible translation switcher — inline translation switcher on the chapter reader, showing which translation is active
+
+Devotional/Prayer/Scripture agents — remove fixed templates, make agents self-improving, use web search + dictionary + the entire Bible to improve quality dynamically, no LLMs, no fixed templates, self-benchmarking
+
+Devotional alerts — AM/PM time picker, custom alarm ringtone selector, alarm screen shows freshly generated devotion/prayer
+
+Study mode explanation — reformat as a proper pastoral sermon, no phonetics/grammar class, include related verse connections explained
+
+Voice transcription spinner — fix the "transcribing forever" bug
+
+remove the indivdual translations descriptions in the bible home screen it should anly show the random bible quotes but the quote shouldnt be entirely randle it shoulbe be same bible random bible vers but all in ther respective vesrions
+
+also check the web crawler for search capability, the scheduler for self-improvement, and the sermon recorder screen where the transcription bug is happening. Rather than diving straight into changes, I'll use a subagent to explore the codebase and understand the critical pieces: how translation switching currently works, how the verse explanation engine functions, how prayer and devotion generation operate, how alerts are configured, and what's causing the transcription to hang.  start by examining the most important files first. 
+
+please note: ASALSO MAKE SURE THAT THERE ARE NO LOCAL HOST HOSTING REPLIT HOSTINGS OR DEPEMDES THAT WILL PREVENT EVERY FETURE OF THIS APP FROM WORKING PERFECTLY WITHOUT ERRROR OUTSIDE REPLIT AND WITHOUT A REPLIT HOSITNG OR DEPEDECIES SO PLEASE USE MY CUSTOME HOSTING, DATABASE AND SEVER I HAVE PROVIDED SUPERBASE FOR DATABASE, RAILWAY FOR DERVER AND livingolive.adroomai.com AS HOSTING.
