@@ -19,6 +19,8 @@ import path from "node:path";
 import { logger } from "./logger.js";
 import { detectCategory, verseText } from "./prayerEngine.js";
 import { getVerseBank } from "../data/prayerVerses.js";
+import { lookupWord } from "./dictionary.js";
+import { addTeachingContext, getTeachingContext, loadTeachingContextFromDb } from "./teachingContext.js";
 
 const log = logger("verse-explain");
 
@@ -130,38 +132,6 @@ const THEOLOGICAL_TERMS = new Set([
 
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
-}
-
-// ── Free Dictionary API ──────────────────────────────────────────────────────
-const DICT_CACHE = new Map();
-
-async function lookupWord(word) {
-  const w = word.toLowerCase().replace(/[^a-z]/g, "");
-  if (!w || w.length < 3) return null;
-  if (DICT_CACHE.has(w)) return DICT_CACHE.get(w);
-  try {
-    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`, {
-      signal: AbortSignal.timeout(5000),
-      headers: { "User-Agent": "TheLivingOliveApp/1.0 (bible-sermon-engine)" },
-    });
-    if (!res.ok) { DICT_CACHE.set(w, null); return null; }
-    const data = await res.json();
-    if (!Array.isArray(data) || !data.length) { DICT_CACHE.set(w, null); return null; }
-    const entry = data[0];
-    const synonyms = (entry.meanings ?? [])
-      .flatMap((m) => [...(m.synonyms ?? []), ...(m.definitions ?? []).flatMap((d) => d.synonyms ?? [])])
-      .filter((s) => s.length > 3 && !STOPWORDS.has(s.toLowerCase()))
-      .slice(0, 6);
-    const definitions = (entry.meanings ?? [])
-      .flatMap((m) => (m.definitions ?? []).slice(0, 2).map((d) => d.definition))
-      .slice(0, 3);
-    const result = { word: entry.word ?? w, synonyms, definitions };
-    DICT_CACHE.set(w, result);
-    return result;
-  } catch {
-    DICT_CACHE.set(w, null);
-    return null;
-  }
 }
 
 // ── Key-word extraction ──────────────────────────────────────────────────────
@@ -277,32 +247,6 @@ export function loadExplanationLearning(rows) {
     };
   }
   log.info(`loaded ${rows?.length ?? 0} explanation learning record(s)`);
-}
-
-// ── Teaching context store (fed by webCrawler) ───────────────────────────────
-let teachingContextStore = new Map();
-
-export function addTeachingContext(verseRef, snippets) {
-  if (!teachingContextStore.has(verseRef)) teachingContextStore.set(verseRef, []);
-  const existing = teachingContextStore.get(verseRef);
-  for (const s of snippets) {
-    if (!existing.includes(s)) existing.push(s);
-  }
-}
-
-export function getTeachingContext(verseRef) {
-  return teachingContextStore.get(verseRef) ?? [];
-}
-
-export function loadTeachingContextFromDb(rows) {
-  for (const row of rows ?? []) {
-    if (!teachingContextStore.has(row.verse_ref)) teachingContextStore.set(row.verse_ref, []);
-    const arr = teachingContextStore.get(row.verse_ref);
-    for (const s of row.snippets ?? []) {
-      if (!arr.includes(s)) arr.push(s);
-    }
-  }
-  log.info(`loaded teaching context for ${teachingContextStore.size} verse(s) from previous crawls`);
 }
 
 // ── Cross-reference connection explainer ─────────────────────────────────────

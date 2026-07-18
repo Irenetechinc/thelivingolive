@@ -105,6 +105,7 @@ export default function PrayerScreen() {
   const [amPm, setAmPm] = useState<"AM" | "PM">("AM");
   const [ringtone, setRingtone] = useState<"default" | "gentle" | "bell" | "silent">("default");
   const [alarmBanner, setAlarmBanner] = useState(false);
+  const [categoryOverride, setCategoryOverride] = useState<{ from: string; to: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<PrayerEntry[]>([]);
@@ -170,6 +171,11 @@ export default function PrayerScreen() {
       if (insertError) throw insertError;
       const desiresText = desires.trim();
       const category = result.detectedCategory ?? type;
+      if (result.userTypeOverridden) {
+        setCategoryOverride({ from: type, to: category });
+      } else {
+        setCategoryOverride(null);
+      }
       const withCategory: PrayerEntry[] = (inserted ?? []).map((row, i) => ({
         ...row,
         category: result.prayerPoints[i]?.category ?? category,
@@ -234,6 +240,14 @@ export default function PrayerScreen() {
         {alarmBanner && (
           <View style={styles.alarmBanner}>
             <Text style={styles.alarmBannerText}>🙏 Your prayer reminder fired — your desire is pre-filled below. Tap Generate to create today's prayer points.</Text>
+          </View>
+        )}
+
+        {categoryOverride && (
+          <View style={styles.overrideBanner}>
+            <Text style={styles.overrideBannerText}>
+              ✦ The engine detected a <Text style={styles.overrideBold}>{categoryOverride.to}</Text> need in your words — prayer points were shaped accordingly rather than defaulting to {categoryOverride.from}.
+            </Text>
           </View>
         )}
 
@@ -397,6 +411,16 @@ const styles = StyleSheet.create({
     borderColor: "#C2D4A0",
   },
   alarmBannerText: { ...typography.bodySmall, color: colors.oliveDark, lineHeight: 20 },
+  overrideBanner: {
+    backgroundColor: "#F5EFE0",
+    padding: spacing.md,
+    borderRadius: radii.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: "#D4B87A",
+  },
+  overrideBannerText: { ...typography.bodySmall, color: "#6B4C10", lineHeight: 20 },
+  overrideBold: { fontWeight: "700" },
   formCard: {
     backgroundColor: colors.white,
     borderRadius: radii.xl,

@@ -372,97 +372,20 @@ app.post("/api/ai/explain-verse/feedback", requireUser, requireFlag("verse_expla
 });
 
 // ──────────────────────────────────────────────
-// AI devotionals
-// ──────────────────────────────────────────────
-app.post("/api/ai/devotion", requireUser, requireFlag("ai_devotion"), async (req, res) => {
-  try {
-    const { goal, duration, dayNumber } = req.body;
-    if (!goal || !duration) return res.status(400).json({ error: "goal and duration are required" });
-
-    const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You write warm, Bible-rooted daily devotionals. Every devotional must reference specific scripture (book, chapter, verse) and end with a short reflective prayer. Keep it concise: suitable for a 3-5 minute read.",
-        },
-        {
-          role: "user",
-          content: `Write a devotional for someone pursuing this spiritual goal: "${goal}", as part of a ${duration} devotion plan${dayNumber ? ` (day ${dayNumber})` : ""}. Respond in JSON with keys "title", "scriptureReference", "scriptureText", "body", and "closingPrayer".`,
-        },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const content = JSON.parse(completion.choices[0].message.content);
-
-    // Send a push notification to the user (non-blocking)
-    sendPushToUser(req.user.id, {
-      title: "New Devotion Ready 🌿",
-      body: content.title ?? "Your devotional is ready",
-    }).catch((e) => console.warn("push send failed:", e.message));
-
-    res.json(content);
-  } catch (err) {
-    console.error("devotion error:", err);
-    res.status(500).json({ error: "Failed to generate devotion" });
-  }
-});
-
-// ──────────────────────────────────────────────
-// AI prayer
-// ──────────────────────────────────────────────
-app.post("/api/ai/prayer", requireUser, requireFlag("ai_prayer"), async (req, res) => {
-  try {
-    const { desires, count, type } = req.body;
-    if (!desires || !type) return res.status(400).json({ error: "desires and type are required" });
-    const n = Math.min(Math.max(parseInt(count, 10) || 1, 1), 10);
-
-    const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You write powerful, Bible-rooted prayers appropriate to the requested prayer type (e.g. Warfare, Adoration, Intercession, Thanksgiving, Petition). Each prayer point should reference or allude to relevant scripture.",
-        },
-        {
-          role: "user",
-          content: `Generate ${n} ${type} prayer point(s) for someone whose heart's desire is: "${desires}". Respond in JSON with key "prayerPoints" as an array of {title, prayerText, scriptureReference}.`,
-        },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const content = JSON.parse(completion.choices[0].message.content);
-
-    // Send a push notification to the user (non-blocking)
-    sendPushToUser(req.user.id, {
-      title: "Prayer Points Ready 🙏",
-      body: `Your ${type} prayer points have been generated`,
-    }).catch((e) => console.warn("push send failed:", e.message));
-
-    res.json(content);
-  } catch (err) {
-    console.error("prayer error:", err);
-    res.status(500).json({ error: "Failed to generate prayer" });
-  }
-});
-
-// ──────────────────────────────────────────────
-// Rule-based prayer/devotion engine — fully autonomous, no LLM/GPU.
-// Runs entirely on curated scripture + keyword matching (see lib/prayerEngine.js);
-// self-improves from feedback via lib/scheduler.js. Separate from the
-// OpenAI-based /api/ai/prayer and /api/ai/devotion routes above, which stay
-// as-is since they're already used elsewhere in the app.
+// Rule-based prayer/devotion engine — fully autonomous, no LLM.
+// Every prayer and devotional is built dynamically from four live sources:
+//   1. Full KJV Bible via TF-IDF verse selection (31,102 verses)
+//   2. KJV Markov model — unique biblical-register phrases from verse vocab
+//   3. Free Dictionary API — definitions and synonyms for theological precision
+//   4. Web-crawled teaching snippets (openbible.info — updated daily)
+// Self-improves via lib/scheduler.js without any user feedback required.
 // ──────────────────────────────────────────────
 app.post("/api/prayer-engine/prayer", requireUser, requireFlag("rule_prayer"), async (req, res) => {
   try {
     const { desires, count, type } = req.body;
     if (!desires) return res.status(400).json({ error: "desires is required" });
 
-    const { prayerPoints, detectedCategory, uncuratedVerses } = generatePrayerPoints({
+    const { prayerPoints, detectedCategory, uncuratedVerses } = await generatePrayerPoints({
       desires,
       type,
       count,
@@ -491,7 +414,7 @@ app.post("/api/prayer-engine/devotion", requireUser, requireFlag("rule_devotion"
     const { goal, dayNumber } = req.body;
     if (!goal) return res.status(400).json({ error: "goal is required" });
 
-    const content = generateDevotional({ goal, dayNumber, weights: getWeights() });
+    const content = await generateDevotional({ goal, dayNumber, weights: getWeights() });
 
     sendPushToUser(req.user.id, {
       title: "New Devotion Ready 🌿",

@@ -148,6 +148,8 @@ export function generateDevotion(input: { goal: string; duration: string; dayNum
 export type PrayerResult = {
   prayerPoints: { title: string; prayerText: string; scriptureReference: string; category?: string }[];
   detectedCategory?: string;
+  userTypeOverridden?: boolean;
+  engine?: string;
 };
 
 // Uses the fully autonomous, rule-based engine (no OpenAI/LLM call) rather

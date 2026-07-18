@@ -29,7 +29,8 @@ import { CATEGORIES, learnKeyword, loadLearnedKeywords, loadDiscoveredVerses, ad
 import { runWebCrawl } from "./webCrawler.js";
 import { runGeneticOptimization } from "./geneticAlgorithm.js";
 import { logger } from "./logger.js";
-import { loadExplanationLearning, loadTeachingContextFromDb, scoreExplanation } from "./verseExplainEngine.js";
+import { loadExplanationLearning, scoreExplanation } from "./verseExplainEngine.js";
+import { loadTeachingContextFromDb } from "./teachingContext.js";
 import { getBibleIndex, warmBibleIndex } from "./bibleIndex.js";
 import { getMarkov, warmMarkov } from "./markovBible.js";
 import { adminBus } from "./adminBus.js";
@@ -223,7 +224,8 @@ async function loadTeachingContextFromSupabase(supabase) {
     log.warn("failed to load verse teaching context:", error.message);
     return;
   }
-  loadTeachingContextFromDb(data ?? []);
+  const count = loadTeachingContextFromDb(data ?? []);
+  log.info(`loaded teaching context for ${count} verse(s) from previous crawls`);
 }
 
 async function loadExplanationLearningFromDb(supabase) {

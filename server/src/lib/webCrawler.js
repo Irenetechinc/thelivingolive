@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { logger } from "./logger.js";
 import { addDiscoveredVerse } from "../data/prayerVerses.js";
-import { addTeachingContext } from "./verseExplainEngine.js";
+import { addTeachingContext } from "./teachingContext.js";
 
 const log = logger("crawler");
 
