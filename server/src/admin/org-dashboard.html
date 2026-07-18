@@ -406,7 +406,7 @@ async function editBulletin(id) {
     document.getElementById('bExpiresAt').value = b.expires_at ? b.expires_at.slice(0,16) : '';
     document.getElementById('bIsPaid').checked = b.is_paid;
     document.getElementById('bPrice').value = b.price_ngn || '';
-    document.getElementById('priceField').style.display = b.is_paid ? '' : 'none';
+    document.getElementById('priceField').style.display = b.is_paid ? 'block' : 'none';
     document.getElementById('bulletinModal').classList.add('open');
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -414,7 +414,7 @@ async function editBulletin(id) {
 function closeModal() { document.getElementById('bulletinModal').classList.remove('open'); }
 
 function togglePriceField() {
-  document.getElementById('priceField').style.display = document.getElementById('bIsPaid').checked ? '' : 'none';
+  document.getElementById('priceField').style.display = document.getElementById('bIsPaid').checked ? 'block' : 'none';
 }
 
 async function saveBulletin(ev, andPublish=false) {
