@@ -232,7 +232,7 @@ router.post('/:bulletinId/pay', async (req, res) => {
       amount,
       currency: 'NGN',
       redirect_url: 'https://livingolive.adroomai.com/payment/success',
-      customer: { email, name: req.user.email?.split('@')[0] ?? 'User' },
+      customer: { email, phonenumber: req.user.phone ?? '00000000000', name: req.user.email?.split('@')[0] ?? 'User' },
       customizations: { title: 'Living Olive Bulletin', description: title, logo: 'https://livingolive.adroomai.com/icon.png' },
       meta: { bulletin_id: bulletinId, user_id: req.user.id, church_id: bulletin.church_id },
     }),
