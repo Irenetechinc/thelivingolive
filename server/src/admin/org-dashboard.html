@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Church Admin — Living Olive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#F7F1E3;--surface:#fff;--olive:#3E4A2F;--oliveMid:#5B6B45;--oliveLight:#8A9A6B;
+  --gold:#C9A227;--goldLight:#E2C060;--ink:#2B2A25;--inkSoft:#5C5A4E;--inkFaint:#9A9485;
+  --danger:#B3452C;--parchment:#F0E8D0;--border:#E2D5B5;--radius:12px;--shadow:0 2px 12px rgba(30,42,18,.08);
+}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;min-height:100vh}
+
+/* Sidebar */
+.sidebar{width:240px;background:var(--olive);min-height:100vh;display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:hidden}
+.sidebar-brand{padding:24px 20px 20px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.sidebar-brand .logo{font-size:28px;display:block;margin-bottom:8px}
+.sidebar-brand h1{font-size:16px;font-weight:700;color:#fff;line-height:1.2}
+.sidebar-brand p{font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px}
+.church-badge{margin:16px;background:rgba(255,255,255,0.07);border-radius:10px;padding:12px;border:1px solid rgba(255,255,255,0.1)}
+.church-badge .church-name{font-size:13px;font-weight:600;color:#fff}
+.church-badge .church-meta{font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px}
+nav{flex:1;padding:8px 0}
+nav a{display:flex;align-items:center;gap:10px;padding:11px 20px;color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-weight:500;transition:all .15s;cursor:pointer}
+nav a:hover,nav a.active{background:rgba(255,255,255,0.09);color:#fff}
+nav a.active{border-left:3px solid var(--goldLight)}
+nav a .nav-icon{width:20px;text-align:center;font-size:15px}
+.sidebar-footer{padding:16px 20px;border-top:1px solid rgba(255,255,255,0.08)}
+.sidebar-footer a{color:rgba(255,255,255,0.5);font-size:12px;text-decoration:none;display:block;padding:6px 0}
+.sidebar-footer a:hover{color:#fff}
+
+/* Main */
+.main{flex:1;overflow-x:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.topbar h2{font-size:18px;font-weight:700;color:var(--ink)}
+.topbar .actions{display:flex;gap:10px}
+.btn{padding:9px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s;line-height:1}
+.btn-primary{background:var(--olive);color:#fff}
+.btn-primary:hover{background:var(--oliveMid)}
+.btn-ghost{background:transparent;color:var(--inkSoft);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--parchment)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.page{display:none;padding:28px;animation:fadeIn .2s ease}
+.page.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Stats row */
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:28px}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:20px;border:1px solid var(--border)}
+.stat-card .label{font-size:11px;font-weight:600;color:var(--inkFaint);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700;color:var(--ink)}
+.stat-card .sub{font-size:12px;color:var(--inkFaint);margin-top:4px}
+
+/* Cards / tables */
+.card{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-header h3{font-size:15px;font-weight:600;color:var(--ink)}
+.card-body{padding:20px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:600;color:var(--inkFaint);text-transform:uppercase;letter-spacing:.8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+td{padding:12px 14px;font-size:14px;color:var(--ink);border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg)}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600}
+.badge-green{background:#d4edda;color:#1a5c2c}
+.badge-gold{background:#fef6d6;color:#7a5f0d}
+.badge-gray{background:#f0f0ec;color:#6b6b5c}
+.badge-red{background:#fde8e8;color:#8b1c1c}
+.empty-state{text-align:center;padding:48px 20px;color:var(--inkFaint)}
+.empty-state .empty-icon{font-size:40px;margin-bottom:12px;display:block}
+.empty-state p{font-size:14px;line-height:22px}
+
+/* Bulletin form modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border-radius:16px;width:min(640px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,0.2)}
+.modal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-header h3{font-size:16px;font-weight:700;color:var(--ink)}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--inkFaint);line-height:1;padding:4px}
+.modal-body{padding:24px}
+.form-group{margin-bottom:20px}
+label{display:block;font-size:12px;font-weight:600;color:var(--inkSoft);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+input[type=text],input[type=number],input[type=datetime-local],select,textarea{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--ink);background:var(--bg);outline:none;transition:border-color .15s;font-family:inherit}
+input:focus,select:focus,textarea:focus{border-color:var(--oliveLight);box-shadow:0 0 0 3px rgba(138,154,107,.12)}
+textarea{min-height:200px;resize:vertical;line-height:1.6}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-check{display:flex;align-items:center;gap:10px;cursor:pointer}
+.form-check input[type=checkbox]{width:18px;height:18px;accent-color:var(--olive);cursor:pointer}
+.form-check span{font-size:14px;color:var(--ink)}
+.price-field{display:none}
+.modal-footer{padding:20px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+
+/* Rich text toolbar */
+.toolbar{display:flex;gap:4px;padding:8px;background:var(--parchment);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;flex-wrap:wrap}
+.toolbar button{padding:5px 10px;border:1px solid var(--border);background:var(--surface);border-radius:4px;font-size:13px;cursor:pointer;font-family:inherit}
+.toolbar button:hover{background:var(--parchment)}
+#editor{min-height:200px;padding:12px 14px;border:1px solid var(--border);border-radius:0 0 8px 8px;background:var(--surface);outline:none;font-size:15px;line-height:1.7;color:var(--ink)}
+#editor:focus{border-color:var(--oliveLight)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999;min-width:220px;text-align:center}
+.toast.show{opacity:1}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .form-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <span class="logo">🫒</span>
+    <h1>Living Olive</h1>
+    <p>Church Admin Portal</p>
+  </div>
+  <div class="church-badge">
+    <div class="church-name" id="sidebarChurchName">Loading…</div>
+    <div class="church-meta">Organisation Admin</div>
+  </div>
+  <nav>
+    <a class="active" onclick="showPage('dashboard')" id="nav-dashboard"><span class="nav-icon">📊</span> Dashboard</a>
+    <a onclick="showPage('bulletins')" id="nav-bulletins"><span class="nav-icon">📋</span> Bulletins</a>
+    <a onclick="showPage('members')" id="nav-members"><span class="nav-icon">👥</span> Members</a>
+    <a onclick="showPage('payments')" id="nav-payments"><span class="nav-icon">💳</span> Payments</a>
+    <a onclick="showPage('profile')" id="nav-profile"><span class="nav-icon">⛪</span> Profile</a>
+  </nav>
+  <div class="sidebar-footer">
+    <a href="/org-admin/logout" onclick="return confirm('Sign out?')">Sign out →</a>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+  <div class="topbar">
+    <h2 id="pageTitle">Dashboard</h2>
+    <div class="actions">
+      <button class="btn btn-primary" id="topbarAction" onclick="openNewBulletin()" style="display:none">+ New Bulletin</button>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="page active" id="page-dashboard">
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="label">Members</div><div class="value" id="statMembers">—</div></div>
+      <div class="stat-card"><div class="label">Bulletins</div><div class="value" id="statBulletins">—</div></div>
+      <div class="stat-card"><div class="label">Revenue</div><div class="value" id="statRevenue">—</div><div class="sub">from paid bulletins</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Recent Bulletins</h3><button class="btn btn-primary btn-sm" onclick="showPage('bulletins')">View all</button></div>
+      <div id="dashRecentBulletins"><div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet. Create your first one!</p></div></div>
+    </div>
+  </div>
+
+  <!-- Bulletins -->
+  <div class="page" id="page-bulletins">
+    <div class="card">
+      <div class="card-header"><h3>All Bulletins</h3><button class="btn btn-primary btn-sm" onclick="openNewBulletin()">+ New Bulletin</button></div>
+      <div id="bulletinList"><div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Members -->
+  <div class="page" id="page-members">
+    <div class="card">
+      <div class="card-header"><h3>Church Members</h3></div>
+      <div id="memberList"><div class="empty-state"><span class="empty-icon">👥</span><p>No members have confirmed your church yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Payments -->
+  <div class="page" id="page-payments">
+    <div class="card">
+      <div class="card-header"><h3>Bulletin Payments</h3></div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:14px;line-height:1.7">
+          Payments from paid bulletins are collected via Flutterwave and disbursed to your registered bank account weekly (minus applicable fees).
+          Contact <a href="mailto:admin@livingolive.app" style="color:var(--olive)">admin@livingolive.app</a> for payout enquiries or to update banking details.
+        </p>
+        <div id="paymentStats" style="margin-top:20px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Profile -->
+  <div class="page" id="page-profile">
+    <div class="card">
+      <div class="card-header"><h3>Church Profile</h3></div>
+      <div class="card-body">
+        <form id="profileForm" onsubmit="saveProfile(event)">
+          <div class="form-group"><label>Church Description</label><textarea name="description" id="profileDesc" placeholder="Brief description of your church for the app listing…" style="min-height:100px"></textarea></div>
+          <div class="form-row">
+            <div class="form-group"><label>Email</label><input type="text" name="email" id="profileEmail" placeholder="contact@yourchurch.org"></div>
+            <div class="form-group"><label>Phone</label><input type="text" name="phone" id="profilePhone" placeholder="+234 800 000 0000"></div>
+          </div>
+          <div class="form-group"><label>Logo URL</label><input type="text" name="logoUrl" id="profileLogo" placeholder="https://…/logo.png"></div>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulletin create/edit modal -->
+<div class="modal-overlay" id="bulletinModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">New Bulletin</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="bulletinForm" onsubmit="saveBulletin(event)">
+        <input type="hidden" id="editingId">
+        <div class="form-group"><label>Title *</label><input type="text" id="bTitle" placeholder="e.g. Sunday Service Bulletin — 19 Jan 2025" required></div>
+        <div class="form-group">
+          <label>Content *</label>
+          <div class="toolbar">
+            <button type="button" onclick="fmt('bold')"><b>B</b></button>
+            <button type="button" onclick="fmt('italic')"><i>I</i></button>
+            <button type="button" onclick="fmt('underline')"><u>U</u></button>
+            <button type="button" onclick="fmt('insertUnorderedList')">• List</button>
+            <button type="button" onclick="fmt('insertOrderedList')">1. List</button>
+            <button type="button" onclick="insertHeading()">H2</button>
+            <button type="button" onclick="fmt('formatBlock','<hr>')">Divider</button>
+          </div>
+          <div id="editor" contenteditable="true" placeholder="Type your bulletin content here…"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Frequency</label>
+            <select id="bFrequency">
+              <option value="daily">Daily</option>
+              <option value="weekly" selected>Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="special">Special Edition</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Publish Date & Time</label>
+            <input type="datetime-local" id="bPublishAt">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Expiry (optional — blank = no expiry)</label>
+          <input type="datetime-local" id="bExpiresAt">
+        </div>
+        <div class="form-group">
+          <label class="form-check">
+            <input type="checkbox" id="bIsPaid" onchange="togglePriceField()">
+            <span>This bulletin is paid (members pay to access)</span>
+          </label>
+        </div>
+        <div class="form-group price-field" id="priceField">
+          <label>Price (₦)</label>
+          <input type="number" id="bPrice" placeholder="e.g. 200" min="100">
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBulletin()">Save Draft</button>
+      <button class="btn btn-primary" id="savePublishBtn" onclick="saveBulletin(null, true)" style="background:var(--gold);color:var(--ink)">Save & Publish</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let churchData = null;
+let allBulletins = [];
+let editingBulletinId = null;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    const me = await api('/api/me');
+    churchData = me.church;
+    document.getElementById('sidebarChurchName').textContent = churchData.name;
+
+    const stats = await api('/api/stats');
+    document.getElementById('statMembers').textContent = stats.stats.memberCount ?? '—';
+    document.getElementById('statBulletins').textContent = stats.stats.bulletinCount ?? '—';
+    document.getElementById('statRevenue').textContent = stats.stats.totalRevenue
+      ? '₦' + Number(stats.stats.totalRevenue).toLocaleString() : '₦0';
+
+    // Profile pre-fill
+    document.getElementById('profileDesc').value = churchData.description ?? '';
+    document.getElementById('profileEmail').value = churchData.email ?? '';
+    document.getElementById('profilePhone').value = churchData.phone ?? '';
+    document.getElementById('profileLogo').value = churchData.logo_url ?? '';
+
+    await loadBulletins();
+  } catch(e) { toast('Failed to load: ' + e.message, 'error'); }
+})();
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+
+  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',payments:'Payments',profile:'Church Profile'};
+  document.getElementById('pageTitle').textContent = titles[name] ?? name;
+  document.getElementById('topbarAction').style.display = name === 'bulletins' ? '' : 'none';
+
+  if (name === 'members') loadMembers();
+}
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(path, method='GET', body) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch('/org-admin' + path, opts);
+  const json = await res.json();
+  if (!json.ok && json.error) throw new Error(json.error);
+  return json;
+}
+
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = (type==='error'?'✕ ':'✔ ') + msg;
+  el.style.background = type==='error'?'#B3452C':'#3E4A2F';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ── Bulletins ─────────────────────────────────────────────────────────────────
+async function loadBulletins() {
+  const data = await api('/api/bulletins');
+  allBulletins = data.bulletins ?? [];
+  renderBulletins();
+  renderDashRecent();
+}
+
+function renderBulletins() {
+  const el = document.getElementById('bulletinList');
+  if (!allBulletins.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet. Create your first one!</p></div>`;
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Frequency</th><th>Publish Date</th><th>Status</th><th>Price</th><th>Actions</th></tr></thead>
+    <tbody>${allBulletins.map(b => `
+      <tr>
+        <td><strong>${esc(b.title)}</strong></td>
+        <td>${b.frequency}</td>
+        <td>${b.publish_at ? new Date(b.publish_at).toLocaleString() : '—'}</td>
+        <td>${b.is_published ? '<span class="badge badge-green">Published</span>' : '<span class="badge badge-gray">Draft</span>'}</td>
+        <td>${b.is_paid ? '<span class="badge badge-gold">₦'+Number(b.price_ngn).toLocaleString()+'</span>' : '<span class="badge badge-green">Free</span>'}</td>
+        <td style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost btn-sm" onclick="editBulletin('${b.id}')">Edit</button>
+          ${b.is_published
+            ? `<button class="btn btn-ghost btn-sm" onclick="togglePublish('${b.id}',false)">Unpublish</button>`
+            : `<button class="btn btn-sm" style="background:var(--gold);color:var(--ink)" onclick="togglePublish('${b.id}',true)">Publish</button>`}
+          <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteBulletin('${b.id}','${esc(b.title)}')">Delete</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderDashRecent() {
+  const el = document.getElementById('dashRecentBulletins');
+  const recent = allBulletins.slice(0,5);
+  if (!recent.length) { el.innerHTML = `<div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet.</p></div>`; return; }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>${recent.map(b=>`<tr>
+      <td>${esc(b.title)}</td>
+      <td>${b.publish_at?new Date(b.publish_at).toLocaleDateString():'—'}</td>
+      <td>${b.is_published?'<span class="badge badge-green">Published</span>':'<span class="badge badge-gray">Draft</span>'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ── Bulletin form ──────────────────────────────────────────────────────────────
+function openNewBulletin() {
+  editingBulletinId = null;
+  document.getElementById('modalTitle').textContent = 'New Bulletin';
+  document.getElementById('bTitle').value = '';
+  document.getElementById('editor').innerHTML = '';
+  document.getElementById('bFrequency').value = 'weekly';
+  document.getElementById('bPublishAt').value = '';
+  document.getElementById('bExpiresAt').value = '';
+  document.getElementById('bIsPaid').checked = false;
+  document.getElementById('bPrice').value = '';
+  document.getElementById('priceField').style.display = 'none';
+  document.getElementById('bulletinModal').classList.add('open');
+}
+
+async function editBulletin(id) {
+  try {
+    const data = await api('/api/bulletins/' + id);
+    const b = data.bulletin;
+    editingBulletinId = id;
+    document.getElementById('modalTitle').textContent = 'Edit Bulletin';
+    document.getElementById('bTitle').value = b.title;
+    document.getElementById('editor').innerHTML = b.content ?? '';
+    document.getElementById('bFrequency').value = b.frequency;
+    document.getElementById('bPublishAt').value = b.publish_at ? b.publish_at.slice(0,16) : '';
+    document.getElementById('bExpiresAt').value = b.expires_at ? b.expires_at.slice(0,16) : '';
+    document.getElementById('bIsPaid').checked = b.is_paid;
+    document.getElementById('bPrice').value = b.price_ngn || '';
+    document.getElementById('priceField').style.display = b.is_paid ? '' : 'none';
+    document.getElementById('bulletinModal').classList.add('open');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function closeModal() { document.getElementById('bulletinModal').classList.remove('open'); }
+
+function togglePriceField() {
+  document.getElementById('priceField').style.display = document.getElementById('bIsPaid').checked ? '' : 'none';
+}
+
+async function saveBulletin(ev, andPublish=false) {
+  if(ev) ev.preventDefault();
+  const title = document.getElementById('bTitle').value.trim();
+  const content = document.getElementById('editor').innerHTML.trim();
+  if (!title || !content) { toast('Title and content are required', 'error'); return; }
+
+  const payload = {
+    title,
+    content,
+    frequency: document.getElementById('bFrequency').value,
+    publishAt: document.getElementById('bPublishAt').value || null,
+    expiresAt: document.getElementById('bExpiresAt').value || null,
+    isPaid: document.getElementById('bIsPaid').checked,
+    priceNgn: document.getElementById('bPrice').value || 0,
+  };
+
+  try {
+    let bulletinId = editingBulletinId;
+    if (editingBulletinId) {
+      await api('/api/bulletins/' + editingBulletinId, 'PUT', payload);
+    } else {
+      const res = await api('/api/bulletins', 'POST', payload);
+      bulletinId = res.bulletinId;
+    }
+
+    if (andPublish && bulletinId) {
+      await api('/api/bulletins/' + bulletinId + '/publish', 'POST', { publish: true });
+      toast('Bulletin saved and published!');
+    } else {
+      toast('Bulletin saved as draft');
+    }
+
+    closeModal();
+    await loadBulletins();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function togglePublish(id, publish) {
+  try {
+    await api('/api/bulletins/' + id + '/publish', 'POST', { publish });
+    toast(publish ? 'Bulletin published — members notified!' : 'Bulletin unpublished');
+    await loadBulletins();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteBulletin(id, title) {
+  if (!confirm(`Delete bulletin "${title}"? This cannot be undone.`)) return;
+  try {
+    await api('/api/bulletins/' + id, 'DELETE');
+    toast('Bulletin deleted');
+    await loadBulletins();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Members ────────────────────────────────────────────────────────────────────
+async function loadMembers() {
+  try {
+    const data = await api('/api/members');
+    const el = document.getElementById('memberList');
+    if (!data.members.length) {
+      el.innerHTML = `<div class="empty-state"><span class="empty-icon">👥</span><p>No members have confirmed your church in the app yet.<br>When users select your church and answer "Yes, this is my church", they'll appear here.</p></div>`;
+      return;
+    }
+    el.innerHTML = `<table>
+      <thead><tr><th>User ID</th><th>Joined</th></tr></thead>
+      <tbody>${data.members.map(m=>`<tr>
+        <td style="font-family:monospace;font-size:12px">${m.user_id}</td>
+        <td>${new Date(m.confirmed_at||m.created_at).toLocaleDateString()}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Profile ────────────────────────────────────────────────────────────────────
+async function saveProfile(ev) {
+  ev.preventDefault();
+  try {
+    await api('/api/profile', 'PUT', {
+      description: document.getElementById('profileDesc').value,
+      email: document.getElementById('profileEmail').value,
+      phone: document.getElementById('profilePhone').value,
+      logoUrl: document.getElementById('profileLogo').value,
+    });
+    toast('Profile saved');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Rich text editor ──────────────────────────────────────────────────────────
+function fmt(cmd, val) {
+  document.getElementById('editor').focus();
+  document.execCommand(cmd, false, val ?? null);
+}
+function insertHeading() {
+  document.getElementById('editor').focus();
+  document.execCommand('formatBlock', false, 'h2');
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

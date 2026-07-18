@@ -23,6 +23,8 @@ import HymnDetailScreen from "../screens/hymns/HymnDetailScreen";
 import DevotionsScreen from "../screens/devotions/DevotionsScreen";
 import PrayerScreen from "../screens/prayer/PrayerScreen";
 import NotificationAlarmScreen from "../screens/NotificationAlarmScreen";
+import BulletinScreen from "../screens/bulletins/BulletinScreen";
+import DonateScreen from "../screens/donate/DonateScreen";
 
 export type RootStackParamList = {
   Home: undefined;
@@ -34,6 +36,8 @@ export type RootStackParamList = {
   HymnDetail: { hymnId: string };
   Devotions: undefined;
   Prayer: undefined;
+  Bulletin: undefined;
+  Donate: undefined;
   NotificationAlarm: {
     type: "prayer" | "devotion";
     entryId?: string;
@@ -158,6 +162,8 @@ export default function AppNavigator() {
               <Stack.Screen name="HymnDetail" component={HymnDetailScreen} options={{ title: "" }} />
               <Stack.Screen name="Devotions" component={DevotionsScreen} options={{ title: "Devotions" }} />
               <Stack.Screen name="Prayer" component={PrayerScreen} options={{ title: "Prayer" }} />
+              <Stack.Screen name="Bulletin" component={BulletinScreen} options={{ headerShown: false }} />
+              <Stack.Screen name="Donate" component={DonateScreen} options={{ headerShown: false }} />
               <Stack.Screen
                 name="NotificationAlarm"
                 component={NotificationAlarmScreen}

@@ -10,6 +10,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { adminBus } from '../lib/adminBus.js';
+import { hashPassword } from './orgAdmin.js';
 import {
   runCrawlJob,
   runGeneticJob,
@@ -289,6 +290,74 @@ router.post('/api/agents/:name/run', requireAdmin, (req, res) => {
 
   adminBus.agentLog('admin', `${name} manually triggered by admin`);
   res.json({ ok: true, agent: name, triggered: true });
+});
+
+// ── Church management (Super Admin only) ──────────────────────────────────────
+
+router.get('/api/churches', requireAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.json({ ok: true, churches: [], total: 0 });
+  const { data, error } = await supabase
+    .from('churches')
+    .select('id, name, slug, admin_username, email, phone, active, created_at')
+    .order('name');
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, churches: data ?? [], total: data?.length ?? 0 });
+});
+
+router.post('/api/churches', requireAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Database unavailable' });
+
+  const { name, adminUsername, password, email, phone, description, bankName, accountNumber, accountName } = req.body;
+  if (!name?.trim() || !adminUsername?.trim() || !password?.trim()) {
+    return res.status(400).json({ ok: false, error: 'name, adminUsername and password are required' });
+  }
+
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const passwordHash = hashPassword(password);
+
+  const { data, error } = await supabase.from('churches').insert({
+    name: name.trim(),
+    slug,
+    admin_username: adminUsername.trim(),
+    password_hash: passwordHash,
+    email: email?.trim() ?? null,
+    phone: phone?.trim() ?? null,
+    description: description?.trim() ?? null,
+    bank_name: bankName?.trim() ?? null,
+    account_number: accountNumber?.trim() ?? null,
+    account_name: accountName?.trim() ?? null,
+    active: true,
+  }).select('id, name, slug, admin_username').single();
+
+  if (error) return res.status(400).json({ ok: false, error: error.message });
+  adminBus.agentLog('admin', `Church onboarded: "${name}" (username: ${adminUsername})`);
+  res.json({ ok: true, church: data });
+});
+
+router.patch('/api/churches/:id', requireAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { name, email, phone, active, password } = req.body;
+  const updates = { updated_at: new Date().toISOString() };
+  if (name !== undefined) updates.name = name.trim();
+  if (email !== undefined) updates.email = email.trim();
+  if (phone !== undefined) updates.phone = phone.trim();
+  if (active !== undefined) updates.active = !!active;
+  if (password?.trim()) updates.password_hash = hashPassword(password.trim());
+
+  const { error } = await supabase.from('churches').update(updates).eq('id', req.params.id);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  adminBus.agentLog('admin', `Church ${req.params.id} updated by admin`);
+  res.json({ ok: true });
+});
+
+router.delete('/api/churches/:id', requireAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { error } = await supabase.from('churches').update({ active: false }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  adminBus.agentLog('admin', `Church ${req.params.id} deactivated by admin`);
+  res.json({ ok: true });
 });
 
 // ── Login page HTML ───────────────────────────────────────────────────────────

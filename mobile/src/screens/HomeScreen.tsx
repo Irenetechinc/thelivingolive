@@ -55,6 +55,14 @@ const cards: {
     gradient: ["#2A3820", "#3E4A2F"],
     accent: "#6B8055",
   },
+  {
+    key: "Bulletin",
+    title: "Church Bulletin",
+    description: "View your church's weekly bulletin & announcements",
+    symbol: "📋",
+    gradient: ["#1C3A4A", "#2E5C70"],
+    accent: "#6BAEC9",
+  },
 ];
 
 function useStaggeredAnim(count: number, delay = 80) {
@@ -192,6 +200,21 @@ export default function HomeScreen({ navigation }: Props) {
         ))}
       </View>
 
+      {/* Donate CTA — warm, not pushy */}
+      <View style={styles.donateCta}>
+        <View style={styles.donateDivider} />
+        <Text style={styles.donateEyebrow}>KEEP THE OLIVE GROWING</Text>
+        <Text style={styles.donateMsg}>
+          Living Olive is free for everyone. If it's been a blessing to you, consider supporting the mission.
+        </Text>
+        <Pressable
+          style={({ pressed }) => [styles.donateBtn, pressed && { opacity: 0.8 }]}
+          onPress={() => navigation.navigate("Donate")}
+        >
+          <Text style={styles.donateBtnText}>🫒 Give a gift</Text>
+        </Pressable>
+      </View>
+
       {/* Footer */}
       <View style={styles.footer}>
         <View style={styles.footerLine} />
@@ -303,6 +326,45 @@ const styles = StyleSheet.create({
     paddingLeft: spacing.xs,
   },
   cardArrowText: { fontSize: 26, color: colors.oliveFaint, fontWeight: "300" },
+  donateCta: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+    alignItems: "center",
+  },
+  donateDivider: {
+    width: 32,
+    height: 1,
+    backgroundColor: colors.parchmentDark,
+    marginBottom: spacing.lg,
+  },
+  donateEyebrow: {
+    ...typography.micro,
+    color: colors.gold,
+    letterSpacing: 2,
+    marginBottom: spacing.sm,
+  },
+  donateMsg: {
+    ...typography.bodySmall,
+    color: colors.inkSoft,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+  },
+  donateBtn: {
+    paddingVertical: 11,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    backgroundColor: "rgba(201,162,39,0.08)",
+  },
+  donateBtnText: {
+    color: colors.gold,
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+  },
   footer: {
     alignItems: "center",
     paddingTop: spacing.md,

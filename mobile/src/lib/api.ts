@@ -220,6 +220,92 @@ export async function transcribeSermon(fileUri: string, fileName: string): Promi
   return parseJsonResponse(res);
 }
 
+// ─── Bulletins ────────────────────────────────────────────────────────────────
+
+export type Church = { id: string; name: string; slug: string; description?: string; logo_url?: string };
+export type Bulletin = {
+  id: string; title: string; content?: string; content_preview?: string;
+  frequency: string; publish_at?: string; expires_at?: string;
+  is_paid?: boolean; price_ngn?: number; is_published?: boolean;
+  hasAccess?: boolean; requiresPayment?: boolean;
+};
+
+async function publicFetch(path: string) {
+  const res = await fetch(`${requireApiUrl()}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  return parseJsonResponse(res);
+}
+
+async function authedGet(path: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in.");
+  const res = await fetch(`${requireApiUrl()}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  return parseJsonResponse(res);
+}
+
+async function authedDelete(path: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in.");
+  const res = await fetch(`${requireApiUrl()}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  return parseJsonResponse(res);
+}
+
+export async function fetchChurches(): Promise<Church[]> {
+  const res = await authedGet("/api/bulletins/churches");
+  return res.churches ?? [];
+}
+
+export async function fetchMyChurch(): Promise<{ church_id: string; churches: Church } | null> {
+  const res = await authedGet("/api/bulletins/my-church");
+  return res.membership ?? null;
+}
+
+export async function setMyChurch(churchId: string): Promise<void> {
+  await authedFetch("/api/bulletins/my-church", { churchId });
+}
+
+export async function clearMyChurch(): Promise<void> {
+  await authedDelete("/api/bulletins/my-church");
+}
+
+export async function fetchTodayBulletin(churchId: string): Promise<{ bulletin: Bulletin | null; churchName: string; message?: string }> {
+  return authedGet(`/api/bulletins/${churchId}/today`);
+}
+
+export async function fetchBulletinArchive(churchId: string, page = 1): Promise<{ bulletins: Bulletin[]; total: number }> {
+  return authedGet(`/api/bulletins/${churchId}/archive?page=${page}`);
+}
+
+export async function fetchBulletin(churchId: string, bulletinId: string): Promise<{ bulletin: Bulletin }> {
+  return authedGet(`/api/bulletins/${churchId}/${bulletinId}`);
+}
+
+export async function initiateBulletinPayment(bulletinId: string): Promise<{ paymentLink: string; txRef: string }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/pay`, {});
+}
+
+export async function verifyBulletinPayment(bulletinId: string, txRef: string): Promise<{ paid: boolean; status?: string }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/verify-payment`, { txRef });
+}
+
+// ─── Donations ────────────────────────────────────────────────────────────────
+
+export async function initiateDonation(input: { amount: number; isRecurring: boolean }): Promise<{ paymentLink: string; txRef: string }> {
+  return authedFetch("/api/donate/initiate", input);
+}
+
+export async function verifyDonation(input: { txRef?: string; txId?: string }): Promise<{ paid: boolean; amount?: number }> {
+  return authedFetch("/api/donate/verify", input);
+}
+
 // ─── Push notifications ────────────────────────────────────────────────────────
 
 export async function registerPushToken(token: string, platform?: string): Promise<void> {

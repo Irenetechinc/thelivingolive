@@ -99,6 +99,117 @@ create table if not exists public.push_tokens (
 create index if not exists push_tokens_user_idx on public.push_tokens(user_id);
 
 -- ──────────────────────────────────────────────────────────────
+-- Church bulletin system
+-- ──────────────────────────────────────────────────────────────
+
+-- Churches onboarded by the Super Admin
+create table if not exists public.churches (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text unique not null,
+  admin_username text unique not null,
+  password_hash text not null,
+  email text,
+  phone text,
+  description text,
+  logo_url text,
+  bank_name text,
+  bank_code text,
+  account_number text,
+  account_name text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists churches_slug_idx on public.churches(slug);
+create index if not exists churches_username_idx on public.churches(admin_username);
+
+-- Bulletins uploaded by church admins
+create table if not exists public.bulletins (
+  id uuid primary key default gen_random_uuid(),
+  church_id uuid not null references public.churches(id) on delete cascade,
+  title text not null,
+  content text not null default '',
+  content_preview text not null default '',
+  frequency text not null default 'weekly' check (frequency in ('daily','weekly','monthly','special')),
+  publish_at timestamptz,
+  expires_at timestamptz,
+  is_paid boolean not null default false,
+  price_ngn int not null default 0,
+  is_published boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists bulletins_church_published_idx on public.bulletins(church_id, is_published, publish_at desc);
+
+-- Tracks which user belongs to which church (their "home church" choice)
+create table if not exists public.church_members (
+  id uuid primary key default gen_random_uuid(),
+  church_id uuid not null references public.churches(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  confirmed_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (user_id)
+);
+create index if not exists church_members_church_idx on public.church_members(church_id);
+
+-- Tracks bulletin payment access per user (for paid bulletins)
+create table if not exists public.bulletin_access (
+  id uuid primary key default gen_random_uuid(),
+  bulletin_id uuid not null references public.bulletins(id) on delete cascade,
+  church_id uuid references public.churches(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  flw_tx_ref text,
+  flw_tx_id text,
+  amount_ngn int not null default 0,
+  status text not null default 'pending' check (status in ('pending','success','failed')),
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (bulletin_id, user_id)
+);
+create index if not exists bulletin_access_church_idx on public.bulletin_access(church_id, status);
+
+-- Platform donations
+create table if not exists public.donations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
+  flw_tx_ref text unique,
+  flw_tx_id text,
+  amount_ngn int not null default 0,
+  is_recurring boolean not null default false,
+  status text not null default 'pending' check (status in ('pending','success','failed')),
+  paid_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- RLS
+alter table public.churches enable row level security;
+alter table public.bulletins enable row level security;
+alter table public.church_members enable row level security;
+alter table public.bulletin_access enable row level security;
+alter table public.donations enable row level security;
+
+-- Churches: readable by all authenticated users (for the picker list; server filters to active only)
+drop policy if exists "authenticated_read" on public.churches;
+create policy "authenticated_read" on public.churches for select using (auth.role() = 'authenticated');
+
+-- Bulletins: readable by all authenticated users (server enforces is_published)
+drop policy if exists "authenticated_read" on public.bulletins;
+create policy "authenticated_read" on public.bulletins for select using (auth.role() = 'authenticated');
+
+-- Church members: user can read/write their own row only
+drop policy if exists "owner_all" on public.church_members;
+create policy "owner_all" on public.church_members for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Bulletin access: user can read their own access records
+drop policy if exists "owner_read" on public.bulletin_access;
+create policy "owner_read" on public.bulletin_access for select using (auth.uid() = user_id);
+
+-- Donations: user can read their own donations
+drop policy if exists "owner_read" on public.donations;
+create policy "owner_read" on public.donations for select using (auth.uid() = user_id);
+
+-- ──────────────────────────────────────────────────────────────
 -- Rule-based (non-LLM) prayer/devotion engine — self-learning tables.
 -- No user_id/RLS on these: they hold aggregate, anonymous learning state
 -- shared across all users (which scripture performs well for a category,

@@ -15,6 +15,9 @@ import { logger } from "./lib/logger.js";
 import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
 import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
 import { adminRouter } from "./routes/admin.js";
+import { orgAdminRouter } from "./routes/orgAdmin.js";
+import { bulletinsRouter } from "./routes/bulletins.js";
+import { donateRouter } from "./routes/donate.js";
 import { adminBus } from "./lib/adminBus.js";
 
 const log = logger("api");
@@ -133,10 +136,28 @@ if (supabaseAdmin) {
   );
 }
 
-// ── Admin dashboard (no CORS, session-protected) ──────────────────────────────
-// Must be mounted BEFORE the global requireUser middleware so admin pages
-// can use their own cookie-based session instead of a Bearer token.
+// ── Admin dashboards (session-protected, no Bearer token required) ────────────
+// Mounted before requireUser so admin/org pages use cookie-based sessions.
 app.use("/admin", adminRouter);
+app.use("/org-admin", orgAdminRouter);
+
+// Payment success landing page (Flutterwave redirects here after checkout)
+app.get("/payment/success", (_req, res) => {
+  res.type("html").send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment — Living Olive</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#F7F1E3;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Georgia,serif;text-align:center;padding:32px}
+.card{background:#fff;border-radius:20px;padding:48px 40px;max-width:400px;box-shadow:0 8px 40px rgba(30,42,18,.1)}
+.icon{font-size:56px;margin-bottom:20px}.title{font-size:22px;font-weight:700;color:#2B2A25;margin-bottom:12px}
+.desc{font-size:15px;color:#5C5A4E;line-height:1.7;margin-bottom:28px}
+.hint{font-size:13px;color:#9A9485;background:#F0E8D0;padding:12px 16px;border-radius:10px}</style>
+</head><body><div class="card">
+<div class="icon">✅</div>
+<div class="title">Payment Received</div>
+<div class="desc">Thank you! Return to the Living Olive app and tap <strong>"Yes, verify"</strong> to unlock your content.</div>
+<div class="hint">You can close this page and go back to the app.</div>
+</div></body></html>`);
+});
 
 // In-memory upload handling for sermon audio — files are transcribed and
 // discarded immediately, never written to disk. Cap keeps a single request
@@ -711,6 +732,19 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     res.status(500).json({ error: "Scheduler error" });
   }
 });
+
+// ── Bulletin & donation API (mobile-facing, Supabase auth required) ──────────
+// All bulletin routes require a signed-in user — the church picker is only
+// reachable after logging in, so there is no public use case.
+app.use("/api/bulletins", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, bulletinsRouter);
+
+app.use("/api/donate", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, donateRouter);
 
 // ──────────────────────────────────────────────
 // JSON-only 404 + error handling for every /api/* route.

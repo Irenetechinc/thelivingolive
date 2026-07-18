@@ -416,6 +416,72 @@ async function runQualityBenchmark(supabase) {
 }
 
 // ── Exported job runners so the admin dashboard can trigger them manually ────
+// ── Bulletin auto-publisher ────────────────────────────────────────────────────
+// Runs every 5 min. Finds bulletins whose publish_at has arrived but is_published
+// is still false, sets them live, then pushes to all confirmed church members.
+async function publishScheduledBulletins(supabase) {
+  const now = new Date().toISOString();
+
+  // Find due unpublished bulletins
+  const { data: due, error } = await supabase
+    .from("bulletins")
+    .select("id, title, church_id, churches(name)")
+    .eq("is_published", false)
+    .not("publish_at", "is", null)
+    .lte("publish_at", now);
+
+  if (error) { log.warn("bulletin publisher: query error:", error.message); return; }
+  if (!due?.length) return;
+
+  const { Expo } = await import("expo-server-sdk");
+  const expo = new Expo();
+
+  for (const bulletin of due) {
+    // Mark published
+    const { error: pubErr } = await supabase
+      .from("bulletins")
+      .update({ is_published: true, updated_at: now })
+      .eq("id", bulletin.id);
+
+    if (pubErr) { log.warn(`bulletin ${bulletin.id}: publish update failed:`, pubErr.message); continue; }
+    log.info(`bulletin "${bulletin.title}" auto-published for church ${bulletin.church_id}`);
+
+    // Get all members of this church
+    const { data: members } = await supabase
+      .from("church_members")
+      .select("user_id")
+      .eq("church_id", bulletin.church_id);
+    if (!members?.length) continue;
+
+    const churchName = bulletin.churches?.name ?? "Your Church";
+
+    // Gather push tokens for all members
+    for (const m of members) {
+      const { data: tokens } = await supabase
+        .from("push_tokens")
+        .select("token")
+        .eq("user_id", m.user_id);
+      if (!tokens?.length) continue;
+
+      const messages = tokens
+        .filter((r) => Expo.isExpoPushToken(r.token))
+        .map((r) => ({
+          to: r.token,
+          sound: "default",
+          title: `📋 New Bulletin from ${churchName}`,
+          body: bulletin.title,
+          data: { type: "bulletin", bulletinId: bulletin.id, churchId: bulletin.church_id },
+        }));
+
+      if (!messages.length) continue;
+      const chunks = expo.chunkPushNotifications(messages);
+      for (const chunk of chunks) {
+        expo.sendPushNotificationsAsync(chunk).catch(() => {});
+      }
+    }
+  }
+}
+
 export { runCrawlJob, runGeneticJob, runDailyKeywordLearning, runAutoDiscovery, runQualityBenchmark, runPrayerQualitySync };
 
 export async function startPrayerEngineScheduler(supabase) {
@@ -459,6 +525,18 @@ export async function startPrayerEngineScheduler(supabase) {
   cron.schedule("30 6 * * *", () => {
     runPrayerQualitySync(supabase).catch((e) => log.warn("prayer quality sync failed:", e.message));
   });
+
+  // Every 5 minutes: auto-publish scheduled bulletins whose publish_at time
+  // has passed, then push to church members. Runs independently of the
+  // prayer/devotion scheduler but inside the same process.
+  if (supabase) {
+    cron.schedule("*/5 * * * *", () => {
+      publishScheduledBulletins(supabase).catch((e) =>
+        log.warn("bulletin auto-publish failed:", e.message)
+      );
+    });
+    log.info("bulletin auto-publisher scheduled (every 5 min)");
+  }
 
   log.info(
     "scheduler started — " +
