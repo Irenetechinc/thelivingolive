@@ -77,9 +77,6 @@ create table if not exists public.prayer_entries (
   title text not null,
   prayer_text text not null,
   scripture_reference text,
-  -- quality_score (0-100): automatically computed by prayerEngine.scorePrayer()
-  -- on vocabulary richness, scripture density, and desire relevance.
-  -- Used by runPrayerQualitySync() in scheduler.js to nudge verse weights.
   quality_score int,
   created_at timestamptz not null default now()
 );
@@ -182,30 +179,25 @@ create table if not exists public.donations (
   created_at timestamptz not null default now()
 );
 
--- RLS
+-- RLS for bulletin tables
 alter table public.churches enable row level security;
 alter table public.bulletins enable row level security;
 alter table public.church_members enable row level security;
 alter table public.bulletin_access enable row level security;
 alter table public.donations enable row level security;
 
--- Churches: readable by all authenticated users (for the picker list; server filters to active only)
 drop policy if exists "authenticated_read" on public.churches;
 create policy "authenticated_read" on public.churches for select using (auth.role() = 'authenticated');
 
--- Bulletins: readable by all authenticated users (server enforces is_published)
 drop policy if exists "authenticated_read" on public.bulletins;
 create policy "authenticated_read" on public.bulletins for select using (auth.role() = 'authenticated');
 
--- Church members: user can read/write their own row only
 drop policy if exists "owner_all" on public.church_members;
 create policy "owner_all" on public.church_members for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Bulletin access: user can read their own access records
 drop policy if exists "owner_read" on public.bulletin_access;
 create policy "owner_read" on public.bulletin_access for select using (auth.uid() = user_id);
 
--- Donations: user can read their own donations
 drop policy if exists "owner_read" on public.donations;
 create policy "owner_read" on public.donations for select using (auth.uid() = user_id);
 
@@ -216,8 +208,6 @@ create policy "owner_read" on public.donations for select using (auth.uid() = us
 -- which keywords map to which category), not any one person's data.
 -- ──────────────────────────────────────────────────────────────
 
--- Per-verse weight per category, nudged up/down by user feedback ratings.
--- Read at generation time so well-received scripture is favored over time.
 create table if not exists public.verse_category_weights (
   verse_ref text not null,
   category text not null,
@@ -227,8 +217,6 @@ create table if not exists public.verse_category_weights (
   primary key (verse_ref, category)
 );
 
--- Raw feedback events (1 row per rating) — kept so weight updates can be
--- recomputed/audited later rather than only keeping a running average.
 create table if not exists public.generation_feedback (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete set null,
@@ -241,8 +229,6 @@ create table if not exists public.generation_feedback (
 );
 create index if not exists generation_feedback_created_idx on public.generation_feedback(created_at);
 
--- Keywords the daily learning pass has promoted from highly-rated requests,
--- so restarting the server doesn't lose what's been learned so far.
 create table if not exists public.learned_keywords (
   category text not null,
   keyword text not null,
@@ -251,11 +237,6 @@ create table if not exists public.learned_keywords (
   primary key (category, keyword)
 );
 
--- Scripture references the web crawler (lib/webCrawler.js) has discovered
--- from public Bible-topic reference pages, validated against local
--- scripture data before being added here. Verse TEXT is never stored — only
--- the reference/pointer; the prayer engine always re-derives the actual
--- text from server/src/data/bible/ at generation time.
 create table if not exists public.discovered_verses (
   ref text not null,
   category text not null,
@@ -269,9 +250,6 @@ create table if not exists public.discovered_verses (
   primary key (ref, category)
 );
 
--- Cached algorithmic verse explanations (verseExplainEngine.js).
--- One row per verse reference; regenerated after 48 h to benefit from
--- newly learned teaching context and dictionary data.
 create table if not exists public.verse_explanations (
   verse_ref text primary key,
   explanation text not null,
@@ -281,10 +259,6 @@ create table if not exists public.verse_explanations (
   generated_at timestamptz not null default now()
 );
 
--- Verse teaching context scraped by webCrawler.js (pass 2).
--- Snippets are short community-written teaching notes harvested from
--- openbible.info verse pages; fed into the explanation engine for richer,
--- varied explanations.
 create table if not exists public.verse_teaching_context (
   verse_ref text primary key,
   snippets jsonb not null default '[]',
@@ -292,12 +266,6 @@ create table if not exists public.verse_teaching_context (
   scraped_at timestamptz not null default now()
 );
 
--- No RPC needed for rating increments — the server uses the service-role
--- key (which bypasses RLS) and updates verse_explanations directly.
-
--- Audit trail of each genetic-algorithm optimization run
--- (lib/geneticAlgorithm.js) — one row per category per run, so the
--- evolutionary process is queryable, not just visible in logs.
 create table if not exists public.ga_generations (
   id uuid primary key default gen_random_uuid(),
   category text not null,
@@ -319,28 +287,31 @@ alter table public.ga_generations enable row level security;
 alter table public.verse_explanations enable row level security;
 alter table public.verse_teaching_context enable row level security;
 
--- These are shared/aggregate tables (no per-row user ownership), so allow
--- any authenticated user to read them and only the service role (server) to
--- write — the server always uses the service-role key, which bypasses RLS,
--- so these policies only govern direct client access.
 drop policy if exists "authenticated_read" on public.verse_category_weights;
 create policy "authenticated_read" on public.verse_category_weights for select using (auth.role() = 'authenticated');
+
 drop policy if exists "authenticated_read" on public.learned_keywords;
 create policy "authenticated_read" on public.learned_keywords for select using (auth.role() = 'authenticated');
+
 drop policy if exists "authenticated_read" on public.discovered_verses;
 create policy "authenticated_read" on public.discovered_verses for select using (auth.role() = 'authenticated');
+
 drop policy if exists "authenticated_read" on public.ga_generations;
 create policy "authenticated_read" on public.ga_generations for select using (auth.role() = 'authenticated');
+
 drop policy if exists "authenticated_read" on public.verse_explanations;
 create policy "authenticated_read" on public.verse_explanations for select using (auth.role() = 'authenticated');
+
 drop policy if exists "authenticated_read" on public.verse_teaching_context;
 create policy "authenticated_read" on public.verse_teaching_context for select using (auth.role() = 'authenticated');
+
 drop policy if exists "owner_insert" on public.generation_feedback;
 create policy "owner_insert" on public.generation_feedback for insert with check (auth.uid() = user_id);
+
 drop policy if exists "owner_read" on public.generation_feedback;
 create policy "owner_read" on public.generation_feedback for select using (auth.uid() = user_id);
 
--- Row Level Security: every table is scoped to the owning user
+-- Row Level Security: user-scoped tables
 alter table public.highlights enable row level security;
 alter table public.notes enable row level security;
 alter table public.devotion_plans enable row level security;
@@ -349,30 +320,32 @@ alter table public.prayer_plans enable row level security;
 alter table public.prayer_entries enable row level security;
 alter table public.push_tokens enable row level security;
 
--- ── Feature flags — persists admin toggle state across Railway restarts ──────
--- Accessed only via the service role key (admin routes); never from the mobile app.
--- Run this block if you are adding feature_flags for the first time:
+-- ── Feature flags ─────────────────────────────────────────────────────────────
 create table if not exists public.feature_flags (
   key        text        primary key,
   enabled    boolean     not null default true,
   updated_at timestamptz not null default now()
 );
--- No RLS policies needed — service role bypasses RLS; anon/user roles never touch this table.
 alter table public.feature_flags enable row level security;
 
-do $
-declare
-  t text;
-begin
-  for t in select unnest(array[
-    'highlights','notes','devotion_plans','devotion_entries',
-    'prayer_plans','prayer_entries','push_tokens'
-  ])
-  loop
-    execute format('drop policy if exists "owner_all" on public.%I', t);
-    execute format(
-      'create policy "owner_all" on public.%I for all using (auth.uid() = user_id) with check (auth.uid() = user_id)',
-      t
-    );
-  end loop;
-end $$;
+-- RLS policies for user-scoped tables (one statement per table — no PL/pgSQL)
+drop policy if exists "owner_all" on public.highlights;
+create policy "owner_all" on public.highlights for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.notes;
+create policy "owner_all" on public.notes for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.devotion_plans;
+create policy "owner_all" on public.devotion_plans for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.devotion_entries;
+create policy "owner_all" on public.devotion_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.prayer_plans;
+create policy "owner_all" on public.prayer_plans for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.prayer_entries;
+create policy "owner_all" on public.prayer_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "owner_all" on public.push_tokens;
+create policy "owner_all" on public.push_tokens for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
