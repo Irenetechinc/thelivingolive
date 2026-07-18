@@ -149,6 +149,14 @@ export type PrayerResult = {
   prayerPoints: { title: string; prayerText: string; scriptureReference: string; category?: string }[];
   detectedCategory?: string;
   userTypeOverridden?: boolean;
+  understanding?: {
+    detectedCategory: string;
+    confidence: number;
+    selectedCategory: string | null;
+    categoryUsed: string;
+    overridden: boolean;
+    summary: string;
+  };
   engine?: string;
 };
 

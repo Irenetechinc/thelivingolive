@@ -105,7 +105,7 @@ export default function PrayerScreen() {
   const [amPm, setAmPm] = useState<"AM" | "PM">("AM");
   const [ringtone, setRingtone] = useState<"default" | "gentle" | "bell" | "silent">("default");
   const [alarmBanner, setAlarmBanner] = useState(false);
-  const [categoryOverride, setCategoryOverride] = useState<{ from: string; to: string } | null>(null);
+  const [categoryOverride, setCategoryOverride] = useState<{ from: string; to: string; summary?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<PrayerEntry[]>([]);
@@ -171,8 +171,8 @@ export default function PrayerScreen() {
       if (insertError) throw insertError;
       const desiresText = desires.trim();
       const category = result.detectedCategory ?? type;
-      if (result.userTypeOverridden) {
-        setCategoryOverride({ from: type, to: category });
+      if (result.userTypeOverridden && result.understanding) {
+        setCategoryOverride({ from: type, to: category, summary: result.understanding.summary });
       } else {
         setCategoryOverride(null);
       }
@@ -246,7 +246,7 @@ export default function PrayerScreen() {
         {categoryOverride && (
           <View style={styles.overrideBanner}>
             <Text style={styles.overrideBannerText}>
-              ✦ The engine detected a <Text style={styles.overrideBold}>{categoryOverride.to}</Text> need in your words — prayer points were shaped accordingly rather than defaulting to {categoryOverride.from}.
+              ✦ {categoryOverride.summary ?? `The engine detected a ${categoryOverride.to} need in your words — prayer points were shaped accordingly rather than defaulting to ${categoryOverride.from}.`}
             </Text>
           </View>
         )}

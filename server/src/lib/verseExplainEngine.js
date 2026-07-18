@@ -21,6 +21,17 @@ import { detectCategory, verseText } from "./prayerEngine.js";
 import { getVerseBank } from "../data/prayerVerses.js";
 import { lookupWord } from "./dictionary.js";
 import { addTeachingContext, getTeachingContext, loadTeachingContextFromDb } from "./teachingContext.js";
+import {
+  ATTRIBUTES,
+  NARRATIVES,
+  COVENANT_NAMES,
+  seedPick,
+  getRelevantAttributes,
+  getBestCovenantName,
+  buildAttributePhrase,
+  buildImplication,
+  getNarrative,
+} from "./godPersona.js";
 
 const log = logger("verse-explain");
 
@@ -130,8 +141,39 @@ const THEOLOGICAL_TERMS = new Set([
   "prophet","apostle","pastor","priest","temple","covenant","baptism","bread","wine",
 ]);
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+// Hash-seeded pick — deterministic within a request, varied across requests
+function pick(arr, seed) {
+  if (!arr || !arr.length) return undefined;
+  if (seed == null) return arr[Math.floor(Math.random() * arr.length)];
+  let h = 5381;
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0;
+  return arr[h % arr.length];
+}
+
+// Slice a text block without cutting inside a verse quotation.
+// Verse quotes look like "…quoted text…". We never leave an open quote unclosed.
+function safeSlice(text, maxLen) {
+  if (!text || text.length <= maxLen) return text;
+  let sliced = text.slice(0, maxLen);
+  // Find the last open double-quote that has no matching close
+  const lastOpen = sliced.lastIndexOf('"');
+  if (lastOpen !== -1) {
+    const fragment = sliced.slice(lastOpen);
+    const hasClose = fragment.indexOf('"') !== -1 && fragment.indexOf('"') > 0;
+    if (!hasClose && lastOpen > maxLen - 120) {
+      // Back up to just before the unclosed quote
+      sliced = sliced.slice(0, lastOpen).trimEnd();
+    }
+  }
+  // End at a sentence boundary when possible
+  const sentenceEnd = sliced.search(/[.!?][^.!?]*$/);
+  if (sentenceEnd > maxLen * 0.6) {
+    sliced = sliced.slice(0, sentenceEnd + 1);
+  } else {
+    sliced = sliced.replace(/\s+\S*$/, "");
+  }
+  return sliced;
 }
 
 // ── Key-word extraction ──────────────────────────────────────────────────────
@@ -250,58 +292,101 @@ export function loadExplanationLearning(rows) {
 }
 
 // ── Cross-reference connection explainer ─────────────────────────────────────
-// Explains WHY a related passage connects to the main verse — the thread that
-// ties them together — rather than just listing "see also."
+// Explains WHY a related passage connects — built from the actual shared content,
+// not picked from a fixed pool.
 function explainCrossRefConnection(mainRef, relatedVerse, sharedKeywords, category) {
   const shared = sharedKeywords.filter((k) => (relatedVerse.keywords ?? []).includes(k));
   const theme = shared[0] ?? category.toLowerCase();
+  const seed = `${mainRef}||${relatedVerse.ref}||${theme}`;
 
-  const connectors = [
-    `${relatedVerse.ref} carries the same conviction — both passages speak to the reality of ${theme} and what it demands of those who encounter it.`,
-    `What ${mainRef} declares, ${relatedVerse.ref} reinforces from a different angle: God's word on ${theme} is not a single note but a chord that runs through Scripture.`,
-    `Read alongside ${mainRef}, ${relatedVerse.ref} deepens the picture. The same current of ${theme} runs beneath both texts — one calls it by name, the other shows it in action.`,
-    `${relatedVerse.ref} is the echo of this truth elsewhere in Scripture. It is as if the Spirit, writing through different voices across centuries, kept returning to this matter of ${theme} because it could not be said just once.`,
-    `The connection between ${mainRef} and ${relatedVerse.ref} is not incidental — it is the canon's way of saying that ${theme} is not a peripheral concern but sits near the heart of what God is doing.`,
-  ];
+  // Build the connection sentence from the actual shared theological content
+  const attrKeys = Object.keys(ATTRIBUTES);
+  // Find which attribute most closely maps to the shared theme
+  const matchingAttr = attrKeys.find(k =>
+    ATTRIBUTES[k].relevantFor.some(r => r.toLowerCase().includes(theme.toLowerCase()))
+  ) ?? attrKeys[0];
+  const attr = ATTRIBUTES[matchingAttr];
 
-  return pick(connectors);
+  // What God's character says about this connection
+  const impl = buildImplication(matchingAttr, seed, 2);
+  const attrName = seedPick(attr.names, seed, 0);
+
+  // Three structurally different connection sentences — built from the content
+  const h = (function() {
+    let hh = 5381;
+    for (const c of seed) hh = (Math.imul(hh, 33) ^ c.charCodeAt(0)) >>> 0;
+    return hh;
+  })();
+
+  const form = h % 3;
+  if (form === 0) {
+    return `${relatedVerse.ref} speaks from a different moment in Scripture but to the same reality — God as ${attrName}, ${seedPick(attr.verbPhrases, seed, 1)}, is the thread that binds both passages. ${impl ? (impl.charAt(0).toUpperCase() + impl.slice(1) + ".") : ""}`;
+  } else if (form === 1) {
+    return `What ${mainRef} declares, ${relatedVerse.ref} confirms — the Spirit who spoke through different writers across centuries kept returning to ${theme} because it cannot be settled by a single voice. ${impl ? (impl.charAt(0).toUpperCase() + impl.slice(1) + ".") : ""}`;
+  } else {
+    return `The connection runs through ${attrName} — ${seedPick(attr.verbPhrases, seed, 3)}. That is the shared root of ${mainRef} and ${relatedVerse.ref}, and it is why standing on one draws strength from the other.`;
+  }
 }
 
-// ── God-centred teaching openers ─────────────────────────────────────────────
-// Every teaching begins by establishing WHO is speaking — not an ancient
-// author of historical interest, but the living God, holy and eternal,
-// who speaks to the reader TODAY through this passage.
-const GOD_PERSONA_OPENERS = [
-  `The God who speaks through this passage is not a figure from a distant past. He is the Eternal One — holy, sovereign, and alive. He does not merely comment on history from a safe distance; He is present, He sees you, and through this passage He is saying something that applies to your life right now.`,
-  `Before we receive what this verse is saying, we must know who is saying it. The God of Scripture is not an abstract deity or a philosophical concept — He is the living God, the great I AM, whose word has never lost a syllable of its power from the moment it was first spoken to this moment you are reading it.`,
-  `This is not the word of a wise teacher or a spiritual philosopher. This is the word of the Almighty — holy beyond our comprehension, sovereign over every circumstance you face, and intimately aware of your situation right now. He is speaking. The question is whether we are willing to receive what He says.`,
-  `The God who breathed this passage into being is not distant or dormant. He is the God who inhabits eternity, who sees the end from the beginning, who knows your name and your need — and who chose, across all of time, to place these exact words where you would one day find them. There is nothing accidental about the verse you are looking at.`,
-  `To truly hear this verse, we must first encounter the God behind it. He is the Holy One — set apart from everything finite and failing. He is the Almighty — and not one of His purposes can be stopped. He is the living God — not a historical figure but an eternal present reality. And He is speaking directly to you through this passage.`,
-  `The one speaking here is the God who is. Not the God who was, as a subject of ancient history — but the God who is, right now, as an active and present reality in your life. When He speaks through Scripture, it is not an archive of old communications; it is the living word of a living God addressing a living person. That person is you.`,
-];
+// ── God-persona opening builder — fully compositional, no fixed template pool ─
+// Builds WHO God is from ATTRIBUTES knowledge graph, then places the verse in
+// its story. Every field is composed from structured data — names, verbPhrases,
+// implications, narratives — so output varies per verse without fixed sentences.
+function buildNarrativeOpening(bookMeta, bookCtx, parsed, verseTextStr, reference) {
+  const seed = `${reference}||opening`;
 
-// ── Narrative opening builder ────────────────────────────────────────────────
-// Leads with WHO GOD IS (teaching), then places the verse in its story context.
-// This is teaching the Word — not explaining it like a history textbook.
-function buildNarrativeOpening(bookMeta, bookCtx, parsed, verseText, reference) {
-  const godOpener = pick(GOD_PERSONA_OPENERS);
+  // 1. Pick two complementary attributes for this verse
+  const attrKeys = Object.keys(ATTRIBUTES);
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+  const primaryKey = attrKeys[h % attrKeys.length];
+  const secondaryKey = attrKeys[(h + 7) % attrKeys.length] !== primaryKey
+    ? attrKeys[(h + 7) % attrKeys.length]
+    : attrKeys[(h + 3) % attrKeys.length];
 
-  if (!bookCtx || !bookMeta) {
-    return `${godOpener}\n\nHere is what He says in ${reference}: "${verseText}"`;
+  const primary = ATTRIBUTES[primaryKey];
+  const secondary = ATTRIBUTES[secondaryKey];
+
+  const primaryName = seedPick(primary.names, seed, 0);
+  const primaryVerb = seedPick(primary.verbPhrases, seed, 1);
+  const secondaryName = seedPick(secondary.names, seed, 2);
+  const secondaryVerb = seedPick(secondary.verbPhrases, seed, 3);
+  const primaryImpl = buildImplication(primaryKey, seed, 0);
+  const narrative = getNarrative([primaryKey, secondaryKey]);
+
+  // 2. Build the "who God is" paragraph — pure composition
+  const godStatement = `${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)}, ${primaryVerb}. ${secondaryName.charAt(0).toUpperCase() + secondaryName.slice(1)}, ${secondaryVerb}. This is not the God of ancient history observed from a safe distance — this is the living God who is present and active right now, and it is this God who speaks through the passage you are about to read.`;
+
+  // Implication — what that means for the person reading
+  const implicationLine = primaryImpl
+    ? (primaryImpl.charAt(0).toUpperCase() + primaryImpl.slice(1) + (primaryImpl.endsWith(".") ? "" : "."))
+    : "";
+
+  // Narrative echo — grounds the opener in a real biblical event
+  const narrativeEcho = narrative
+    ? `Consider what He has already done: ${narrative.echo}.`
+    : "";
+
+  // 3. Book context — situates the verse without making it a history lesson
+  let contextLine = "";
+  if (bookCtx && bookMeta) {
+    const authorStr = bookCtx.author !== "anonymous" && bookCtx.author !== "unknown"
+      ? `through ${bookCtx.author}`
+      : `during ${bookCtx.era}`;
+    // Two structural forms, chosen by seed
+    if (h % 2 === 0) {
+      contextLine = `He spoke ${authorStr} into the reality of ${bookCtx.theme}. That word entered a world with real weight and real need — and has lost nothing of its authority since. The same God who spoke it then speaks it now.`;
+    } else {
+      contextLine = `The book of ${bookMeta.name} was written into a world wrestling with ${bookCtx.theme}. This passage was never merely for its original audience. It was for everyone who would ever bring the same kind of need before the same God. That includes you, and it includes today.`;
+    }
   }
 
-  const authorStr = bookCtx.author !== "anonymous" && bookCtx.author !== "unknown"
-    ? `through ${bookCtx.author}`
-    : `during ${bookCtx.era}`;
+  // 4. The verse — always complete, always quoted exactly
+  const verseDecl = `This is what He says in ${reference}: "${verseTextStr}"`;
 
-  const contextNote = pick([
-    `He spoke ${authorStr} into the reality of ${bookCtx.theme} — and the word that came then has lost nothing of its authority now.`,
-    `The book of ${bookMeta.name} addresses ${bookCtx.theme}. God did not speak into a vacuum — He spoke into that exact human situation. And the same God speaks the same word into yours.`,
-    `${bookMeta.name} carries the weight of ${bookCtx.theme}. That is the world into which this declaration was first spoken. It is also the world into which He speaks it now.`,
-    `Written ${authorStr} into a world wrestling with ${bookCtx.theme}, this passage was never merely for its original audience. It was for everyone who would ever bring the same kind of need before the same God.`,
-  ]);
-
-  return `${godOpener}\n\n${contextNote} Here is what He says in ${reference}: "${verseText}"`;
+  return [godStatement, implicationLine, narrativeEcho, contextLine, verseDecl]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // ── Theological body builder ─────────────────────────────────────────────────
@@ -318,21 +403,26 @@ function buildTheologicalBody(verseTextStr, keyWords, snippets, surrounding, dic
 
     const paragraphs = [];
 
-    // First snippet as theological body
+    // First snippet — safely sliced so verse quotes are never cut mid-quote
     if (chosen[0]) {
-      paragraphs.push(chosen[0].slice(0, 400) + (chosen[0].length > 400 ? "" : ""));
+      paragraphs.push(safeSlice(chosen[0], 500));
     }
 
-    // Second snippet as deepening/development
+    // Second snippet — bridged with a transition built from godPersona
     if (chosen[1] && chosen[1] !== chosen[0]) {
-      const transitioners = [
-        "This is not an isolated thought.",
-        "The passage goes further.",
-        "There is something else here worth pressing into.",
-        "Consider the weight of what has just been said.",
-        "This truth opens outward.",
-      ];
-      paragraphs.push(`${pick(transitioners)} ${chosen[1].slice(0, 300)}`);
+      const seed = `${chosen[1].slice(0, 20)}||trans`;
+      let h = 5381;
+      for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+      const attrKey = Object.keys(ATTRIBUTES)[h % Object.keys(ATTRIBUTES).length];
+      const attr = ATTRIBUTES[attrKey];
+      const attrName = seedPick(attr.names, seed, 0);
+      // Transition built from God's character — not a fixed phrase pool
+      const transition = h % 3 === 0
+        ? `${attrName.charAt(0).toUpperCase() + attrName.slice(1)} does not leave this truth at its surface.`
+        : h % 3 === 1
+          ? `The same God who said this goes further.`
+          : `Scripture does not stop here.`;
+      paragraphs.push(`${transition} ${safeSlice(chosen[1], 350)}`);
     }
 
     return paragraphs.join("\n\n");
@@ -393,33 +483,57 @@ function buildCrossRefParagraph(mainRef, supportVerses, sharedKeywords, category
 }
 
 // ── Application paragraph builder ────────────────────────────────────────────
-// What God is saying to the reader RIGHT NOW — personal, direct, prophetic.
-// This is not an academic application section; it is the living God addressing
-// a living person through the word He inspired.
+// What God is saying to the reader RIGHT NOW — personal, direct.
+// Built from godPersona ATTRIBUTES — never a fixed sentence pool.
 function buildApplicationParagraph(reference, keyWords, verseTextStr, bookCtx) {
   const coreWord = keyWords[0] ?? "this truth";
+  const seed = `${reference}||${coreWord}||app`;
 
-  const frames = [
-    `God is not saying this to a room full of ancient people you will never meet. He is saying it to you. Right now. In the middle of whatever you are carrying. The same Spirit who breathed this word into being is the Spirit who is holding it before your eyes at this moment — not as a historical curiosity but as a living address. Receive it as such. Let it land not in your head as information but in your life as a word from God. Because that is what it is.`,
-    `Here is what God is asking of you through this passage: not admiration, not analysis, not even agreement in principle. He is asking you to receive it — to bring the specific weight you are carrying right now and hold it against what He has said. Something has to give, and it will not be the word of God. It never has. It will not start with you.`,
-    `The living God — who is not confined to any era, any language, any century — is speaking to you through ${reference} right now. Not "once spoke." Speaks. Present tense. The word you just read was not written for the people who first heard it and then retired from relevance. It was written for everyone who would ever carry the kind of need that this verse addresses. Including you. Including today.`,
-    `What would it look like to actually live from this verse today — not as theology you believe in theory, but as a reality that shapes one specific decision, one conversation, one moment of fear or ambition or grief? That is what God is inviting you into through ${reference}. Not information. Transformation. And transformation does not happen in the abstract — it happens in the ordinary, specific details of your actual life.`,
-    `The fear of God — not terror, but the kind of reverence that knows He is God and you are not — is the beginning of all wisdom. Standing before this verse means standing before the God who wrote it. He is holy. He is sovereign. He is for you. And He has spoken into the matter of ${coreWord} with the full weight of His character behind every word. You are not left alone in this.`,
-  ];
+  // Pick the attribute most theologically relevant to this verse's key words
+  const attrKeys = Object.keys(ATTRIBUTES);
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+  const attrKey = attrKeys[h % attrKeys.length];
+  const attr = ATTRIBUTES[attrKey];
+  const attrName = seedPick(attr.names, seed, 0);
+  const attrVerb = seedPick(attr.verbPhrases, seed, 1);
+  const impl = buildImplication(attrKey, seed, 1);
 
-  return pick(frames);
+  // Three structurally different application forms — all built from the attribute
+  const form = h % 3;
+  const reverence = `The fear of God — not terror, but the reverence that knows He is God and you are not — is the entry point for hearing this passage rightly. ${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb}: this is who is speaking through ${reference}. Not a historical voice. A present one. And He is saying this to you, now, in the middle of whatever you are carrying.`;
+
+  const encounter = `God is not asking you to admire ${reference} from a distance. ${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb} — and this God is asking you to receive what He has declared here, to hold it against what you are actually living, and let it do what His word always does when it is received with an honest heart. ${impl ? (impl.charAt(0).toUpperCase() + impl.slice(1) + ".") : ""}`;
+
+  const living = `The word you just read was not written for a distant audience who no longer exists. ${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb} — and it is this God, right now, who holds ${reference} before you. Not as a theological artifact. As a living word from a God who is paying attention. ${impl ? (impl.charAt(0).toUpperCase() + impl.slice(1) + ".") : ""} What would it look like to live from this today — not in theory, but in one real moment of your actual life?`;
+
+  return form === 0 ? reverence : form === 1 ? encounter : living;
 }
 
 // ── Closing prayer builder ────────────────────────────────────────────────────
+// Built from godPersona ATTRIBUTES — no fixed prayer pool.
 function buildClosingPrayer(reference, keyWords) {
-  const core = keyWords.slice(0, 2).join(" and ");
-  const prayers = [
-    `Father, let the truth of ${reference} not merely pass through us but take root. We cannot manufacture faith, but You can create it. Let this word do its work in us. Amen.`,
-    `Lord, we lay this verse before You honestly — acknowledging that we do not always live as if it is true. Make it true in us today, not by striving but by receiving. In Jesus' name. Amen.`,
-    `God, You did not give us Your word so we could admire it from a distance. Let ${reference} change something real in us this day. We trust You with the rest. Amen.`,
-    `We receive this, Lord — the truth of ${reference} and the weight of what it asks of us. We are not equal to it on our own. But that is the point. You are. Amen.`,
-  ];
-  return pick(prayers);
+  const seed = `${reference}||${keyWords[0] ?? ""}||pray`;
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+
+  const attrKeys = Object.keys(ATTRIBUTES);
+  const attrKey = attrKeys[h % attrKeys.length];
+  const attr = ATTRIBUTES[attrKey];
+  const attrName = seedPick(attr.names, seed, 0);
+  const attrVerb = seedPick(attr.verbPhrases, seed, 1);
+  const impl = buildImplication(attrKey, seed, 2);
+  const coreWord = keyWords.slice(0, 2).join(" and ") || "this truth";
+
+  // Two structural forms chosen by seed
+  if (h % 2 === 0) {
+    return `${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb} — we receive what ${reference} declares, not as information we file away but as a word from a God who is actually present. ${impl ? (impl.charAt(0).toUpperCase() + impl.slice(1) + " ") : ""}Let the truth of ${coreWord} do its full work in us today. We trust You. Amen.`;
+  } else {
+    const covenantName = Object.keys(COVENANT_NAMES)[h % Object.keys(COVENANT_NAMES).length];
+    const cn = COVENANT_NAMES[covenantName];
+    const desc = seedPick(cn.descriptors, seed, 0);
+    return `${covenantName}, ${desc} — we lay ${reference} before You and with it everything we are carrying that this verse speaks into. We cannot manufacture what only You can produce. Let the word do what we cannot. Amen.`;
+  }
 }
 
 // ── Main explanation generator ───────────────────────────────────────────────

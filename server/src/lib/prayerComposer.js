@@ -299,20 +299,34 @@ export function composePrayerPoint(desires, verseEntry, verseText, idx = 0) {
 
 function buildDevotionalOpening(goal, profile) {
   const seed = hashSeed(`${profile.seed}||devopen`);
-  const situation = profile.situations[0] ?? "this";
   const primaryAttr = profile.rankedAttributes[0] ?? "living";
+  const secondaryAttr = profile.rankedAttributes[1] ?? "faithful";
   const attr = ATTRIBUTES[primaryAttr];
+  const attr2 = ATTRIBUTES[secondaryAttr];
   const attrName = attr ? seedPick(attr.names, seed, 0) : "God";
+  const attrVerb = attr ? seedPick(attr.verbPhrases, seed, 1) : "who is present";
+  const impl = attr ? buildImplication(primaryAttr, seed, 0) : "";
+  const narrative = getNarrative([...profile.situations, primaryAttr]);
 
-  const openings = [
-    `The weight of ${goal} is real. So is the God who already knows every dimension of it. Before a single word of this devotion is read, He has been present in what you are carrying — not as a distant observer, but as ${attrName}, ${attr ? seedPick(attr.verbPhrases, seed, 1) : "who is near"}.`,
-    `Most people treat ${goal} as a problem to be solved. Scripture treats it as an invitation to encounter ${attrName}. That is a different starting point, and it produces a different kind of answer.`,
-    `The question underneath ${goal} is not simply practical — it is a question about trust. And trust is not built by having easy days; it is built by discovering who God actually is on the hard ones. Today, that discovery begins here.`,
-    `${goal.charAt(0).toUpperCase() + goal.slice(1)} has a way of revealing where our actual confidence is placed. Not the confidence we profess on Sunday but the one we operate from on Tuesday. Scripture does not sidestep that. It speaks directly into it.`,
-    `God has not been silent about ${goal}. The question that matters is whether we are prepared to receive what He has said — not just to add it to a list of things we believe in principle, but to actually live from it today.`,
-    `There is a difference between knowing about ${attrName} and encountering Him in the middle of ${goal}. This devotion is not trying to give you information about God. It is trying to bring you into contact with Him.`,
-  ];
-  return seedPick(openings, seed, 0);
+  // Three compositional forms — all built from godPersona knowledge, never a fixed pool
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+  const form = h % 3;
+
+  if (form === 0) {
+    // Lead with who God is, then the weight of the situation
+    const attr2Name = attr2 ? seedPick(attr2.names, seed, 2) : "the living God";
+    const attr2Verb = attr2 ? seedPick(attr2.verbPhrases, seed, 3) : "who is near";
+    return `${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb}. ${attr2Name.charAt(0).toUpperCase() + attr2Name.slice(1)}, ${attr2Verb}. This is who you bring ${goal} to. Not a distant theological concept — the God whose character we just named, present and paying attention before you have said a single word.${impl ? " " + impl.charAt(0).toUpperCase() + impl.slice(1) + "." : ""}`;
+  } else if (form === 1) {
+    // Lead with the situation, arrive at who God is
+    const narrativeNote = narrative ? ` The same God who ${narrative.echo.replace(/^He /, "").replace(/^he /, "")} — that is the God who receives what you carry today.` : "";
+    return `The matter of ${goal} has not escaped the attention of ${attrName}, ${attrVerb}. Before a single word of this devotion was read, He was already present in it — not as a passive observer, but as the one who holds the outcome.${narrativeNote}${impl ? " " + impl.charAt(0).toUpperCase() + impl.slice(1) + "." : ""}`;
+  } else {
+    // Lead with reverence — the fear of God as the opening posture
+    const revImpl = buildImplication(primaryAttr, seed, 2);
+    return `The fear of God — not terror, but the reverence that knows He is ${attrName} and you are not — is the right starting posture for this devotion. He is not waiting for you to arrive with the situation resolved. He is ${attrVerb}. What you bring, He already knows. What you need, He is already ${profile.situations[0] ? `moving in the matter of ${profile.situations[0]}` : "working toward"}.${revImpl ? " " + revImpl.charAt(0).toUpperCase() + revImpl.slice(1) + "." : ""}`;
+  }
 }
 
 function buildDevotionalReflection(verseRef, verseText, goal, profile) {
@@ -349,41 +363,71 @@ function buildDevotionalReflection(verseRef, verseText, goal, profile) {
 function buildDevotionalApplication(goal, profile) {
   const seed = hashSeed(`${profile.seed}||devapp`);
   const primaryAttr = profile.rankedAttributes[0] ?? "faithful";
+  const secondaryAttr = profile.rankedAttributes[1] ?? "sovereign";
   const attr = ATTRIBUTES[primaryAttr];
+  const attr2 = ATTRIBUTES[secondaryAttr];
+  const attrName = attr ? seedPick(attr.names, seed, 0) : "God";
+  const attrVerb = attr ? seedPick(attr.verbPhrases, seed, 1) : "who is faithful";
+  const impl = attr ? buildImplication(primaryAttr, seed, 0) : "";
+  const impl2 = attr2 ? buildImplication(secondaryAttr, seed, 1) : "";
   const sitPhrase = profile.situations.length > 0
-    ? `in the specific situation of ${profile.situations[0]}`
-    : `in what you are carrying right now`;
+    ? `the specific situation of ${profile.situations[0]}`
+    : `what you are carrying right now`;
 
-  const applications = [
-    `The invitation today is not to understand this verse better — it is to receive it. To take what it says and put it next to ${goal} and let the God who said it be the one who shows you what they mean together. That is not a theological exercise; that is a living encounter.`,
-    `One practical movement today: before you act on ${goal} from anxiety or from striving, pause and read this verse once more. Let the truth settle before the action begins. That is not passive — it is the most powerful kind of preparation.`,
-    `${attr ? `Because ${attr.names[0]} ${seedPick(attr.verbPhrases, seed, 0)}` : "Because God is who He is"}, the weight of ${goal} does not have the final word over this day. But knowing that is different from living from it. Today's call is to live from it — ${sitPhrase}, in one real decision, one real moment.`,
-    `The fear of God — not terror, but the reverence that knows He is God and you are not — is where this verse becomes more than something you believe. It becomes something you actually stand on. Stand on it today, ${sitPhrase}.`,
-    `What would it look like to bring ${goal} honestly before God right now — not as a theological idea but as a real conversation with a real God who is actually listening? That is what this verse makes possible. Take the opening.`,
-    `God is not asking you to resolve ${goal} by tomorrow. He is asking you to trust Him with it today. That is a smaller ask than it sounds, and a bigger act of faith than it feels. Do it anyway.`,
-  ];
-  return seedPick(applications, seed, 0);
+  // Three compositional forms — all built from godPersona, never a fixed sentence pool
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+  const form = h % 3;
+
+  if (form === 0) {
+    // Reverence-first: the fear of God as the posture for application
+    return `The fear of God is not the end of the road — it is the beginning. ${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb}: standing before this verse means standing before the God who wrote it. The application today is not to do something impressive with what you have just read. It is to bring ${sitPhrase} honestly to the God who is present in it, and let what He has declared be the ground you act from rather than the anxiety you are managing.${impl2 ? " " + impl2.charAt(0).toUpperCase() + impl2.slice(1) + "." : ""}`;
+  } else if (form === 1) {
+    // Because-therefore: attribute implies the response
+    const becauseClause = impl
+      ? impl.charAt(0).toUpperCase() + impl.slice(1) + "."
+      : `${attrName.charAt(0).toUpperCase() + attrName.slice(1)}, ${attrVerb}.`;
+    return `${becauseClause} Because that is true, the weight of ${goal} does not have the final word today. The call is not to feel that yet — it is to act from it, specifically in ${sitPhrase}. One real moment. One decision made from trust instead of fear. That is what this verse is asking for.`;
+  } else {
+    // Encounter-first: receiving is the action
+    return `What ${attrName.charAt(0).toLowerCase() + attrName.slice(1)}, ${attrVerb}, is offering through this verse is not information to be processed — it is a living encounter. The practical movement today is simple: bring ${goal} and bring this verse into the same room. Let the God who declared it be the one who shows you what they mean together. That is not passive. That is the most active thing a person can do.${impl ? " " + impl.charAt(0).toUpperCase() + impl.slice(1) + "." : ""}`;
+  }
 }
 
 function buildDevotionalPrayer(verseRef, goal, profile) {
   const seed = hashSeed(`${profile.seed}||devpray`);
   const primaryAttr = profile.rankedAttributes[0] ?? "living";
+  const secondaryAttr = profile.rankedAttributes[1] ?? "faithful";
   const attr = ATTRIBUTES[primaryAttr];
+  const attr2 = ATTRIBUTES[secondaryAttr];
   const covenantKey = profile.covenantName;
   const cnData = covenantKey ? COVENANT_NAMES[covenantKey] : null;
 
-  const addressee = cnData ? covenantKey : (attr ? attr.names[0] : "Father");
-  const attrVerb = attr ? seedPick(attr.verbPhrases, seed, 0) : "who is present";
+  // Build the address — covenant name if matched, attribute name otherwise
+  const addressee = cnData ? covenantKey : (attr ? seedPick(attr.names, seed, 0) : "Father");
+  const cnDesc = cnData ? seedPick(cnData.descriptors, seed, 0) : null;
+  const attrVerb = attr ? seedPick(attr.verbPhrases, seed, 1) : "who is present";
   const impl = attr ? buildImplication(primaryAttr, seed, 1) : "";
+  const impl2 = attr2 ? buildImplication(secondaryAttr, seed, 2) : "";
 
-  const prayers = [
-    `${addressee}, ${attrVerb} — I bring ${goal} to You and I bring ${verseRef} with it. Let the word You have spoken do what I cannot do for myself. I receive it not as religious information but as a word from a God who is paying attention. Amen.`,
-    `Father, I am not equal to ${goal} on my own. But that is the point — You are. Let the truth of ${verseRef} be the ground I stand on today, not just something I read and moved on from. Amen.`,
-    `${addressee}, Your word in ${verseRef} is enough. Let it be enough for me today — specifically in the matter of ${goal}. ${impl ? `I receive it as true that ${impl.charAt(0).toLowerCase() + impl.slice(1)}.` : ""} I choose to act from that truth rather than from fear. Amen.`,
-    `Lord, I hold ${goal} before You and hold ${verseRef} beside it. Where they don't line up with how I have been thinking, change my thinking. I trust You with the rest. Amen.`,
-    `God, let the truth of this verse do its full work in me today — especially in the part of me still trying to handle ${goal} without You. I stop striving. I receive. Amen.`,
-  ];
-  return seedPick(prayers, seed, 0);
+  // Compute form from seed
+  let h = 5381;
+  for (const c of seed) h = (Math.imul(h, 33) ^ c.charCodeAt(0)) >>> 0;
+  const form = h % 3;
+
+  // Three compositional prayer forms — each built from the attribute knowledge
+  if (form === 0) {
+    const opening = cnDesc
+      ? `${addressee}, ${cnDesc}`
+      : `${addressee}, ${attrVerb}`;
+    return `${opening.charAt(0).toUpperCase() + opening.slice(1)} — I bring ${goal} to You and I bring ${verseRef} with it. ${impl ? impl.charAt(0).toUpperCase() + impl.slice(1) + " " : ""}Let what You have declared do in me what I cannot do for myself. I receive this not as information but as the word of the God who is present right now. Amen.`;
+  } else if (form === 1) {
+    const reverence = `I come before You with the reverence You are owed — not terror, but the honesty of knowing You are ${addressee}, ${attrVerb}, and I am not able to carry ${goal} without You.`;
+    return `${reverence} Let ${verseRef} be the ground I stand on today, not a verse I read and moved past. ${impl2 ? impl2.charAt(0).toUpperCase() + impl2.slice(1) + ". " : ""}I trust You with what I cannot manage. Amen.`;
+  } else {
+    const attr2Name = attr2 ? seedPick(attr2.names, seed, 3) : "the faithful God";
+    return `${addressee}, Your word in ${verseRef} is enough. Let it be enough for me today — specifically in ${goal}. ${impl ? "I receive it as true: " + impl.charAt(0).toLowerCase() + impl.slice(1) + ". " : ""}You are ${attr2Name}, and I stand on that rather than on what I can see right now. Amen.`;
+  }
 }
 
 /**

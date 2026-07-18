@@ -348,17 +348,34 @@ export async function generatePrayerPoints({ desires, type, count, weights }) {
   // Always analyse the prayer request to understand the true spiritual need.
   // A person who selects "Adoration" but writes about fear or oppression is in
   // a Warfare prayer — serving them Adoration would miss the point entirely.
+  // The engine reads the CONTENT of the request first, then checks the button tap.
   const detected = detectCategory(desires);
   const validCategories = new Set(["Warfare", "Adoration", "Thanksgiving", "Petition", "Intercession"]);
   const userType = validCategories.has(type) ? type : null;
   let category;
+  let categoryOverridden = false;
   if (!userType) {
     category = detected.category;
-  } else if (detected.category !== userType && detected.confidence > 0.52) {
-    category = detected.category; // Override: request text wins over button tap
+  } else if (detected.category !== userType && detected.confidence > 0.42) {
+    // Request text clearly indicates a different need than what was tapped
+    category = detected.category;
+    categoryOverridden = true;
   } else {
     category = userType;
   }
+
+  // Build a human-readable understanding of what the engine detected before generating
+  const understanding = {
+    detectedCategory: detected.category,
+    confidence: Math.round(detected.confidence * 100),
+    selectedCategory: userType,
+    categoryUsed: category,
+    overridden: categoryOverridden,
+    // Short plain-English summary for the mobile UI
+    summary: categoryOverridden
+      ? `You selected "${userType}" but the content of your request points more clearly to "${detected.category}" — generating ${detected.category} prayer points so the verses and language match what you actually need.`
+      : `Understood as a "${category}" prayer request.`,
+  };
 
   const pool = selectVerses(desires, category, n * 3, weights);
   const used = new Set(pool.map(e => e.ref));
@@ -399,7 +416,8 @@ export async function generatePrayerPoints({ desires, type, count, weights }) {
   return {
     prayerPoints,
     detectedCategory:    category,
-    userTypeOverridden:  category !== (userType ?? category),
+    userTypeOverridden:  categoryOverridden,
+    understanding,
     uncuratedVerses:     uncurated,
   };
 }

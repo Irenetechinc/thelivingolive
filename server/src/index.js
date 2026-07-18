@@ -385,7 +385,7 @@ app.post("/api/prayer-engine/prayer", requireUser, requireFlag("rule_prayer"), a
     const { desires, count, type } = req.body;
     if (!desires) return res.status(400).json({ error: "desires is required" });
 
-    const { prayerPoints, detectedCategory, uncuratedVerses } = await generatePrayerPoints({
+    const { prayerPoints, detectedCategory, userTypeOverridden, understanding, uncuratedVerses } = await generatePrayerPoints({
       desires,
       type,
       count,
@@ -401,8 +401,11 @@ app.post("/api/prayer-engine/prayer", requireUser, requireFlag("rule_prayer"), a
     if (uncuratedVerses?.length) {
       console.info(`[prayer-engine] ${uncuratedVerses.length} uncurated verse(s) used (candidates for auto-discovery):`, uncuratedVerses.map(v => v.ref).join(", "));
     }
+    if (userTypeOverridden) {
+      console.info(`[prayer-engine] category override: user selected "${type}", engine detected "${detectedCategory}" (confidence ${understanding?.confidence}%)`);
+    }
 
-    res.json({ prayerPoints, detectedCategory, engine: "rule-based" });
+    res.json({ prayerPoints, detectedCategory, userTypeOverridden, understanding, engine: "rule-based" });
   } catch (err) {
     console.error("prayer-engine/prayer error:", err);
     res.status(500).json({ error: "Failed to generate prayer" });
