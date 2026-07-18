@@ -20,9 +20,13 @@ import { colors, radii, spacing, typography, shadows } from "../theme/theme";
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const BUBBLE_SIZE = 56;
 const LAST_NOTE_KEY = "floatingNotes.lastNote";
-const DEFAULT_PANEL = { width: 300, height: 340 };
-const MIN_PANEL = { width: 240, height: 220 };
-const MAX_PANEL = { width: SCREEN_W - 24, height: SCREEN_H - 140 };
+// Panel always opens anchored to the right side of the screen so all content
+// is visible without needing to drag. Width fills most of the screen.
+const PANEL_W = SCREEN_W - 16;
+const PANEL_H = SCREEN_H * 0.62;
+const DEFAULT_PANEL = { width: PANEL_W, height: PANEL_H };
+const MIN_PANEL = { width: 280, height: 260 };
+const MAX_PANEL = { width: SCREEN_W - 8, height: SCREEN_H - 120 };
 
 type NoteRow = {
   id: string;
@@ -52,8 +56,10 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Bubble is draggable when collapsed. When expanded the panel snaps to the
+  // right edge of the screen so all note content is visible.
   const pos = useRef(
-    new Animated.ValueXY({ x: SCREEN_W - BUBBLE_SIZE - 20, y: SCREEN_H - BUBBLE_SIZE - 140 })
+    new Animated.ValueXY({ x: SCREEN_W - BUBBLE_SIZE - 16, y: SCREEN_H - BUBBLE_SIZE - 140 })
   ).current;
   const size = useRef({ w: DEFAULT_PANEL.width, h: DEFAULT_PANEL.height });
   const [, forceSize] = useState(0);
@@ -176,19 +182,23 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
     }
   }
 
-  const panelStyle = { width: size.current.w, height: size.current.h };
+  // When expanded, anchor the panel to the right edge of the screen so the
+  // user can see all content without having to drag it into view.
+  const expandedStyle = expanded
+    ? { position: "absolute" as const, right: 8, top: 60, left: undefined, transform: [] }
+    : {};
 
   return (
     <Animated.View
       style={[
         styles.wrap,
-        {
-          transform: [{ translateX: pos.x }, { translateY: pos.y }],
-        },
+        expanded
+          ? expandedStyle
+          : { transform: [{ translateX: pos.x }, { translateY: pos.y }] },
       ]}
     >
       {expanded ? (
-        <View style={[styles.panel, panelStyle]}>
+        <View style={[styles.panel, { width: size.current.w, height: size.current.h }]}>
           {/* Drag handle header */}
           <View style={styles.panelHeader} {...bubblePanResponder.panHandlers}>
             <View style={styles.dragDots}>

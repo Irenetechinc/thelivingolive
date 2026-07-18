@@ -141,6 +141,9 @@ function shortStr(text, max = 80) {
   return t.length <= max ? t : t.slice(0, max - 1) + "…";
 }
 
+// NOTE: Scripture quotations in prayer points and devotionals must ALWAYS be
+// complete. verseFrag is kept only for legacy callers; verse declarations now
+// use the full text directly (see buildDynamicPrayer / generateDevotional).
 function verseFrag(text, max = 90) {
   if (!text || text.length <= max) return text || "";
   const cut = text.lastIndexOf(" ", max);
@@ -423,7 +426,8 @@ function buildDynamicPrayer(entry, verseTextStr, desires, category, idx) {
   const cat    = ADDRESS[category] ? category : "Petition";
   const seed   = `${entry.ref}||${idx}`;
   const ref    = entry.ref;
-  const vf     = verseFrag(verseTextStr);
+  // Use the FULL verse text — scripture quotes must never be truncated with "…"
+  const vf     = (verseTextStr || "").trim();
   const shortD = shortStr(desires);
 
   // Markov echo: a bridge phrase in biblical register, derived from the verse
@@ -445,15 +449,48 @@ function buildDynamicPrayer(entry, verseTextStr, desires, category, idx) {
 
 // ── Public API: generate prayer points ──────────────────────────────────────
 export function generatePrayerPoints({ desires, type, count, weights }) {
-  const n        = Math.min(Math.max(parseInt(count, 10) || 1, 1), 10);
-  const category = ADDRESS[type] ? type : detectCategory(desires).category;
-  const pool     = selectVerses(desires, category, n, weights);
+  const n = Math.min(Math.max(parseInt(count, 10) || 1, 1), 10);
+
+  // Always analyse the prayer request text to understand what the person
+  // actually needs before God — not just the category button they tapped.
+  // A user who selects "Adoration" but writes about spiritual oppression is
+  // in a Warfare prayer; serving them Adoration would miss the point entirely.
+  const detected = detectCategory(desires);
+  const userType = ADDRESS[type] ? type : null;
+  let category;
+  if (!userType) {
+    category = detected.category;
+  } else if (detected.category !== userType && detected.confidence > 0.52) {
+    // The prayer request text strongly indicates a different category
+    category = detected.category;
+  } else {
+    category = userType;
+  }
+
+  const pool = selectVerses(desires, category, n * 3, weights);
 
   // Fill short-fall with any category if needed
   const used     = new Set(pool.map(e => e.ref));
-  const fallback = selectVerses(desires, "Petition", n, weights)
+  const fallback = selectVerses(desires, "Petition", n * 2, weights)
     .filter(e => !used.has(e.ref));
-  const merged   = [...pool, ...fallback].slice(0, n);
+  const combined = [...pool, ...fallback];
+
+  // Book-level diversity pass: prayer points should come from different books
+  // of the Bible, not five verses from Romans just because they share keywords.
+  // Verses from the same book as an already-selected verse are placed last.
+  const usedBooks = new Set();
+  const primary   = [];
+  const secondary = [];
+  for (const entry of combined) {
+    const bid = entry.bookId;
+    if (bid && !usedBooks.has(bid)) {
+      primary.push(entry);
+      usedBooks.add(bid);
+    } else {
+      secondary.push(entry);
+    }
+  }
+  const merged = [...primary, ...secondary].slice(0, n);
 
   // Track uncurated verses (used by scheduler for auto-discovery)
   const uncurated = merged
@@ -474,7 +511,7 @@ export function generatePrayerPoints({ desires, type, count, weights }) {
     };
   });
 
-  return { prayerPoints, detectedCategory: category, uncuratedVerses: uncurated };
+  return { prayerPoints, detectedCategory: category, userTypeOverridden: category !== (userType ?? category), uncuratedVerses: uncurated };
 }
 
 // ── Devotional generator ─────────────────────────────────────────────────────
@@ -565,7 +602,8 @@ export function generateDevotional({ goal, dayNumber, weights }) {
   }
 
   const ref     = verse.ref;
-  const vf      = verseFrag(verseTextStr, 85);
+  // Scripture text in devotionals must be complete — no truncation with "…"
+  const vf      = (verseTextStr || "").trim();
   const seed    = `${ref}||${goal}`;
   const coreWord = goalTokens[0] ?? verseKeyWords(verseTextStr, 3)[0] ?? "this";
 

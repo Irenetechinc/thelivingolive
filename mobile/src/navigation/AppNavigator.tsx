@@ -22,6 +22,7 @@ import HymnsListScreen from "../screens/hymns/HymnsListScreen";
 import HymnDetailScreen from "../screens/hymns/HymnDetailScreen";
 import DevotionsScreen from "../screens/devotions/DevotionsScreen";
 import PrayerScreen from "../screens/prayer/PrayerScreen";
+import NotificationAlarmScreen from "../screens/NotificationAlarmScreen";
 
 export type RootStackParamList = {
   Home: undefined;
@@ -33,6 +34,14 @@ export type RootStackParamList = {
   HymnDetail: { hymnId: string };
   Devotions: undefined;
   Prayer: undefined;
+  NotificationAlarm: {
+    type: "prayer" | "devotion";
+    entryId?: string;
+    goal?: string;
+    desires?: string;
+    prayerType?: string;
+    previewText?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -41,20 +50,53 @@ export default function AppNavigator() {
   const { session, loading } = useAuth();
   const [splashDone, setSplashDone] = useState(false);
 
-  // Handle notification taps — routes the user to the correct screen and
-  // pre-fills alarm data so the screen can offer a fresh generation.
+  // Handle notification taps — shows the alarm screen with pre-generated content.
+  // When the server sends a scheduled push, it includes an entryId pointing to
+  // content already saved in Supabase, so the user never has to tap "Generate".
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = (response.notification.request.content.data ?? {}) as Record<string, string>;
-      if (data.type === "devotion") {
-        setPendingAlarm({ type: "devotion", goal: data.goal ?? "", timestamp: Date.now() });
-        // Navigate even if not yet authenticated — NavigationContainer will
-        // show the auth screen, and the pending alarm will be consumed once
-        // the user signs in and reaches the Devotions screen.
-        navigationRef.current?.navigate("Devotions" as never);
-      } else if (data.type === "prayer") {
-        setPendingAlarm({ type: "prayer", desires: data.desires ?? "", prayerType: data.prayerType ?? "Petition", timestamp: Date.now() });
-        navigationRef.current?.navigate("Prayer" as never);
+
+      if (data.type === "devotion" || data.type === "prayer") {
+        const hasEntry = !!data.entryId;
+
+        if (hasEntry) {
+          // Server pre-generated content — show the alarm screen directly.
+          // Also store the alarm state so Prayer/Devotions screen knows to
+          // scroll to the latest entry on arrival.
+          setPendingAlarm({
+            type: data.type,
+            goal: data.goal,
+            desires: data.desires,
+            prayerType: data.prayerType,
+            entryId: data.entryId,
+            previewText: data.previewText,
+            timestamp: Date.now(),
+          });
+          (navigationRef.current as any)?.navigate("NotificationAlarm", {
+            type: data.type,
+            entryId: data.entryId,
+            goal: data.goal,
+            desires: data.desires,
+            prayerType: data.prayerType,
+            previewText: data.previewText,
+          });
+        } else {
+          // Older-style push without pre-generated content — fall back to
+          // navigating directly to the relevant screen with prefilled data.
+          setPendingAlarm({
+            type: data.type,
+            goal: data.goal,
+            desires: data.desires,
+            prayerType: data.prayerType ?? "Petition",
+            timestamp: Date.now(),
+          });
+          if (data.type === "devotion") {
+            navigationRef.current?.navigate("Devotions" as never);
+          } else {
+            navigationRef.current?.navigate("Prayer" as never);
+          }
+        }
       }
     });
     return () => sub.remove();
@@ -116,6 +158,11 @@ export default function AppNavigator() {
               <Stack.Screen name="HymnDetail" component={HymnDetailScreen} options={{ title: "" }} />
               <Stack.Screen name="Devotions" component={DevotionsScreen} options={{ title: "Devotions" }} />
               <Stack.Screen name="Prayer" component={PrayerScreen} options={{ title: "Prayer" }} />
+              <Stack.Screen
+                name="NotificationAlarm"
+                component={NotificationAlarmScreen}
+                options={{ headerShown: false, presentation: "fullScreenModal" }}
+              />
             </>
           )}
         </Stack.Navigator>

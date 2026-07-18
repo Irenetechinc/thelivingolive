@@ -323,26 +323,41 @@ function explainCrossRefConnection(mainRef, relatedVerse, sharedKeywords, catego
   return pick(connectors);
 }
 
+// ── God-centred teaching openers ─────────────────────────────────────────────
+// Every teaching begins by establishing WHO is speaking — not an ancient
+// author of historical interest, but the living God, holy and eternal,
+// who speaks to the reader TODAY through this passage.
+const GOD_PERSONA_OPENERS = [
+  `The God who speaks through this passage is not a figure from a distant past. He is the Eternal One — holy, sovereign, and alive. He does not merely comment on history from a safe distance; He is present, He sees you, and through this passage He is saying something that applies to your life right now.`,
+  `Before we receive what this verse is saying, we must know who is saying it. The God of Scripture is not an abstract deity or a philosophical concept — He is the living God, the great I AM, whose word has never lost a syllable of its power from the moment it was first spoken to this moment you are reading it.`,
+  `This is not the word of a wise teacher or a spiritual philosopher. This is the word of the Almighty — holy beyond our comprehension, sovereign over every circumstance you face, and intimately aware of your situation right now. He is speaking. The question is whether we are willing to receive what He says.`,
+  `The God who breathed this passage into being is not distant or dormant. He is the God who inhabits eternity, who sees the end from the beginning, who knows your name and your need — and who chose, across all of time, to place these exact words where you would one day find them. There is nothing accidental about the verse you are looking at.`,
+  `To truly hear this verse, we must first encounter the God behind it. He is the Holy One — set apart from everything finite and failing. He is the Almighty — and not one of His purposes can be stopped. He is the living God — not a historical figure but an eternal present reality. And He is speaking directly to you through this passage.`,
+  `The one speaking here is the God who is. Not the God who was, as a subject of ancient history — but the God who is, right now, as an active and present reality in your life. When He speaks through Scripture, it is not an archive of old communications; it is the living word of a living God addressing a living person. That person is you.`,
+];
+
 // ── Narrative opening builder ────────────────────────────────────────────────
-// Places the verse in its story context — who wrote it, to whom, and what
-// moment in the biblical narrative it inhabits.
+// Leads with WHO GOD IS (teaching), then places the verse in its story context.
+// This is teaching the Word — not explaining it like a history textbook.
 function buildNarrativeOpening(bookMeta, bookCtx, parsed, verseText, reference) {
+  const godOpener = pick(GOD_PERSONA_OPENERS);
+
   if (!bookCtx || !bookMeta) {
-    return `In the verse we are considering — "${verseText}" — we encounter one of Scripture's direct and searching addresses to the human heart.`;
+    return `${godOpener}\n\nHere is what He says in ${reference}: "${verseText}"`;
   }
 
   const authorStr = bookCtx.author !== "anonymous" && bookCtx.author !== "unknown"
-    ? `written by ${bookCtx.author}`
-    : `written during ${bookCtx.era}`;
+    ? `through ${bookCtx.author}`
+    : `during ${bookCtx.era}`;
 
-  const openings = [
-    `The book of ${bookMeta.name}, ${authorStr}, carries at its heart the theme of ${bookCtx.theme}. It is within that story that this verse finds its full weight: "${verseText}"`,
-    `When ${bookCtx.author !== "anonymous" && bookCtx.author !== "unknown" ? bookCtx.author : "the author"} wrote the words of ${bookMeta.name} during ${bookCtx.era}, the people reading them were living in the tension of ${bookCtx.theme}. Into that world comes this declaration: "${verseText}"`,
-    `${bookMeta.name} is a book about ${bookCtx.theme}. You cannot fully hear what this verse is saying without standing in that larger story. The words are these: "${verseText}"`,
-    `Set within the book of ${bookMeta.name} — ${authorStr} and addressing the matter of ${bookCtx.theme} — this text arrives with the weight of the whole book behind it: "${verseText}"`,
-  ];
+  const contextNote = pick([
+    `He spoke ${authorStr} into the reality of ${bookCtx.theme} — and the word that came then has lost nothing of its authority now.`,
+    `The book of ${bookMeta.name} addresses ${bookCtx.theme}. God did not speak into a vacuum — He spoke into that exact human situation. And the same God speaks the same word into yours.`,
+    `${bookMeta.name} carries the weight of ${bookCtx.theme}. That is the world into which this declaration was first spoken. It is also the world into which He speaks it now.`,
+    `Written ${authorStr} into a world wrestling with ${bookCtx.theme}, this passage was never merely for its original audience. It was for everyone who would ever bring the same kind of need before the same God.`,
+  ]);
 
-  return pick(openings);
+  return `${godOpener}\n\n${contextNote} Here is what He says in ${reference}: "${verseText}"`;
 }
 
 // ── Theological body builder ─────────────────────────────────────────────────
@@ -426,23 +441,26 @@ function buildCrossRefParagraph(mainRef, supportVerses, sharedKeywords, category
     let vText = "";
     try { vText = verseText(v); } catch { vText = ""; }
     const connectionSentence = explainCrossRefConnection(mainRef, v, sharedKeywords, category);
-    return `${connectionSentence}${vText ? ` "${vText.slice(0, 90)}${vText.length > 90 ? "…" : ""}"` : ""}`;
+    // Scripture quotations must always be complete — no truncation with "…"
+    return `${connectionSentence}${vText ? ` "${vText}"` : ""}`;
   });
 
   return `${intro} ${connections.join(" ")}`;
 }
 
 // ── Application paragraph builder ────────────────────────────────────────────
-// What this means for the reader — personal, direct, actionable.
+// What God is saying to the reader RIGHT NOW — personal, direct, prophetic.
+// This is not an academic application section; it is the living God addressing
+// a living person through the word He inspired.
 function buildApplicationParagraph(reference, keyWords, verseTextStr, bookCtx) {
   const coreWord = keyWords[0] ?? "this truth";
-  const testament = bookCtx?.testament ?? "NT";
 
   const frames = [
-    `For those who receive it, this word is not merely historical — it is addressed to you, today, in your specific circumstances. The God who spoke through ${bookCtx?.author ?? "Scripture"} in ${bookCtx?.era ?? "its time"} speaks through the same word now. What ${coreWord} meant for those who first heard it has not changed in its substance; only the situation has changed. Bring whatever you are carrying right now and hold it against what this verse declares. Something has to give — and it will not be the word of God.`,
-    `The challenge of this text is not intellectual — it is volitional. To read it and nod is easy. To let it actually shape the way you live today, in the practical details of your relationships, your finances, your fears, your ambitions — that is the invitation Scripture is always extending. Take what ${coreWord} means and find one place today where it is supposed to make a difference.`,
-    `${reference} is not a verse for the wall. It was written to move. The people who first received it were not in a comfortable study gathering interesting Bible facts — they were in the middle of something hard. That is exactly when this truth lands with its full weight. Whatever you are in the middle of right now, this is what God has said about it. That is not a small thing.`,
-    `There is a reason this verse has survived for millennia, being read and re-read by people in situations that look nothing like each other. It carries something that does not age. The matter of ${coreWord} is as alive in your world as it was in the world of the original readers. What it asks of you is neither more nor less than what it asked of them — to receive it, to trust it, and to live from it.`,
+    `God is not saying this to a room full of ancient people you will never meet. He is saying it to you. Right now. In the middle of whatever you are carrying. The same Spirit who breathed this word into being is the Spirit who is holding it before your eyes at this moment — not as a historical curiosity but as a living address. Receive it as such. Let it land not in your head as information but in your life as a word from God. Because that is what it is.`,
+    `Here is what God is asking of you through this passage: not admiration, not analysis, not even agreement in principle. He is asking you to receive it — to bring the specific weight you are carrying right now and hold it against what He has said. Something has to give, and it will not be the word of God. It never has. It will not start with you.`,
+    `The living God — who is not confined to any era, any language, any century — is speaking to you through ${reference} right now. Not "once spoke." Speaks. Present tense. The word you just read was not written for the people who first heard it and then retired from relevance. It was written for everyone who would ever carry the kind of need that this verse addresses. Including you. Including today.`,
+    `What would it look like to actually live from this verse today — not as theology you believe in theory, but as a reality that shapes one specific decision, one conversation, one moment of fear or ambition or grief? That is what God is inviting you into through ${reference}. Not information. Transformation. And transformation does not happen in the abstract — it happens in the ordinary, specific details of your actual life.`,
+    `The fear of God — not terror, but the kind of reverence that knows He is God and you are not — is the beginning of all wisdom. Standing before this verse means standing before the God who wrote it. He is holy. He is sovereign. He is for you. And He has spoken into the matter of ${coreWord} with the full weight of His character behind every word. You are not left alone in this.`,
   ];
 
   return pick(frames);
@@ -531,12 +549,13 @@ export async function explainVerse({ reference, text, version = "KJV" }, supabas
   const explanation = paragraphs.join("\n\n").trim();
 
   // 8. Build supportingScriptures with connection explanations
+  // Scripture quotations must always be complete — no "…" truncation
   const supportingScriptures = supportVerses.slice(0, 4).map((v) => {
     let vt = "";
     try { vt = verseText(v); } catch { /* ok */ }
     const shared = keyWords.filter((k) => (v.keywords ?? []).includes(k));
     const theme = shared[0] ?? category.toLowerCase();
-    const connectionNote = `Connected through the theme of ${theme}${vt ? ` — "${vt.slice(0, 100)}${vt.length > 100 ? "…" : ""}"` : ""}`;
+    const connectionNote = `Connected through the theme of ${theme}${vt ? ` — "${vt}"` : ""}`;
     return { reference: v.ref, note: connectionNote };
   });
 

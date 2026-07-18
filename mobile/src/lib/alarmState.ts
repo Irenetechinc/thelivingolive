@@ -8,6 +8,10 @@ export type AlarmTrigger = {
   goal?: string;
   desires?: string;
   prayerType?: string;
+  /** Supabase entry ID of the pre-generated content (set by server cron push) */
+  entryId?: string;
+  /** Short preview text shown in the alarm screen */
+  previewText?: string;
   timestamp: number; // ms — used to ignore stale triggers (> 30s old)
 };
 

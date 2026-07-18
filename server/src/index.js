@@ -674,7 +674,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Find active devotion plans whose preferred_time matches this minute
     const { data: devotionPlans } = await supabaseAdmin
       .from("devotion_plans")
-      .select("user_id, goal, duration")
+      .select("id, user_id, goal, duration, day_number")
       .eq("active", true)
       .gte("preferred_time", `${timeWindow}:00`)
       .lt("preferred_time", `${timeWindow}:59`);
@@ -682,29 +682,101 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Find active prayer plans whose preferred_time matches this minute
     const { data: prayerPlans } = await supabaseAdmin
       .from("prayer_plans")
-      .select("user_id, desires, prayer_type")
+      .select("id, user_id, desires, prayer_type, point_count")
       .eq("active", true)
       .gte("preferred_time", `${timeWindow}:00`)
       .lt("preferred_time", `${timeWindow}:59`);
 
     const sent = [];
 
+    // Auto-generate devotional content and save before sending push,
+    // so the user arrives at the app to find it already done — no "tap to generate".
     for (const plan of devotionPlans ?? []) {
-      await sendPushToUser(plan.user_id, {
-        title: "Time for your devotion 🌿",
-        body: `Continue your "${plan.goal}" devotion plan`,
-        data: { screen: "Devotions" },
-      });
-      sent.push({ type: "devotion", userId: plan.user_id });
+      try {
+        const content = generateDevotional({ goal: plan.goal, dayNumber: plan.day_number ?? 0, weights: getWeights() });
+        const { data: entry } = await supabaseAdmin
+          .from("devotion_entries")
+          .insert({
+            user_id: plan.user_id,
+            plan_id: plan.id,
+            title: content.title,
+            scripture_reference: content.scriptureReference,
+            scripture_text: content.scriptureText,
+            body: content.body,
+            closing_prayer: content.closingPrayer,
+          })
+          .select("id")
+          .single();
+
+        await sendPushToUser(plan.user_id, {
+          title: "Time for your devotion 🌿",
+          body: content.title,
+          data: {
+            type: "devotion",
+            entryId: entry?.id ?? "",
+            goal: plan.goal,
+            previewText: content.body.slice(0, 120).replace(/\n/g, " "),
+          },
+        });
+        sent.push({ type: "devotion", userId: plan.user_id });
+      } catch (e) {
+        log.warn(`scheduled devotion generation failed for user ${plan.user_id}:`, e.message);
+        // Fallback: still send push even if generation failed
+        await sendPushToUser(plan.user_id, {
+          title: "Time for your devotion 🌿",
+          body: `Open Living Olive — your "${plan.goal}" devotion is waiting`,
+          data: { type: "devotion", goal: plan.goal },
+        }).catch(() => {});
+        sent.push({ type: "devotion", userId: plan.user_id, fallback: true });
+      }
     }
 
+    // Auto-generate prayer points and save before pushing.
     for (const plan of prayerPlans ?? []) {
-      await sendPushToUser(plan.user_id, {
-        title: "Time to pray 🙏",
-        body: `Your ${plan.prayer_type} prayer time`,
-        data: { screen: "Prayer" },
-      });
-      sent.push({ type: "prayer", userId: plan.user_id });
+      try {
+        const result = generatePrayerPoints({
+          desires: plan.desires,
+          type: plan.prayer_type,
+          count: plan.point_count ?? 3,
+          weights: getWeights(),
+        });
+        const rows = result.prayerPoints.map((p) => ({
+          user_id: plan.user_id,
+          plan_id: plan.id,
+          title: p.title,
+          prayer_text: p.prayerText,
+          scripture_reference: p.scriptureReference,
+        }));
+        const { data: entries } = await supabaseAdmin
+          .from("prayer_entries")
+          .insert(rows)
+          .select("id")
+          .limit(1);
+
+        const firstId = entries?.[0]?.id ?? "";
+        const preview = result.prayerPoints[0]?.prayerText?.slice(0, 120).replace(/\n/g, " ") ?? "";
+
+        await sendPushToUser(plan.user_id, {
+          title: "Time to pray 🙏",
+          body: `${result.detectedCategory} prayer points are ready`,
+          data: {
+            type: "prayer",
+            entryId: firstId,
+            desires: plan.desires,
+            prayerType: result.detectedCategory,
+            previewText: preview,
+          },
+        });
+        sent.push({ type: "prayer", userId: plan.user_id });
+      } catch (e) {
+        log.warn(`scheduled prayer generation failed for user ${plan.user_id}:`, e.message);
+        await sendPushToUser(plan.user_id, {
+          title: "Time to pray 🙏",
+          body: `Your ${plan.prayer_type} prayer time`,
+          data: { type: "prayer", desires: plan.desires, prayerType: plan.prayer_type },
+        }).catch(() => {});
+        sent.push({ type: "prayer", userId: plan.user_id, fallback: true });
+      }
     }
 
     res.json({ ok: true, sent: sent.length, time: timeWindow });

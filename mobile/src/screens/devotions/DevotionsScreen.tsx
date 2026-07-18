@@ -150,11 +150,17 @@ export default function DevotionsScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      // Check for alarm-triggered navigation from notification tap
+      // Check for alarm-triggered navigation. When the server pre-generates
+      // content (entryId present), the entries are already in Supabase — just
+      // load them. No "tap to generate" prompt needed.
       const alarm = consumePendingAlarm();
-      if (alarm?.type === "devotion" && alarm.goal && Date.now() - alarm.timestamp < 30000) {
-        setGoal(alarm.goal);
-        setAlarmBanner(true);
+      if (alarm?.type === "devotion" && Date.now() - alarm.timestamp < 120000) {
+        if (!alarm.entryId && alarm.goal) {
+          // Legacy push without pre-generated content — prefill form
+          setGoal(alarm.goal);
+          setAlarmBanner(true);
+        }
+        // entryId case: content already in DB, will appear when entries load below
       }
       (async () => {
         setLoadingEntries(true);
