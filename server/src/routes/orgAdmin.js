@@ -299,6 +299,101 @@ router.put('/api/profile', requireOrgAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Announcements CRUD ────────────────────────────────────────────────────────
+router.get('/api/announcements', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data, error } = await supabase
+      .from('church_announcements')
+      .select('id, text, type, is_active, created_at')
+      .eq('church_id', churchId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ ok: true, announcements: data ?? [] });
+  } catch (e) {
+    // Table may not exist yet — return empty list, not an error
+    res.json({ ok: true, announcements: [], warning: e.message });
+  }
+});
+
+router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { text, type } = req.body;
+  if (!text?.trim()) return res.status(400).json({ ok: false, error: 'text is required' });
+  try {
+    const { data, error } = await supabase
+      .from('church_announcements')
+      .insert({ church_id: churchId, text: text.trim(), type: type ?? 'general', is_active: true })
+      .select('id').single();
+    if (error) throw error;
+    log.info(`Announcement created for church ${churchId}`);
+    res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.put('/api/announcements/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { is_active } = req.body;
+  try {
+    const { error } = await supabase
+      .from('church_announcements')
+      .update({ is_active: !!is_active })
+      .eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/api/announcements/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { error } = await supabase
+      .from('church_announcements')
+      .delete()
+      .eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Extras: order of service + social links ────────────────────────────────────
+router.get('/api/extras', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data } = await supabase
+      .from('churches')
+      .select('website, facebook_url, instagram_url, twitter_url, youtube_url, order_of_service')
+      .eq('id', churchId)
+      .maybeSingle();
+    res.json({ ok: true, extras: data ?? {} });
+  } catch (e) {
+    res.json({ ok: true, extras: {}, warning: e.message });
+  }
+});
+
+router.put('/api/extras', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { orderOfService, website, facebook_url, instagram_url, twitter_url, youtube_url } = req.body;
+  const updates = { updated_at: new Date().toISOString() };
+  if (orderOfService !== undefined) updates.order_of_service = orderOfService;
+  if (website !== undefined)      updates.website = website || null;
+  if (facebook_url !== undefined) updates.facebook_url = facebook_url || null;
+  if (instagram_url !== undefined) updates.instagram_url = instagram_url || null;
+  if (twitter_url !== undefined)  updates.twitter_url = twitter_url || null;
+  if (youtube_url !== undefined)  updates.youtube_url = youtube_url || null;
+  try {
+    const { error } = await supabase.from('churches').update(updates).eq('id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ── Helper: push to all church members ────────────────────────────────────────
 async function notifyChurchMembers(supabase, churchId, { title, body, data }) {
   const { data: members } = await supabase

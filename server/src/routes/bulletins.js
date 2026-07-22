@@ -310,4 +310,49 @@ router.post('/:bulletinId/verify-payment', async (req, res) => {
   }
 });
 
+// ── Church extras: announcements, order of service, social links ──────────────
+// Gracefully handles new columns / tables not yet in the schema.
+router.get('/:churchId/extras', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.params;
+  const extras = { announcements: [], orderOfService: [], social: {} };
+
+  // Social links + order of service live on the churches row
+  try {
+    const { data } = await supabase
+      .from('churches')
+      .select('website, facebook_url, instagram_url, twitter_url, youtube_url, order_of_service')
+      .eq('id', churchId)
+      .maybeSingle();
+    if (data) {
+      extras.social = {
+        website:   data.website   ?? null,
+        facebook:  data.facebook_url  ?? null,
+        instagram: data.instagram_url ?? null,
+        twitter:   data.twitter_url   ?? null,
+        youtube:   data.youtube_url   ?? null,
+      };
+      if (Array.isArray(data.order_of_service)) extras.orderOfService = data.order_of_service;
+    }
+  } catch (e) {
+    log.warn('extras: social/oos query failed (columns may not exist yet):', e.message);
+  }
+
+  // Announcements live in a separate table
+  try {
+    const { data } = await supabase
+      .from('church_announcements')
+      .select('id, text, type, created_at')
+      .eq('church_id', churchId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    extras.announcements = data ?? [];
+  } catch (e) {
+    log.warn('extras: church_announcements query failed (table may not exist yet):', e.message);
+  }
+
+  res.json(extras);
+});
+
 export { router as bulletinsRouter };

@@ -87,7 +87,7 @@ const SITUATIONS = {
 const CATEGORY_STRONG_SIGNALS = {
   Warfare:      ["warfare", "spiritual battle", "attack", "demon", "devil", "principality", "darkness", "rebuke", "binding", "witchcraft", "oppression", "stronghold", "enemy"],
   Intercession: ["them", "they", "their", "someone", "others", "everyone", "people", "friend", "loved one", "nation", "family member", "pray for", "standing for"],
-  Thanksgiving: ["thank", "grateful", "thankful", "grateful", "praise", "bless", "blessed", "testimony", "goodness"],
+  Thanksgiving: ["thank", "grateful", "thankful", "praise", "bless", "blessed", "testimony", "goodness"],
   Adoration:    ["worship", "adore", "magnify", "exalt", "honor", "glorify", "awesome", "majestic", "holy"],
   Petition:     ["ask", "need", "request", "please", "grant", "give", "provide", "help me", "i need"],
 };

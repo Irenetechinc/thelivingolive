@@ -137,7 +137,7 @@ const THEOLOGICAL_TERMS = new Set([
   "worship","prayer","obedience","repentance","forgiveness","resurrection","kingdom",
   "glory","hope","peace","strength","wisdom","trust","servant","witness","light",
   "darkness","heart","soul","spirit","body","life","death","flesh","sin","sacrifice",
-  "blood","cross","victory","power","authority","throne","word","Scripture","Scripture",
+  "blood","cross","victory","power","authority","throne","word","Scripture",
   "prophet","apostle","pastor","priest","temple","covenant","baptism","bread","wine",
 ]);
 

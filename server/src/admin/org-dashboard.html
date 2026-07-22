@@ -126,6 +126,8 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
     <a class="active" onclick="showPage('dashboard')" id="nav-dashboard"><span class="nav-icon">📊</span> Dashboard</a>
     <a onclick="showPage('bulletins')" id="nav-bulletins"><span class="nav-icon">📋</span> Bulletins</a>
     <a onclick="showPage('members')" id="nav-members"><span class="nav-icon">👥</span> Members</a>
+    <a onclick="showPage('announcements')" id="nav-announcements"><span class="nav-icon">📢</span> Announcements</a>
+    <a onclick="showPage('extras')" id="nav-extras"><span class="nav-icon">🔗</span> Links & Service</a>
     <a onclick="showPage('payments')" id="nav-payments"><span class="nav-icon">💳</span> Payments</a>
     <a onclick="showPage('profile')" id="nav-profile"><span class="nav-icon">⛪</span> Profile</a>
   </nav>
@@ -172,6 +174,66 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
     </div>
   </div>
 
+  <!-- Announcements -->
+  <div class="page" id="page-announcements">
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header">
+        <h3>Post Announcement</h3>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>Announcement Text</label>
+          <textarea id="annText" placeholder="Type your announcement here…" style="min-height:80px"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="annType">
+            <option value="general">General</option>
+            <option value="event">Event</option>
+            <option value="urgent">Urgent</option>
+            <option value="reminder">Reminder</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="postAnnouncement()">Post Announcement</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Active Announcements</h3></div>
+      <div id="announcementList"><div class="empty-state"><span class="empty-icon">📢</span><p>No announcements yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Links & Order of Service -->
+  <div class="page" id="page-extras">
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3>Church Website &amp; Social Media</h3></div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:13px;margin-bottom:20px">These links appear on your church's bulletin page in the app.</p>
+        <div class="form-group"><label>Website URL</label><input type="text" id="extWebsite" placeholder="https://yourchurch.org"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Facebook</label><input type="text" id="extFacebook" placeholder="https://facebook.com/yourchurch"></div>
+          <div class="form-group"><label>Instagram</label><input type="text" id="extInstagram" placeholder="https://instagram.com/yourchurch"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Twitter / X</label><input type="text" id="extTwitter" placeholder="https://twitter.com/yourchurch"></div>
+          <div class="form-group"><label>YouTube</label><input type="text" id="extYoutube" placeholder="https://youtube.com/@yourchurch"></div>
+        </div>
+        <button class="btn btn-primary" onclick="saveExtras()">Save Links</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <h3>Order of Service</h3>
+        <button class="btn btn-primary btn-sm" onclick="addOosRow()">+ Add Item</button>
+      </div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:13px;margin-bottom:16px">This appears in the app's bulletin view. Drag to reorder (save when done).</p>
+        <div id="oosList" style="display:flex;flex-direction:column;gap:10px"></div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="saveOos()">Save Order of Service</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Payments -->
   <div class="page" id="page-payments">
     <div class="card">
@@ -197,7 +259,8 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
             <div class="form-group"><label>Email</label><input type="text" name="email" id="profileEmail" placeholder="contact@yourchurch.org"></div>
             <div class="form-group"><label>Phone</label><input type="text" name="phone" id="profilePhone" placeholder="+234 800 000 0000"></div>
           </div>
-          <div class="form-group"><label>Logo URL</label><input type="text" name="logoUrl" id="profileLogo" placeholder="https://…/logo.png"></div>
+          <div class="form-group"><label>Logo URL <span style="color:var(--inkFaint);font-weight:400;text-transform:none">(shown in the church picker)</span></label><input type="text" name="logoUrl" id="profileLogo" placeholder="https://…/logo.png"></div>
+          <p style="font-size:12px;color:var(--inkFaint);margin:-12px 0 20px">For social links and order of service, use the <a href="#" onclick="showPage('extras');return false" style="color:var(--olive)">Links &amp; Service</a> section.</p>
           <button type="submit" class="btn btn-primary">Save Changes</button>
         </form>
       </div>
@@ -305,11 +368,13 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
 
-  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',payments:'Payments',profile:'Church Profile'};
+  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',announcements:'Announcements',extras:'Links & Order of Service',payments:'Payments',profile:'Church Profile'};
   document.getElementById('pageTitle').textContent = titles[name] ?? name;
   document.getElementById('topbarAction').style.display = name === 'bulletins' ? '' : 'none';
 
   if (name === 'members') loadMembers();
+  if (name === 'announcements') loadAnnouncements();
+  if (name === 'extras') loadExtras();
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
@@ -500,6 +565,128 @@ async function saveProfile(ev) {
       logoUrl: document.getElementById('profileLogo').value,
     });
     toast('Profile saved');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Announcements ─────────────────────────────────────────────────────────────
+let allAnnouncements = [];
+
+async function loadAnnouncements() {
+  try {
+    const data = await api('/api/announcements');
+    allAnnouncements = data.announcements ?? [];
+    renderAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderAnnouncements() {
+  const el = document.getElementById('announcementList');
+  if (!allAnnouncements.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📢</span><p>No announcements yet. Post one above to show it on the bulletin page in the app.</p></div>`;
+    return;
+  }
+  const typeColors = {general:'badge-green',event:'badge-gold',urgent:'badge-red',reminder:'badge-gray'};
+  el.innerHTML = `<table>
+    <thead><tr><th>Message</th><th>Type</th><th>Posted</th><th>Status</th><th>Action</th></tr></thead>
+    <tbody>${allAnnouncements.map(a=>`<tr>
+      <td style="max-width:340px">${esc(a.text)}</td>
+      <td><span class="badge ${typeColors[a.type]??'badge-gray'}">${a.type??'general'}</span></td>
+      <td>${new Date(a.created_at).toLocaleDateString()}</td>
+      <td>${a.is_active!==false?'<span class="badge badge-green">Active</span>':'<span class="badge badge-gray">Hidden</span>'}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAnn('${a.id}',${!a.is_active})">${a.is_active!==false?'Hide':'Show'}</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteAnn('${a.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function postAnnouncement() {
+  const text = document.getElementById('annText').value.trim();
+  const type = document.getElementById('annType').value;
+  if (!text) { toast('Please enter an announcement message','error'); return; }
+  try {
+    await api('/api/announcements','POST',{text,type});
+    document.getElementById('annText').value='';
+    toast('Announcement posted — it now appears in the app!');
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleAnn(id, isActive) {
+  try {
+    await api('/api/announcements/'+id,'PUT',{is_active:isActive});
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteAnn(id) {
+  if (!confirm('Remove this announcement?')) return;
+  try {
+    await api('/api/announcements/'+id,'DELETE');
+    toast('Announcement removed');
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Extras (social links + order of service) ──────────────────────────────────
+let oosItems = [];
+
+async function loadExtras() {
+  try {
+    const data = await api('/api/extras');
+    const ex = data.extras ?? {};
+    document.getElementById('extWebsite').value  = ex.website   ?? '';
+    document.getElementById('extFacebook').value  = ex.facebook_url  ?? '';
+    document.getElementById('extInstagram').value = ex.instagram_url ?? '';
+    document.getElementById('extTwitter').value   = ex.twitter_url   ?? '';
+    document.getElementById('extYoutube').value   = ex.youtube_url   ?? '';
+    oosItems = Array.isArray(ex.order_of_service) ? ex.order_of_service : [];
+    renderOos();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function saveExtras() {
+  try {
+    await api('/api/extras','PUT',{
+      website:      document.getElementById('extWebsite').value.trim()||null,
+      facebook_url: document.getElementById('extFacebook').value.trim()||null,
+      instagram_url:document.getElementById('extInstagram').value.trim()||null,
+      twitter_url:  document.getElementById('extTwitter').value.trim()||null,
+      youtube_url:  document.getElementById('extYoutube').value.trim()||null,
+    });
+    toast('Social links saved!');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderOos() {
+  const el = document.getElementById('oosList');
+  if (!oosItems.length) {
+    el.innerHTML = `<p style="color:var(--inkFaint);font-size:13px">No items yet. Click "+ Add Item" to add your first order of service entry.</p>`;
+    return;
+  }
+  el.innerHTML = oosItems.map((item,i)=>`
+    <div style="display:grid;grid-template-columns:90px 1fr 1fr auto;gap:10px;align-items:center;background:var(--bg);padding:10px 12px;border-radius:8px;border:1px solid var(--border)">
+      <input type="text" value="${esc(item.time??'')}" placeholder="9:00 AM" oninput="oosItems[${i}].time=this.value" style="padding:8px 10px">
+      <input type="text" value="${esc(item.item??'')}" placeholder="Order item…" oninput="oosItems[${i}].item=this.value">
+      <input type="text" value="${esc(item.notes??'')}" placeholder="Notes (optional)" oninput="oosItems[${i}].notes=this.value">
+      <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="removeOos(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addOosRow() {
+  oosItems.push({time:'',item:'',notes:''});
+  renderOos();
+}
+
+function removeOos(i) {
+  oosItems.splice(i,1);
+  renderOos();
+}
+
+async function saveOos() {
+  try {
+    await api('/api/extras','PUT',{orderOfService:oosItems});
+    toast('Order of service saved!');
   } catch(e) { toast(e.message,'error'); }
 }
 

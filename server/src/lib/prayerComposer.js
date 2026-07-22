@@ -201,7 +201,7 @@ function buildDeclare(profile, verseRef, verseKeyWords, idx) {
   const attrScriptures = attr.scriptures.filter(s => !s.startsWith(verseRef.split(":")[0]));
   const attrScripture = seedPick(attrScriptures.length > 0 ? attrScriptures : attr.scriptures, seed, 0);
 
-  // Pick a covenant name name/descriptor if available
+  // Pick a covenant name/descriptor if available
   const cnKey = profile.covenantName;
   const cnData = cnKey ? COVENANT_NAMES[cnKey] : null;
 

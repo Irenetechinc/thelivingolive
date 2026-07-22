@@ -110,7 +110,7 @@ function verseKeyWords(verseTextStr, count = 6) {
 
 function desireKeyWords(desires) {
   const skip = new Set(["want","need","help","please","really","very","just","that","with","and",
-    "for","the","pray","prayer","asking","god","lord","please","asking","about"]);
+    "for","the","pray","prayer","asking","god","lord","about"]);
   // Use all meaningful tokens from the full request — no artificial 6-word cap.
   // Longer cap only when the request is genuinely long, to keep downstream
   // Markov seeding diverse rather than always using the same first tokens.

@@ -346,6 +346,48 @@ export async function verifyBulletinPayment(bulletinId: string, txRef: string): 
   return authedFetch(`/api/bulletins/${bulletinId}/verify-payment`, { txRef });
 }
 
+// ─── Church extras: announcements, order of service, social links ─────────────
+
+export type ChurchAnnouncement = {
+  id: string;
+  text: string;
+  type: string;
+  created_at: string;
+};
+
+export type OrderOfServiceItem = {
+  time: string;
+  item: string;
+  notes?: string;
+};
+
+export type ChurchSocial = {
+  website?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  twitter?: string | null;
+  youtube?: string | null;
+};
+
+export type ChurchExtras = {
+  announcements: ChurchAnnouncement[];
+  orderOfService: OrderOfServiceItem[];
+  social: ChurchSocial;
+};
+
+export async function fetchChurchExtras(churchId: string): Promise<ChurchExtras> {
+  try {
+    const res = await authedGet(`/api/bulletins/${churchId}/extras`);
+    return {
+      announcements: res.announcements ?? [],
+      orderOfService: res.orderOfService ?? [],
+      social: res.social ?? {},
+    };
+  } catch {
+    return { announcements: [], orderOfService: [], social: {} };
+  }
+}
+
 // ─── Donations ────────────────────────────────────────────────────────────────
 
 export async function initiateDonation(input: { amount: number; isRecurring: boolean }): Promise<{ paymentLink: string; txRef: string }> {

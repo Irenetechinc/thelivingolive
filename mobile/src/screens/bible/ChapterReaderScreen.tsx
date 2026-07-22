@@ -406,11 +406,16 @@ export default function ChapterReaderScreen({ route }: Props) {
                 <View style={styles.studyPanel}>
                   {studyLoading ? (
                     <View style={styles.studyLoadingWrap}>
-                      <ActivityIndicator color={colors.olive} />
-                      <Text style={styles.studyLoadingText}>Exploring the scriptures…</Text>
+                      <View style={styles.thinkingBadge}>
+                        <ActivityIndicator color={colors.gold} size="small" />
+                        <Text style={styles.thinkingBadgeText}>Thinking Mode</Text>
+                      </View>
+                      <Text style={styles.studyLoadingText}>
+                        Searching scripture, cross-references{"\n"}and theological context…
+                      </Text>
                     </View>
                   ) : studyError ? (
-                    <Text style={styles.studyError}>{studyError}</Text>
+                    <Text style={styles.studyError}>Unable to load insight. Please try again.</Text>
                   ) : (
                     <>
                       {/* Insight header */}
@@ -770,7 +775,26 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.xl,
   },
-  studyLoadingText: { ...typography.caption, color: colors.inkSoft, fontStyle: "italic" },
+  thinkingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "#FEF6D6",
+    borderWidth: 1,
+    borderColor: "#E2C060",
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    marginBottom: spacing.sm,
+  },
+  thinkingBadgeText: {
+    fontSize: 12,
+    fontWeight: "700" as const,
+    color: "#7A5F0D",
+    letterSpacing: 0.8,
+    textTransform: "uppercase" as const,
+  },
+  studyLoadingText: { ...typography.caption, color: colors.inkSoft, fontStyle: "italic", textAlign: "center" as const, lineHeight: 20 },
   studyError: { ...typography.caption, color: colors.terracotta, padding: spacing.lg },
 
   studyInsightHeader: {
