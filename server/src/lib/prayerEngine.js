@@ -61,6 +61,25 @@ function tokenize(text) {
     .filter(w => w.length > 2 && !STOP.has(w));
 }
 
+// Trim text to a complete sentence boundary within maxLen chars.
+// Prefers ending at ". ", "! ", or "? "; falls back to word boundary.
+function trimToSentence(text, maxLen) {
+  if (!text || text.length <= maxLen) return text;
+  const window = text.slice(0, maxLen);
+  // Find the last sentence-ending punctuation followed by a space or end
+  let best = -1;
+  for (let i = window.length - 1; i >= maxLen * 0.4; i--) {
+    if ((window[i] === "." || window[i] === "!" || window[i] === "?") &&
+        (i === window.length - 1 || window[i + 1] === " ")) {
+      best = i;
+      break;
+    }
+  }
+  if (best > 0) return window.slice(0, best + 1);
+  // Fall back to word boundary
+  return window.replace(/\s+\S*$/, "");
+}
+
 // Words that look like content but carry no theological weight — skip them
 // in titles, addresses, and anywhere we need a meaningful verse keyword.
 const VERSE_NOISE = new Set([
@@ -92,8 +111,13 @@ function verseKeyWords(verseTextStr, count = 6) {
 function desireKeyWords(desires) {
   const skip = new Set(["want","need","help","please","really","very","just","that","with","and",
     "for","the","pray","prayer","asking","god","lord","please","asking","about"]);
-  return desires.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
-    .filter(w => w.length > 3 && !skip.has(w)).slice(0, 6);
+  // Use all meaningful tokens from the full request — no artificial 6-word cap.
+  // Longer cap only when the request is genuinely long, to keep downstream
+  // Markov seeding diverse rather than always using the same first tokens.
+  const tokens = desires.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+    .filter(w => w.length > 3 && !skip.has(w));
+  const maxTokens = Math.max(10, Math.ceil(tokens.length * 0.7));
+  return tokens.slice(0, maxTokens);
 }
 
 // Deterministic hash — same input always → same number.
@@ -105,15 +129,49 @@ function hashStr(str) {
 }
 
 // ── Category detection ────────────────────────────────────────────────────────
+// Scores both individual tokens AND adjacent word pairs (bigrams) so that
+// phrases like "spiritual warfare", "thank you Lord", "pray for my sister"
+// are understood as a whole — not just their individual keyword hits.
 export function detectCategory(desireText) {
   const words = tokenize(desireText);
   const scores = {};
   for (const cat of CATEGORIES) scores[cat.name] = 0;
+
+  // Single-word scoring (existing behaviour)
   for (const word of words) {
     for (const cat of CATEGORIES) {
       if (cat.keywords.has(word)) scores[cat.name] += cat.keywords.get(word);
     }
   }
+
+  // Bigram scoring — if both words in a consecutive pair are keywords in the
+  // same category, the phrase carries more weight than either word alone.
+  for (let i = 0; i < words.length - 1; i++) {
+    const a = words[i], b = words[i + 1];
+    for (const cat of CATEGORIES) {
+      const kw = cat.keywords;
+      if (kw.has(a) && kw.has(b)) {
+        // Phrase hit: add the geometric mean of the two weights as a bonus
+        const bonus = Math.sqrt(kw.get(a) * kw.get(b));
+        scores[cat.name] += bonus;
+      }
+    }
+  }
+
+  // Sentence-level intent signals: presence of first-person plural or explicit
+  // directional phrases boosts the most relevant category without hard-coding
+  // fixed strings — just structural patterns in the token stream.
+  const full = desireText.toLowerCase();
+  if (/\b(my friend|my family|my brother|my sister|my mother|my father|our church|our nation)\b/.test(full)) {
+    scores["Intercession"] = (scores["Intercession"] || 0) + 2;
+  }
+  if (/\b(thank|grateful|grateful|bless(ed|ing)?|praise)\b/.test(full)) {
+    scores["Thanksgiving"] = (scores["Thanksgiving"] || 0) + 1.5;
+  }
+  if (/\b(fight|battle|overcome|enemy|attack|fear|anxiety|oppression|bondage|tempt)\b/.test(full)) {
+    scores["Warfare"] = (scores["Warfare"] || 0) + 1.5;
+  }
+
   const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const [topName, topScore] = ranked[0];
   const totalScore = ranked.reduce((s, [, v]) => s + v, 0) || 1;
@@ -238,7 +296,7 @@ function buildDeclaration(ref, vf, bridge1, bridge2, snippets, seed) {
   const goodSnippets = snippets
     .filter(s => s.length > 50 && /[Gg]od|[Ll]ord|[Cc]hrist|[Ff]aith|[Gg]race|[Ss]cripture|[Hh]oly/.test(s));
   const snippetFrag = goodSnippets.length
-    ? goodSnippets.sort((a, b) => b.length - a.length)[0].slice(0, 140).replace(/\s+\S*$/, "")
+    ? trimToSentence(goodSnippets.sort((a, b) => b.length - a.length)[0], 220)
     : "";
 
   const verbs = ["declares", "proclaims", "speaks", "stands", "says"];
@@ -257,8 +315,7 @@ function buildDeclaration(ref, vf, bridge1, bridge2, snippets, seed) {
 // Built from the user's actual words + verse concepts + Markov phrase seeded
 // from the user's own request vocabulary (not pre-written prayer language).
 function buildPetition(desires, desireKW, vkw, markovDesire, category, seed) {
-  // Use the user's exact desire text — this is their specific language
-  const coreDesire = desires.trim().slice(0, 160);
+  // Use the user's full desire text — never truncate their own words.
 
   // Category tones: short connective phrases only — the content is the user's words
   const TONES = {
@@ -270,6 +327,7 @@ function buildPetition(desires, desireKW, vkw, markovDesire, category, seed) {
   };
   const tone = TONES[category] ?? "before You about";
 
+  const coreDesire = desires.trim();
   let petition = `I come ${tone} ${coreDesire}.`;
 
   // Weave in a Markov phrase seeded from the user's own words for biblical texture
@@ -459,9 +517,10 @@ function buildDevotionReflection(ref, vf, vkw, snippets, bridge, dictMap, coreWo
   // Best teaching snippet from the web crawler — unique to this verse
   const goodSnippets = snippets
     .filter(s => s.length > 60 && /[Gg]od|[Ll]ord|[Cc]hrist|[Ff]aith|[Gg]race|[Hh]oly/.test(s));
-  const snippetText = goodSnippets.length
-    ? goodSnippets.sort((a, b) => b.length - a.length)[0].slice(0, 320).replace(/\s+\S*$/, "") + "."
+  const bestSnippet = goodSnippets.length
+    ? trimToSentence(goodSnippets.sort((a, b) => b.length - a.length)[0], 420)
     : "";
+  const snippetText = bestSnippet ? (bestSnippet.endsWith(".") ? bestSnippet : bestSnippet + ".") : "";
 
   // Dictionary — precise articulation of the verse's key words
   let dictComment = "";
@@ -486,7 +545,7 @@ function buildDevotionReflection(ref, vf, vkw, snippets, bridge, dictMap, coreWo
 // Built from the verse's core word + the user's goal + Markov phrase.
 function buildDevotionApplication(goal, vkw, markovPhrase) {
   const coreWord = vkw[0] ?? "this truth";
-  const goalCore = goal.trim().slice(0, 90);
+  const goalCore = goal.trim();
   const markovLine = markovPhrase && markovPhrase.split(" ").length >= 4
     ? ` ${markovPhrase.charAt(0).toUpperCase() + markovPhrase.slice(1)}.`
     : "";
@@ -498,7 +557,7 @@ function buildDevotionApplication(goal, vkw, markovPhrase) {
 // The prayer is unique because it uses the specific reference + the user's goal
 // + a Markov phrase from the verse's vocabulary.
 function buildDevotionPrayer(ref, goal, vkw, markovPhrase) {
-  const goalCore = goal.trim().slice(0, 80);
+  const goalCore = goal.trim();
   const coreWord = vkw[0] ?? "this";
   const markovLine = markovPhrase && markovPhrase.split(" ").length >= 3
     ? ` ${markovPhrase.charAt(0).toUpperCase() + markovPhrase.slice(1)}.`
@@ -510,7 +569,11 @@ function buildDevotionPrayer(ref, goal, vkw, markovPhrase) {
 // TITLE — built from verse ref + core verse word + user goal (not a pool)
 function buildDevotionTitle(goal, ref, vkw) {
   const coreWord = vkw[0] ? vkw[0].charAt(0).toUpperCase() + vkw[0].slice(1) : null;
-  const shortGoal = goal.trim().slice(0, 55);
+  // Use a reasonable title length but trim at word boundary so no word is cut
+  const goalFull = goal.trim();
+  const shortGoal = goalFull.length > 60
+    ? goalFull.slice(0, 60).replace(/\s+\S*$/, "") + "…"
+    : goalFull;
   return coreWord && coreWord.length > 3
     ? `${coreWord} — ${shortGoal}`
     : `${ref}: ${shortGoal}`;

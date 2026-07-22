@@ -90,7 +90,7 @@ function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
             <Text style={styles.scriptureText}>{entry.scripture_text}</Text>
           </View>
         ) : null}
-        <Text style={styles.cardBody} numberOfLines={4}>{entry.body}</Text>
+        <Text style={styles.cardBody}>{entry.body}</Text>
         {entry.closing_prayer ? (
           <View style={styles.prayerWrap}>
             <Text style={styles.prayerLabel}>CLOSING PRAYER</Text>
