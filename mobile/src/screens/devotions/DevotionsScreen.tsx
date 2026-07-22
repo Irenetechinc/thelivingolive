@@ -16,6 +16,7 @@ import { generateDevotion, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { consumePendingAlarm } from "../../lib/alarmState";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
+import { ThinkingDots } from "../../components/ThinkingDots";
 
 type Duration = "daily" | "weekly" | "monthly" | "yearly";
 const durations: { id: Duration; label: string; icon: string }[] = [

@@ -16,6 +16,7 @@ import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { consumePendingAlarm } from "../../lib/alarmState";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
+import { ThinkingDots } from "../../components/ThinkingDots";
 
 const prayerTypes: { id: string; label: string; symbol: string; gradient: [string, string] }[] = [
   { id: "Warfare", label: "Warfare", symbol: "⚔", gradient: ["#6B2020", "#B03030"] },

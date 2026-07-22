@@ -59,32 +59,45 @@ async function parseJsonResponse(res: Response) {
   return json;
 }
 
+// ─── Silent retry helpers ─────────────────────────────────────────────────────
+const MAX_RETRIES = 3;
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
+
 async function authedFetch(path: string, body: unknown) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("You need to be signed in to use this feature.");
-  let res: Response;
-  try {
-    res = await fetch(`${requireApiUrl()}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (err: any) {
-    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
-      throw new Error(
-        "The server is taking too long to respond. Check your connection and try again."
-      );
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      // Timeout — don't retry, let caller handle silently
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      // Network error — retry silently in background
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      console.warn("[api] network error after retries:", path);
+      throw err;
     }
-    throw new Error(
-      "Couldn't reach the server (livingolive.adroomai.com). Check your internet connection and try again."
-    );
+    // 5xx — server may be recovering, retry silently
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
   }
-  return parseJsonResponse(res);
+  throw lastErr ?? new Error("Request failed");
 }
 
 // ─── Bible ────────────────────────────────────────────────────────────────────
@@ -239,23 +252,60 @@ async function authedGet(path: string) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("You need to be signed in.");
-  const res = await fetch(`${requireApiUrl()}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  return parseJsonResponse(res);
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      console.warn("[api] network error after retries:", path);
+      throw err;
+    }
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
+  }
+  throw lastErr ?? new Error("Request failed");
 }
 
 async function authedDelete(path: string) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("You need to be signed in.");
-  const res = await fetch(`${requireApiUrl()}${path}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  return parseJsonResponse(res);
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      throw err;
+    }
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
+  }
+  throw lastErr ?? new Error("Request failed");
 }
 
 export async function fetchChurches(): Promise<Church[]> {
