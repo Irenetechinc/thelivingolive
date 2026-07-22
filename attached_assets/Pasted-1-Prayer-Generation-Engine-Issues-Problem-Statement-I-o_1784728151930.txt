@@ -1,0 +1,129 @@
+1. Prayer Generation Engine Issues
+Problem Statement:
+I observe that the prayer generation engine uses keywords to generate prayer points. This is incorrect because the engine/agent needs to understand the entire prayer request as a whole, not just individual keywords. The system should comprehend the complete prayer request and its meaning, then use that understanding to find Bible verses that contextually support the prayer point being generated. This same approach should also be applied to the prayer generation feature itself.
+
+Additional Issues:
+Users are seeing incomplete sentences with ellipsis (…) and incomplete Bible verses. This needs to be fixed immediately in the prayer point section. All Bible verses should display in their entirety.
+
+2. Loading and User Interface Improvements
+Skeleton Loader:
+Add skeleton loader placeholders to the bulletin screen. These animated placeholders should appear while content is loading to improve user experience.
+
+Announcements Section:
+Remember to add the announcements section to the bulletin screen.
+
+Order of Service:
+Add order of service for each church to the bulletin screen. In the Super Admin backend, when admins onboard churches, they should be able to add the order of service. Once added, it should become available in the org-admin section for editing, so church admins can change it anytime they want.
+
+Feature Control:
+In the Super Admin dashboard, admins should be able to turn on and off the church announcements feature for org-admins and their front-end users.
+
+3. Advertisement and Social Media Features
+Advertisement Section:
+Implement an advertisement section in the bulletin screen. This section can only be controlled by the Super Admin from the backend. Super Admins can add multiple campaign slides that will display on every church's bulletin section.
+
+Church Website and Social Media:
+Implement a section in the church bulletin where the church website and social media handles are visible and accessible. This section should have the following controls:
+
+Super Admin can turn this section on and off
+
+Org-admin can edit website URLs and social media handles
+
+UI Enhancement:
+The bulletin screen should function more like a church page, so improve the user interface toward this goal.
+
+4. Navigation and Accessibility
+Bible, Prayer Points, and Hymns:
+In the bulletin screen, make the Bible, prayer point, and hymn sections accessible from the back button or navigation.
+
+5. Giving and Offering Features
+Offering Types to Implement:
+Implement the following giving features that can be turned on and off from the Super Admin screen:
+
+Tithe
+
+Offering
+
+Seed of Faith
+
+Sacrifice
+
+Custom offering
+
+Donation
+
+Admin Controls:
+
+Super Admin: Full management control (turn features on/off)
+
+Org-Admin: Limited management - can only set required prices if necessary
+
+User View:
+In the bulletin screen, if a church has these features turned on, their members will be able to see them and make payments for whichever giving type the church has enabled.
+
+6. Animations and User Experience
+Recursive Animations:
+Add recursive animations where required, especially when users scroll. Animations shouldn't only trigger when the screen is first loaded; they should continue to animate as users scroll through content.
+
+7. Prayer Point and Devotion Management
+Home Screen Indicators:
+The prayer point and devotion selection menu in the home screen should show badges if users have unread devotions or prayer points.
+
+Unread Content Management:
+Unread prayer points or devotions should have their own dedicated section where users can mark items as read or done when finished.
+
+8. Error Handling and Logging
+User-Facing Errors:
+Fix the errors that users periodically experience. Users should NOT see these errors. Instead:
+
+Users should see nothing except the normal interface
+
+All errors should only be logged in Railway console and Super Admin dashboard
+
+Background Retry System:
+Users should not be aware when the system is retrying in the background. The system should keep retrying silently until the hosting service comes back up.
+
+Thinking Mode:
+During the startup phase when verse explanations or study mode content is being generated, there should be a "thinking mode" indicator displayed to users. However, errors should only be logged to Railway console and Super Admin backend.
+
+9. Church Onboarding and Logo Management
+Logo Upload:
+In Super Admin, enable logo upload functionality during church onboarding. This logo should appear when users are selecting their church.
+
+10. Admin Announcement Features
+Org-Admin Announcements:
+Org-admins should be able to place announcements, and these announcements will be shown in the bulletin screen.
+
+Summary of Key Corrections and Articulations
+Prayer Engine: Changed from keyword-based to semantic understanding of complete prayer requests
+
+Complete Verses: All Bible verses must display fully without truncation
+
+Error Handling: Users should never see technical errors; errors log only to Railway and Super Admin
+
+Feature Controls: Clear separation between Super Admin (global controls) and Org-Admin (church-specific management)
+
+UI Improvements: Bulletin screen should feel like a church page with all necessary sections
+
+User Progress Tracking: Badges for unread content, dedicated sections for managing read/done status
+
+Animations: Should be recursive and trigger on scroll, not just initial load
+
+Giving Features: Multiple offering types with two-tier admin control (Super Admin enable/disable, Org-Admin set prices)
+
+Implementation Priority
+Fix prayer generation engine and complete Bible verses display
+
+Fix error handling - hide errors from users, implement background retry
+
+Add skeleton loader and core bulletin features (announcements, order of service)
+
+Implement advertisement and social media sections
+
+Add giving/offering features
+
+Implement progress tracking for devotions and prayer points
+
+Add recursive animations
+
+Enhance onboarding with logo upload
