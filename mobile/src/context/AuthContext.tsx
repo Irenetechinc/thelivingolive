@@ -86,7 +86,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!url) return;
       const result = await completeSignInFromUrl(url);
       if (!result.handled) return;
-      if (result.error) setLinkError(result.error);
+      if (result.error) {
+        // Reset pending email so the user can immediately request a fresh link
+        // without having to tap "Use a different email" first.
+        setPendingEmail(null);
+        setLinkError(result.error);
+      }
     }
 
     Linking.getInitialURL().then(handle);

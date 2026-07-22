@@ -415,7 +415,20 @@ export default function ChapterReaderScreen({ route }: Props) {
                       </Text>
                     </View>
                   ) : studyError ? (
-                    <Text style={styles.studyError}>Unable to load insight. Please try again.</Text>
+                    <View style={styles.studyErrorWrap}>
+                      <Text style={styles.studyError}>Unable to load insight right now.</Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.studyRetryBtn, pressed && { opacity: 0.7 }]}
+                        onPress={() => {
+                          if (studyVerseNum != null) {
+                            setStudyError(null);
+                            runStudyExplain(studyVerseNum);
+                          }
+                        }}
+                      >
+                        <Text style={styles.studyRetryText}>↺ Try again</Text>
+                      </Pressable>
+                    </View>
                   ) : (
                     <>
                       {/* Insight header */}
@@ -795,7 +808,14 @@ const styles = StyleSheet.create({
     textTransform: "uppercase" as const,
   },
   studyLoadingText: { ...typography.caption, color: colors.inkSoft, fontStyle: "italic", textAlign: "center" as const, lineHeight: 20 },
-  studyError: { ...typography.caption, color: colors.terracotta, padding: spacing.lg },
+  studyErrorWrap: { alignItems: "center", padding: spacing.lg, gap: spacing.md },
+  studyError: { ...typography.caption, color: colors.terracotta, textAlign: "center" as const },
+  studyRetryBtn: {
+    paddingHorizontal: spacing.lg, paddingVertical: 8,
+    borderRadius: radii.pill, backgroundColor: colors.parchmentMid,
+    borderWidth: 1, borderColor: colors.parchmentDark,
+  },
+  studyRetryText: { fontSize: 13, fontWeight: "600" as const, color: colors.olive },
 
   studyInsightHeader: {
     flexDirection: "row",

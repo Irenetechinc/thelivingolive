@@ -38,7 +38,22 @@ export async function completeSignInFromUrl(url: string): Promise<AuthLinkResult
   const code = params.code as string | undefined;
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) return { handled: true, error: error.message };
+    if (error) {
+      // PKCE code verifier missing: happens when the app was killed between
+      // sending the link and tapping it, when the link was opened in a
+      // different browser/app, or if storage was cleared. Replace the long
+      // technical Supabase message with something the user can act on.
+      const isPkceStorageError =
+        error.message.toLowerCase().includes("pkce") ||
+        error.message.toLowerCase().includes("code verifier") ||
+        error.message.toLowerCase().includes("code_verifier");
+      return {
+        handled: true,
+        error: isPkceStorageError
+          ? "This sign-in link has expired or was already used. Please tap 'Use a different email' and request a new link."
+          : error.message,
+      };
+    }
     return { handled: true };
   }
 
@@ -47,7 +62,14 @@ export async function completeSignInFromUrl(url: string): Promise<AuthLinkResult
   const tokenHash = (params.token_hash as string | undefined) ?? (params.token as string | undefined);
   if (tokenHash) {
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "email" });
-    if (error) return { handled: true, error: error.message };
+    if (error) {
+      return {
+        handled: true,
+        error: error.message.includes("expired") || error.message.includes("invalid")
+          ? "This sign-in link has expired or already been used. Please request a new one."
+          : error.message,
+      };
+    }
     return { handled: true };
   }
 
