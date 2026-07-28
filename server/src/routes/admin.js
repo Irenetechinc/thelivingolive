@@ -299,7 +299,7 @@ router.get('/api/churches', requireAdmin, async (req, res) => {
   if (!supabase) return res.json({ ok: true, churches: [], total: 0 });
   const { data, error } = await supabase
     .from('churches')
-    .select('id, name, slug, admin_username, email, phone, active, created_at')
+    .select('id, name, slug, admin_username, email, phone, active, can_post_ads, ads_excluded, created_at')
     .order('name');
   if (error) return res.status(500).json({ ok: false, error: error.message });
   res.json({ ok: true, churches: data ?? [], total: data?.length ?? 0 });
@@ -338,12 +338,14 @@ router.post('/api/churches', requireAdmin, async (req, res) => {
 
 router.patch('/api/churches/:id', requireAdmin, async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { name, email, phone, active, password } = req.body;
+  const { name, email, phone, active, password, can_post_ads, ads_excluded } = req.body;
   const updates = { updated_at: new Date().toISOString() };
   if (name !== undefined) updates.name = name.trim();
   if (email !== undefined) updates.email = email.trim();
   if (phone !== undefined) updates.phone = phone.trim();
   if (active !== undefined) updates.active = !!active;
+  if (can_post_ads !== undefined) updates.can_post_ads = !!can_post_ads;
+  if (ads_excluded !== undefined) updates.ads_excluded = !!ads_excluded;
   if (password?.trim()) updates.password_hash = hashPassword(password.trim());
 
   const { error } = await supabase.from('churches').update(updates).eq('id', req.params.id);
@@ -366,7 +368,7 @@ function loginPage(errorMsg = '') {
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Living Olive — Admin</title>
+<title>The Living Olive — Admin</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#030308;color:#e0e0ff;font-family:'Courier New',monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -403,7 +405,7 @@ function loginPage(errorMsg = '') {
   <div class="corner bl"></div><div class="corner br"></div>
   <div class="logo">
     <span class="logo-icon">🫒</span>
-    <h1>Living Olive</h1>
+    <h1>The Living Olive</h1>
     <p>System Administration Console</p>
   </div>
   <div class="divider"></div>

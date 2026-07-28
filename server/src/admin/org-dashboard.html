@@ -115,7 +115,7 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
 <aside class="sidebar">
   <div class="sidebar-brand">
     <span class="logo">🫒</span>
-    <h1>Living Olive</h1>
+    <h1>The Living Olive</h1>
     <p>Church Admin Portal</p>
   </div>
   <div class="church-badge">
@@ -127,6 +127,7 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
     <a onclick="showPage('bulletins')" id="nav-bulletins"><span class="nav-icon">📋</span> Bulletins</a>
     <a onclick="showPage('members')" id="nav-members"><span class="nav-icon">👥</span> Members</a>
     <a onclick="showPage('announcements')" id="nav-announcements"><span class="nav-icon">📢</span> Announcements</a>
+    <a onclick="showPage('ads')" id="nav-ads"><span class="nav-icon">📣</span> Ads</a>
     <a onclick="showPage('extras')" id="nav-extras"><span class="nav-icon">🔗</span> Links & Service</a>
     <a onclick="showPage('payments')" id="nav-payments"><span class="nav-icon">💳</span> Payments</a>
     <a onclick="showPage('profile')" id="nav-profile"><span class="nav-icon">⛪</span> Profile</a>
@@ -203,6 +204,41 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
     </div>
   </div>
 
+  <!-- Ads -->
+  <div class="page" id="page-ads">
+    <div id="adsGateMsg" style="display:none" class="card" style="margin-bottom:24px">
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:14px;line-height:1.7">
+          📣 Ads posting is not yet enabled for your church. Contact
+          <a href="mailto:admin@livingolive.app" style="color:var(--olive)">The Living Olive support</a>
+          to have this feature enabled.
+        </p>
+      </div>
+    </div>
+    <div id="adsContent" style="display:none">
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header"><h3>Post New Ad</h3></div>
+        <div class="card-body">
+          <div class="form-group"><label>Ad Title *</label><input type="text" id="adTitle" placeholder="e.g. Sunday Harvest Service"></div>
+          <div class="form-group">
+            <label>Ad Image <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — recommended 16:9, max 5 MB)</span></label>
+            <input type="file" id="adImageFile" accept="image/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+            <div id="adImagePreview" style="margin-top:10px;display:none">
+              <img id="adImagePreviewImg" style="max-width:100%;max-height:160px;border-radius:8px;object-fit:cover">
+              <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="clearAdImage()">Remove image</button>
+            </div>
+          </div>
+          <div class="form-group"><label>Link URL <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — where ad taps to)</span></label><input type="text" id="adLinkUrl" placeholder="https://yourchurch.org/event"></div>
+          <button class="btn btn-primary" onclick="postAd()">Post Ad</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Active Ads</h3></div>
+        <div id="adsList"><div class="empty-state"><span class="empty-icon">📣</span><p>No ads posted yet.</p></div></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Links & Order of Service -->
   <div class="page" id="page-extras">
     <div class="card" style="margin-bottom:24px">
@@ -259,8 +295,19 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
             <div class="form-group"><label>Email</label><input type="text" name="email" id="profileEmail" placeholder="contact@yourchurch.org"></div>
             <div class="form-group"><label>Phone</label><input type="text" name="phone" id="profilePhone" placeholder="+234 800 000 0000"></div>
           </div>
-          <div class="form-group"><label>Logo URL <span style="color:var(--inkFaint);font-weight:400;text-transform:none">(shown in the church picker)</span></label><input type="text" name="logoUrl" id="profileLogo" placeholder="https://…/logo.png"></div>
-          <p style="font-size:12px;color:var(--inkFaint);margin:-12px 0 20px">For social links and order of service, use the <a href="#" onclick="showPage('extras');return false" style="color:var(--olive)">Links &amp; Service</a> section.</p>
+          <div class="form-group">
+            <label>Church Logo <span style="color:var(--inkFaint);font-weight:400;text-transform:none">(shown in the app church picker — max 5 MB)</span></label>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div id="logoPreviewWrap" style="display:none">
+                <img id="logoPreviewImg" style="width:72px;height:72px;object-fit:contain;border-radius:8px;border:1px solid var(--border);background:var(--parchment)">
+              </div>
+              <div style="flex:1;min-width:200px">
+                <input type="file" id="profileLogoFile" accept="image/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+                <div id="logoUploadStatus" style="font-size:12px;color:var(--inkFaint);margin-top:6px"></div>
+              </div>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--inkFaint);margin:0 0 20px">For social links and order of service, use the <a href="#" onclick="showPage('extras');return false" style="color:var(--olive)">Links &amp; Service</a> section.</p>
           <button type="submit" class="btn btn-primary">Save Changes</button>
         </form>
       </div>
@@ -355,7 +402,11 @@ let editingBulletinId = null;
     document.getElementById('profileDesc').value = churchData.description ?? '';
     document.getElementById('profileEmail').value = churchData.email ?? '';
     document.getElementById('profilePhone').value = churchData.phone ?? '';
-    document.getElementById('profileLogo').value = churchData.logo_url ?? '';
+    // Show existing logo preview
+    if (churchData.logo_url) {
+      document.getElementById('logoPreviewWrap').style.display = 'block';
+      document.getElementById('logoPreviewImg').src = churchData.logo_url;
+    }
 
     await loadBulletins();
   } catch(e) { toast('Failed to load: ' + e.message, 'error'); }
@@ -368,12 +419,13 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.getElementById('nav-' + name).classList.add('active');
 
-  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',announcements:'Announcements',extras:'Links & Order of Service',payments:'Payments',profile:'Church Profile'};
+  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',announcements:'Announcements',ads:'Ads',extras:'Links & Order of Service',payments:'Payments',profile:'Church Profile'};
   document.getElementById('pageTitle').textContent = titles[name] ?? name;
   document.getElementById('topbarAction').style.display = name === 'bulletins' ? '' : 'none';
 
   if (name === 'members') loadMembers();
   if (name === 'announcements') loadAnnouncements();
+  if (name === 'ads') loadAds();
   if (name === 'extras') loadExtras();
 }
 
@@ -554,7 +606,32 @@ async function loadMembers() {
   } catch(e) { toast(e.message,'error'); }
 }
 
-// ── Profile ────────────────────────────────────────────────────────────────────
+// ── Profile & logo upload ──────────────────────────────────────────────────────
+document.getElementById('profileLogoFile').addEventListener('change', async function() {
+  const file = this.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('logoUploadStatus');
+  statusEl.textContent = 'Uploading…';
+  statusEl.style.color = 'var(--inkFaint)';
+  try {
+    const fd = new FormData();
+    fd.append('logo', file);
+    const res = await fetch('/org-admin/api/upload-logo', { method: 'POST', body: fd });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Upload failed');
+    document.getElementById('logoPreviewWrap').style.display = 'flex';
+    document.getElementById('logoPreviewImg').src = json.url;
+    if (churchData) churchData.logo_url = json.url;
+    statusEl.textContent = '✔ Logo uploaded successfully';
+    statusEl.style.color = 'var(--olive)';
+    toast('Church logo updated!');
+  } catch(err) {
+    statusEl.textContent = '✕ ' + err.message;
+    statusEl.style.color = 'var(--danger)';
+    toast(err.message, 'error');
+  }
+});
+
 async function saveProfile(ev) {
   ev.preventDefault();
   try {
@@ -562,9 +639,104 @@ async function saveProfile(ev) {
       description: document.getElementById('profileDesc').value,
       email: document.getElementById('profileEmail').value,
       phone: document.getElementById('profilePhone').value,
-      logoUrl: document.getElementById('profileLogo').value,
     });
     toast('Profile saved');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Ads ─────────────────────────────────────────────────────────────────────
+let allAds = [];
+let _uploadedAdImageUrl = null;
+
+async function loadAds() {
+  // Check if ads are enabled for this church
+  const canPost = churchData?.can_post_ads;
+  document.getElementById('adsGateMsg').style.display = canPost ? 'none' : 'block';
+  document.getElementById('adsContent').style.display = canPost ? 'block' : 'none';
+  if (!canPost) return;
+
+  // Show image preview when file selected
+  document.getElementById('adImageFile').onchange = async function() {
+    const file = this.files[0];
+    if (!file) { _uploadedAdImageUrl = null; document.getElementById('adImagePreview').style.display = 'none'; return; }
+    const preview = document.getElementById('adImagePreview');
+    const previewImg = document.getElementById('adImagePreviewImg');
+    try {
+      // Upload immediately
+      const fd = new FormData();
+      fd.append('image', file);
+      const res = await fetch('/org-admin/api/ads/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      _uploadedAdImageUrl = json.url;
+      previewImg.src = json.url;
+      preview.style.display = 'block';
+    } catch(e) { toast('Image upload failed: ' + e.message, 'error'); }
+  };
+
+  try {
+    const data = await api('/api/ads');
+    allAds = data.ads ?? [];
+    renderAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function clearAdImage() {
+  _uploadedAdImageUrl = null;
+  document.getElementById('adImageFile').value = '';
+  document.getElementById('adImagePreview').style.display = 'none';
+}
+
+function renderAds() {
+  const el = document.getElementById('adsList');
+  if (!allAds.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📣</span><p>No ads posted yet. Create one above — it will appear in all church bulletin screens.</p></div>`;
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Image</th><th>Link</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${allAds.map(ad=>`<tr>
+      <td><strong>${esc(ad.title)}</strong></td>
+      <td>${ad.image_url?`<img src="${esc(ad.image_url)}" style="width:60px;height:40px;object-fit:cover;border-radius:4px">`:'-'}</td>
+      <td>${ad.link_url?`<a href="${esc(ad.link_url)}" target="_blank" style="color:var(--olive);font-size:12px">Link ↗</a>`:'-'}</td>
+      <td>${ad.is_active?'<span class="badge badge-green">Active</span>':'<span class="badge badge-gray">Hidden</span>'}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAd('${ad.id}',${!ad.is_active})">${ad.is_active?'Hide':'Show'}</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteAd('${ad.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function postAd() {
+  const title = document.getElementById('adTitle').value.trim();
+  if (!title) { toast('Ad title is required','error'); return; }
+  try {
+    await api('/api/ads','POST',{
+      title,
+      imageUrl: _uploadedAdImageUrl || null,
+      linkUrl: document.getElementById('adLinkUrl').value.trim() || null,
+    });
+    document.getElementById('adTitle').value = '';
+    document.getElementById('adLinkUrl').value = '';
+    clearAdImage();
+    toast('Ad posted — it will appear in church bulletin screens!');
+    await loadAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleAd(id, isActive) {
+  try {
+    await api('/api/ads/'+id,'PUT',{is_active:isActive});
+    await loadAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteAd(id) {
+  if (!confirm('Delete this ad?')) return;
+  try {
+    await api('/api/ads/'+id,'DELETE');
+    toast('Ad deleted');
+    await loadAds();
   } catch(e) { toast(e.message,'error'); }
 }
 

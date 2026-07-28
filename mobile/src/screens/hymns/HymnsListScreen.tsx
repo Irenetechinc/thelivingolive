@@ -8,6 +8,7 @@ import {
   TextInput,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { searchHymns } from "../../data/hymns";
@@ -16,6 +17,7 @@ import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 type Props = NativeStackScreenProps<RootStackParamList, "HymnsList">;
 
 export default function HymnsListScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchHymns(query), [query]);
 
@@ -49,7 +51,7 @@ export default function HymnsListScreen({ navigation }: Props) {
       <FlatList
         data={results}
         keyExtractor={(h) => h.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: spacing.xxl + insets.bottom }]}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         renderItem={({ item }) => (
           <Pressable
@@ -123,7 +125,7 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 15,
   },
-  listContent: { paddingBottom: spacing.xxl },
+  listContent: { paddingBottom: 0 },
   separator: { height: 1, backgroundColor: colors.parchmentMid, marginLeft: 68 },
   row: {
     flexDirection: "row",

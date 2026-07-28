@@ -10,6 +10,7 @@ import {
   Animated,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import { generateDevotion, submitGenerationFeedback } from "../../lib/api";
@@ -124,6 +125,7 @@ function EntryCard({ entry, index }: { entry: DevotionEntry; index: number }) {
 }
 
 export default function DevotionsScreen() {
+  const insets = useSafeAreaInsets();
   const [goal, setGoal] = useState("");
   const [duration, setDuration] = useState<Duration>("daily");
   const [hour12, setHour12] = useState("6");
@@ -231,12 +233,13 @@ export default function DevotionsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: spacing.xxxl + insets.bottom }}>
       {/* Header */}
       <LinearGradient
         colors={["#5B4010", "#8A6A10", "#C9A227", "#E2C060"]}
         locations={[0, 0.35, 0.7, 1]}
-        style={styles.header}
+        style={[styles.header, { paddingTop: spacing.lg + insets.top }]}
       >
         <Text style={styles.headerEyebrow}>SPIRIT-GUIDED</Text>
         <Text style={styles.headerTitle}>Daily Devotions</Text>
@@ -380,7 +383,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
     paddingBottom: spacing.xl + 8,
   },
   headerEyebrow: { ...typography.micro, color: "rgba(255,255,255,0.55)", letterSpacing: 2, marginBottom: 4 },

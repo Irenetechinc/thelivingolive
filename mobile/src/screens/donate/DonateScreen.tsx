@@ -165,12 +165,10 @@ export default function DonateScreen({ navigation }: Props) {
             {loading ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <>
-                <Text style={styles.donateBtnText}>
-                  Give {displayAmount ? `₦${displayAmount.toLocaleString()}` : ""}
-                  {isRecurring ? " / month" : ""}
-                </Text>
-              </>
+              <Text style={styles.donateBtnText}>
+                Give {displayAmount ? `₦${displayAmount.toLocaleString()}` : ""}
+                {isRecurring ? " / month" : ""}
+              </Text>
             )}
           </LinearGradient>
         </Pressable>

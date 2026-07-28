@@ -10,6 +10,7 @@ import {
   Animated,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
@@ -98,6 +99,7 @@ function PrayerCard({ entry, index }: { entry: PrayerEntry; index: number }) {
 }
 
 export default function PrayerScreen() {
+  const insets = useSafeAreaInsets();
   const [desires, setDesires] = useState("");
   const [count, setCount] = useState("3");
   const [type, setType] = useState(prayerTypes[0].id);
@@ -203,12 +205,13 @@ export default function PrayerScreen() {
   const selectedType = prayerTypes.find((t) => t.id === type) ?? prayerTypes[0];
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: spacing.xxxl + insets.bottom }}>
       {/* Header */}
       <LinearGradient
         colors={[selectedType.gradient[0], selectedType.gradient[1], selectedType.gradient[1] + "99"] as [string, string, string]}
         locations={[0, 0.65, 1]}
-        style={styles.header}
+        style={[styles.header, { paddingTop: spacing.lg + insets.top }]}
       >
         <Text style={styles.headerEyebrow}>SPIRIT-GUIDED</Text>
         <Text style={styles.headerTitle}>Prayer Points</Text>
@@ -379,7 +382,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
     paddingBottom: spacing.lg,
   },
   headerEyebrow: { ...typography.micro, color: "rgba(255,255,255,0.55)", letterSpacing: 2, marginBottom: 4 },

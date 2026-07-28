@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Switch, LayoutChangeEvent } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { hymns } from "../../data/hymns";
@@ -30,6 +31,7 @@ function lineDurationMs(text: string) {
 }
 
 export default function HymnDetailScreen({ route }: Props) {
+  const insets = useSafeAreaInsets();
   const hymn = hymns.find((h) => h.id === route.params.hymnId);
 
   const lines = useMemo<Line[]>(() => {
@@ -257,7 +259,7 @@ export default function HymnDetailScreen({ route }: Props) {
           })()}
 
         {/* Footer attribution */}
-        <View style={styles.attribution}>
+        <View style={[styles.attribution, { paddingBottom: spacing.xxl + insets.bottom }]}>
           <View style={styles.attrDivider} />
           <Text style={styles.attrText}>{hymn.title}</Text>
           <Text style={styles.attrSub}>

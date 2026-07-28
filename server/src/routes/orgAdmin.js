@@ -549,7 +549,7 @@ function orgLoginPage(errorMsg = '') {
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Church Admin — Living Olive</title>
+<title>Church Admin — The Living Olive</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#1C2712;color:#e8ead4;font-family:Georgia,serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background-image:radial-gradient(ellipse at 50% 0%,rgba(90,110,60,0.25) 0%,transparent 70%)}
@@ -576,7 +576,7 @@ function orgLoginPage(errorMsg = '') {
   <div class="logo">
     <span class="logo-icon">🫒</span>
     <h1>Church Admin Portal</h1>
-    <p>Living Olive — Organisation Access</p>
+    <p>The Living Olive — Organisation Access</p>
   </div>
   <div class="divider"></div>
   ${errorMsg ? `<div class="error">${errorMsg}</div>` : ''}
@@ -592,7 +592,7 @@ function orgLoginPage(errorMsg = '') {
     <button type="submit">Sign In →</button>
   </form>
   <div class="back">
-    Need access? <a href="mailto:admin@livingolive.app">Contact Living Olive support</a>
+    Need access? <a href="mailto:admin@livingolive.app">Contact The Living Olive support</a>
   </div>
 </div>
 </body>

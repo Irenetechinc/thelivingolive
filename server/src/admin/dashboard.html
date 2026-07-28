@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Living Olive — Admin Command Center</title>
+<title>The Living Olive — Admin Command Center</title>
 <style>
 /* ── Reset & Base ───────────────────────────────────────────────────────── */
 *{margin:0;padding:0;box-sizing:border-box}
@@ -182,7 +182,7 @@ td.uid{color:rgba(184,207,232,0.25);font-size:8px}
     <div class="logo-wrap">
       <span class="logo-icon">🫒</span>
       <div>
-        <span class="logo-title">Living Olive</span>
+        <span class="logo-title">The Living Olive</span>
         <span class="logo-sub">Admin Command Center v2</span>
       </div>
     </div>
@@ -912,12 +912,24 @@ async function loadChurches(){
     if(!el)return;
     if(!d.churches?.length){el.textContent='No churches onboarded yet.';return;}
     el.innerHTML=d.churches.map(c=>`
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-        <div>
-          <div style="color:#e8ead4;font-size:11px;font-weight:600">${c.name}</div>
-          <div style="color:#666;font-size:10px">@${c.admin_username} ${c.active?'':'· <span style="color:#c06060">inactive</span>'}</div>
+      <div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <div>
+            <div style="color:#e8ead4;font-size:11px;font-weight:600">${c.name}</div>
+            <div style="color:#666;font-size:10px">@${c.admin_username} ${c.active?'':'· <span style="color:#c06060">inactive</span>'}</div>
+          </div>
+          <button onclick="toggleChurch('${c.id}',${!c.active},'${c.name.replace(/'/g,"\\'")}',this)" style="font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:${c.active?'#c06060':'#8fc88f'}">${c.active?'Deactivate':'Activate'}</button>
         </div>
-        <button onclick="toggleChurch('${c.id}',${!c.active},'${c.name.replace(/'/g,"\\'")}',this)" style="font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:${c.active?'#c06060':'#8fc88f'}">${c.active?'Deactivate':'Activate'}</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:#94a3b8;cursor:pointer;user-select:none">
+            <input type="checkbox" ${c.can_post_ads?'checked':''} onchange="patchChurch('${c.id}',{can_post_ads:this.checked})" style="accent-color:#c9a227">
+            <span>Can post ads</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:#94a3b8;cursor:pointer;user-select:none">
+            <input type="checkbox" ${c.ads_excluded?'checked':''} onchange="patchChurch('${c.id}',{ads_excluded:this.checked})" style="accent-color:#ff6b6b">
+            <span>Exclude from ads</span>
+          </label>
+        </div>
       </div>`).join('');
   }catch(e){console.warn('churches load failed',e);}
 }
@@ -926,6 +938,14 @@ async function toggleChurch(id,active,name,btn){
   try{
     await fetch('/admin/api/churches/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});
     await loadChurches();
+  }catch(e){alert('Error: '+e.message);}
+}
+
+async function patchChurch(id,fields){
+  try{
+    const res=await fetch('/admin/api/churches/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(fields)});
+    const json=await res.json();
+    if(!json.ok) throw new Error(json.error||'Update failed');
   }catch(e){alert('Error: '+e.message);}
 }
 

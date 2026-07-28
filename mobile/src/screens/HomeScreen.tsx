@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { useAuth } from "../context/AuthContext";
@@ -80,6 +81,7 @@ function useStaggeredAnim(count: number, delay = 80) {
 
 export default function HomeScreen({ navigation }: Props) {
   const { signOut } = useAuth();
+  const insets = useSafeAreaInsets();
   const headerAnim = useRef(new Animated.Value(0)).current;
   const cardAnims = useStaggeredAnim(cards.length, 70);
 
@@ -120,7 +122,7 @@ export default function HomeScreen({ navigation }: Props) {
         <LinearGradient
           colors={["#1C2712", "#2E3A1F", "#3E4A2F", "#4A5A36"]}
           locations={[0, 0.3, 0.65, 1]}
-          style={styles.header}
+          style={[styles.header, { paddingTop: 60 + insets.top }]}
         >
           {/* Decorative arcs */}
           <View style={styles.arcWrap} pointerEvents="none">
@@ -211,12 +213,12 @@ export default function HomeScreen({ navigation }: Props) {
           style={({ pressed }) => [styles.donateBtn, pressed && { opacity: 0.8 }]}
           onPress={() => navigation.navigate("Donate")}
         >
-          <Text style={styles.donateBtnText}>🫒 Give a gift</Text>
+          <Text style={styles.donateBtnText}>Give a gift</Text>
         </Pressable>
       </View>
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: spacing.lg + insets.bottom }]}>
         <View style={styles.footerLine} />
         <Text style={styles.footerText}>POWERED BY SYNTAX</Text>
       </View>
@@ -226,9 +228,8 @@ export default function HomeScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
-  content: { paddingBottom: spacing.xxl + 32 },
+  content: {},
   header: {
-    paddingTop: 60,
     paddingBottom: 28,
     paddingHorizontal: spacing.lg,
     overflow: "hidden",
