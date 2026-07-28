@@ -324,22 +324,49 @@ router.get('/api/announcements', requireOrgAdmin, async (req, res) => {
 router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { churchId, churchName } = req.session.orgAdmin;
-  const { text, type } = req.body;
-  if (!text?.trim()) return res.status(400).json({ ok: false, error: 'text is required' });
+  const { text, type, bannerUrl } = req.body;
+  // Allow banner-only announcements (no text required when banner is provided)
+  if (!text?.trim() && !bannerUrl?.trim()) {
+    return res.status(400).json({ ok: false, error: 'text or bannerUrl is required' });
+  }
   try {
     const { data, error } = await supabase
       .from('church_announcements')
-      .insert({ church_id: churchId, text: text.trim(), type: type ?? 'general', is_active: true })
+      .insert({
+        church_id: churchId,
+        text: text?.trim() ?? '',
+        type: type ?? 'general',
+        banner_url: bannerUrl?.trim() ?? null,
+        is_active: true,
+      })
       .select('id').single();
     if (error) throw error;
     log.info(`Announcement created for church ${churchId}`);
     // Fire-and-forget push to all church members
     notifyChurchMembers(supabase, churchId, {
       title: `📢 New Announcement — ${churchName}`,
-      body: text.trim().slice(0, 100),
+      body: (text?.trim() ?? 'New announcement').slice(0, 100),
       data: { type: 'announcement', churchId },
     }).catch((e) => log.warn('Push for announcement failed:', e.message));
     res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Upload announcement banner image
+const announcementBannerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+router.post('/api/announcements/upload-banner', requireOrgAdmin, announcementBannerUpload.single('banner'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `announcements/${churchId}/banner_${Date.now()}.${ext}`;
+  try {
+    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+    const { error } = await supabase.storage.from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

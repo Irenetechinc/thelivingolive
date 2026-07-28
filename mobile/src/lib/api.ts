@@ -408,6 +408,62 @@ export async function fetchChurchAds(churchId: string): Promise<ChurchAd[]> {
   }
 }
 
+// ─── Bulletin social: likes & comments ────────────────────────────────────────
+
+export type BulletinSocial = {
+  likes: number;
+  comments: number;
+  liked: boolean;
+};
+
+export type BulletinComment = {
+  id: string;
+  userId: string;
+  handle: string;
+  body: string;
+  likeCount: number;
+  liked: boolean;
+  createdAt: string;
+  replies: BulletinComment[];
+};
+
+export async function fetchBulletinSocial(bulletinId: string): Promise<BulletinSocial> {
+  try {
+    return await authedGet(`/api/bulletins/${bulletinId}/social`);
+  } catch {
+    return { likes: 0, comments: 0, liked: false };
+  }
+}
+
+export async function toggleBulletinLike(bulletinId: string): Promise<{ liked: boolean; likes: number }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/like`, {});
+}
+
+export async function fetchBulletinComments(bulletinId: string): Promise<BulletinComment[]> {
+  try {
+    const res = await authedGet(`/api/bulletins/${bulletinId}/comments`);
+    return res.comments ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function postBulletinComment(
+  bulletinId: string,
+  body: string,
+  parentId?: string
+): Promise<BulletinComment> {
+  const res = await authedFetch(`/api/bulletins/${bulletinId}/comments`, { body, parentId });
+  return res.comment;
+}
+
+export async function toggleCommentLike(
+  bulletinId: string,
+  commentId: string
+): Promise<{ liked: boolean; likeCount: number }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/comments/${commentId}/like`, {});
+}
+
 // ─── Donations ────────────────────────────────────────────────────────────────
 
 export async function initiateDonation(input: { amount: number; isRecurring: boolean }): Promise<{ paymentLink: string; txRef: string }> {

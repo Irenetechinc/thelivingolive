@@ -311,6 +311,86 @@ create policy "owner_insert" on public.generation_feedback for insert with check
 drop policy if exists "owner_read" on public.generation_feedback;
 create policy "owner_read" on public.generation_feedback for select using (auth.uid() = user_id);
 
+-- ──────────────────────────────────────────────────────────────
+-- Church announcements (with optional banner image)
+-- ──────────────────────────────────────────────────────────────
+create table if not exists public.church_announcements (
+  id uuid primary key default gen_random_uuid(),
+  church_id uuid not null references public.churches(id) on delete cascade,
+  text text not null default '',
+  type text not null default 'general' check (type in ('general','urgent','event','reminder')),
+  banner_url text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+alter table public.church_announcements add column if not exists banner_url text;
+create index if not exists church_announcements_church_idx on public.church_announcements(church_id, is_active);
+alter table public.church_announcements enable row level security;
+drop policy if exists "authenticated_read" on public.church_announcements;
+create policy "authenticated_read" on public.church_announcements for select using (auth.role() = 'authenticated');
+
+-- Church ads
+create table if not exists public.church_ads (
+  id uuid primary key default gen_random_uuid(),
+  church_id uuid not null references public.churches(id) on delete cascade,
+  title text not null,
+  image_url text,
+  link_url text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists church_ads_active_idx on public.church_ads(is_active, created_at desc);
+alter table public.church_ads enable row level security;
+drop policy if exists "authenticated_read" on public.church_ads;
+create policy "authenticated_read" on public.church_ads for select using (auth.role() = 'authenticated');
+
+-- ──────────────────────────────────────────────────────────────
+-- Bulletin social features: likes, comments, comment likes
+-- ──────────────────────────────────────────────────────────────
+create table if not exists public.bulletin_likes (
+  bulletin_id uuid not null references public.bulletins(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (bulletin_id, user_id)
+);
+create index if not exists bulletin_likes_bulletin_idx on public.bulletin_likes(bulletin_id);
+alter table public.bulletin_likes enable row level security;
+drop policy if exists "owner_all" on public.bulletin_likes;
+create policy "owner_all" on public.bulletin_likes for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "authenticated_read_likes" on public.bulletin_likes;
+create policy "authenticated_read_likes" on public.bulletin_likes for select using (auth.role() = 'authenticated');
+
+create table if not exists public.bulletin_comments (
+  id uuid primary key default gen_random_uuid(),
+  bulletin_id uuid not null references public.bulletins(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  parent_id uuid references public.bulletin_comments(id) on delete cascade,
+  body text not null,
+  like_count int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists bulletin_comments_bulletin_idx on public.bulletin_comments(bulletin_id, parent_id, created_at desc);
+alter table public.bulletin_comments enable row level security;
+drop policy if exists "authenticated_read" on public.bulletin_comments;
+create policy "authenticated_read" on public.bulletin_comments for select using (auth.role() = 'authenticated');
+drop policy if exists "owner_insert" on public.bulletin_comments;
+create policy "owner_insert" on public.bulletin_comments for insert with check (auth.uid() = user_id);
+drop policy if exists "owner_delete" on public.bulletin_comments;
+create policy "owner_delete" on public.bulletin_comments for delete using (auth.uid() = user_id);
+
+create table if not exists public.bulletin_comment_likes (
+  comment_id uuid not null references public.bulletin_comments(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (comment_id, user_id)
+);
+alter table public.bulletin_comment_likes enable row level security;
+drop policy if exists "owner_all" on public.bulletin_comment_likes;
+create policy "owner_all" on public.bulletin_comment_likes for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "authenticated_read_clikes" on public.bulletin_comment_likes;
+create policy "authenticated_read_clikes" on public.bulletin_comment_likes for select using (auth.role() = 'authenticated');
+
 -- Row Level Security: user-scoped tables
 alter table public.highlights enable row level security;
 alter table public.notes enable row level security;

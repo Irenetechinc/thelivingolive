@@ -238,6 +238,180 @@ router.get('/:churchId/ads', async (req, res) => {
   }
 });
 
+// ── Social: likes, comments ────────────────────────────────────────────────────
+
+// GET social summary for a bulletin (like count, user's like, comment count)
+router.get('/:bulletinId/social', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { bulletinId } = req.params;
+
+  try {
+    const [likesRes, commentRes, userLikeRes] = await Promise.allSettled([
+      supabase.from('bulletin_likes').select('*', { count: 'exact', head: true }).eq('bulletin_id', bulletinId),
+      supabase.from('bulletin_comments').select('*', { count: 'exact', head: true }).eq('bulletin_id', bulletinId).is('parent_id', null),
+      supabase.from('bulletin_likes').select('bulletin_id').eq('bulletin_id', bulletinId).eq('user_id', req.user.id).maybeSingle(),
+    ]);
+
+    res.json({
+      likes: likesRes.value?.count ?? 0,
+      comments: commentRes.value?.count ?? 0,
+      liked: !!(userLikeRes.value?.data),
+    });
+  } catch (e) {
+    res.json({ likes: 0, comments: 0, liked: false });
+  }
+});
+
+// POST toggle like on a bulletin
+router.post('/:bulletinId/like', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { bulletinId } = req.params;
+
+  // Verify bulletin exists and is published
+  const { data: bulletin } = await supabase.from('bulletins').select('id').eq('id', bulletinId).eq('is_published', true).maybeSingle();
+  if (!bulletin) return res.status(404).json({ error: 'Bulletin not found' });
+
+  const { data: existing } = await supabase.from('bulletin_likes')
+    .select('bulletin_id').eq('bulletin_id', bulletinId).eq('user_id', req.user.id).maybeSingle();
+
+  if (existing) {
+    await supabase.from('bulletin_likes').delete().eq('bulletin_id', bulletinId).eq('user_id', req.user.id);
+  } else {
+    await supabase.from('bulletin_likes').insert({ bulletin_id: bulletinId, user_id: req.user.id });
+  }
+
+  const { count } = await supabase.from('bulletin_likes').select('*', { count: 'exact', head: true }).eq('bulletin_id', bulletinId);
+  res.json({ ok: true, liked: !existing, likes: count ?? 0 });
+});
+
+// GET comments for a bulletin (top-level + replies nested)
+router.get('/:bulletinId/comments', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { bulletinId } = req.params;
+
+  try {
+    // Top-level comments
+    const { data: topComments, error } = await supabase
+      .from('bulletin_comments')
+      .select('id, user_id, body, like_count, created_at')
+      .eq('bulletin_id', bulletinId)
+      .is('parent_id', null)
+      .order('created_at', { ascending: true })
+      .limit(100);
+
+    if (error) return res.json({ comments: [] });
+
+    const commentIds = (topComments ?? []).map(c => c.id);
+
+    // Replies and comment likes for current user (in parallel)
+    const [repliesRes, userLikesRes, userEmailsRes] = await Promise.allSettled([
+      commentIds.length
+        ? supabase.from('bulletin_comments').select('id, parent_id, user_id, body, like_count, created_at')
+            .eq('bulletin_id', bulletinId).in('parent_id', commentIds).order('created_at', { ascending: true })
+        : Promise.resolve({ data: [] }),
+      supabase.from('bulletin_comment_likes').select('comment_id').eq('user_id', req.user.id),
+      // Get display names from auth.users via a workaround — just use truncated user_id as handle
+      Promise.resolve({ data: [] }),
+    ]);
+
+    const replies = repliesRes.value?.data ?? [];
+    const userLikedCommentIds = new Set((userLikesRes.value?.data ?? []).map(r => r.comment_id));
+
+    function formatComment(c) {
+      return {
+        id: c.id,
+        userId: c.user_id,
+        handle: `@user_${c.user_id.slice(0, 6)}`,
+        body: c.body,
+        likeCount: c.like_count ?? 0,
+        liked: userLikedCommentIds.has(c.id),
+        createdAt: c.created_at,
+        replies: [],
+      };
+    }
+
+    const commentMap = {};
+    const result = [];
+    for (const c of (topComments ?? [])) {
+      const formatted = formatComment(c);
+      commentMap[c.id] = formatted;
+      result.push(formatted);
+    }
+    for (const r of replies) {
+      const parent = commentMap[r.parent_id];
+      if (parent) parent.replies.push(formatComment(r));
+    }
+
+    res.json({ comments: result });
+  } catch (e) {
+    log.warn('comments fetch error:', e.message);
+    res.json({ comments: [] });
+  }
+});
+
+// POST add a comment (or reply)
+router.post('/:bulletinId/comments', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { bulletinId } = req.params;
+  const { body, parentId } = req.body;
+
+  if (!body?.trim()) return res.status(400).json({ error: 'Comment body is required' });
+  if (body.trim().length > 1000) return res.status(400).json({ error: 'Comment is too long (max 1000 chars)' });
+
+  const { data: bulletin } = await supabase.from('bulletins').select('id').eq('id', bulletinId).eq('is_published', true).maybeSingle();
+  if (!bulletin) return res.status(404).json({ error: 'Bulletin not found' });
+
+  // Validate parent comment belongs to this bulletin
+  if (parentId) {
+    const { data: parent } = await supabase.from('bulletin_comments').select('id').eq('id', parentId).eq('bulletin_id', bulletinId).maybeSingle();
+    if (!parent) return res.status(400).json({ error: 'Parent comment not found' });
+  }
+
+  const { data, error } = await supabase.from('bulletin_comments').insert({
+    bulletin_id: bulletinId,
+    user_id: req.user.id,
+    parent_id: parentId ?? null,
+    body: body.trim(),
+  }).select('id, user_id, body, like_count, created_at').single();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({
+    ok: true,
+    comment: {
+      id: data.id,
+      userId: data.user_id,
+      handle: `@user_${data.user_id.slice(0, 6)}`,
+      body: data.body,
+      likeCount: 0,
+      liked: false,
+      createdAt: data.created_at,
+      replies: [],
+    },
+  });
+});
+
+// POST toggle like on a comment
+router.post('/:bulletinId/comments/:commentId/like', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { commentId } = req.params;
+
+  const { data: existing } = await supabase.from('bulletin_comment_likes')
+    .select('comment_id').eq('comment_id', commentId).eq('user_id', req.user.id).maybeSingle();
+
+  if (existing) {
+    await supabase.from('bulletin_comment_likes').delete().eq('comment_id', commentId).eq('user_id', req.user.id);
+    const { count } = await supabase.from('bulletin_comment_likes').select('*', { count: 'exact', head: true }).eq('comment_id', commentId);
+    await supabase.from('bulletin_comments').update({ like_count: count ?? 0 }).eq('id', commentId);
+    return res.json({ ok: true, liked: false, likeCount: count ?? 0 });
+  } else {
+    await supabase.from('bulletin_comment_likes').insert({ comment_id: commentId, user_id: req.user.id });
+    const { count } = await supabase.from('bulletin_comment_likes').select('*', { count: 'exact', head: true }).eq('comment_id', commentId);
+    await supabase.from('bulletin_comments').update({ like_count: count ?? 0 }).eq('id', commentId);
+    return res.json({ ok: true, liked: true, likeCount: count ?? 0 });
+  }
+});
+
 // Single bulletin with full content (access-checked for paid ones)
 router.get('/:churchId/:bulletinId', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
