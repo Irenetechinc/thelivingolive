@@ -6,7 +6,7 @@
  * time this screen appears the entry already exists in Supabase.  The user
  * sees the content immediately — they do not need to tap "Generate" anything.
  *
- * Tap "Open in Living Olive" (or the swipe-up button) to dismiss and land
+ * Tap "Open in The Living Olive" (or the swipe-up button) to dismiss and land
  * on the Prayer or Devotions screen where the full history is visible.
  */
 

@@ -103,6 +103,7 @@ class AdminBus extends EventEmitter {
       quality_benchmark:     { label: 'Quality Benchmark', enabled: true,  group: 'Self-Learning Engine' },
       markov_model:          { label: 'Markov Language Model', enabled: true,  group: 'Self-Learning Engine' },
       bible_index:           { label: 'Full-Bible TF-IDF Index', enabled: true,  group: 'Self-Learning Engine' },
+      bulletin_ads:          { label: 'Bulletin Ads', enabled: true,  group: 'Features' },
     };
   }
 

@@ -9,8 +9,12 @@ import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import multer from 'multer';
 import { logger } from '../lib/logger.js';
 import { adminBus } from '../lib/adminBus.js';
+
+const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const log = logger('org-admin');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,7 +113,7 @@ router.get('/api/me', requireOrgAdmin, async (req, res) => {
   if (supabase) {
     const { data } = await supabase
       .from('churches')
-      .select('id, name, slug, email, phone, description, logo_url, bank_name, account_number, account_name')
+      .select('id, name, slug, email, phone, description, logo_url, bank_name, account_number, account_name, can_post_ads')
       .eq('id', churchId)
       .maybeSingle();
     if (data) church = data;
@@ -319,7 +323,7 @@ router.get('/api/announcements', requireOrgAdmin, async (req, res) => {
 
 router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { churchId } = req.session.orgAdmin;
+  const { churchId, churchName } = req.session.orgAdmin;
   const { text, type } = req.body;
   if (!text?.trim()) return res.status(400).json({ ok: false, error: 'text is required' });
   try {
@@ -329,6 +333,12 @@ router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
       .select('id').single();
     if (error) throw error;
     log.info(`Announcement created for church ${churchId}`);
+    // Fire-and-forget push to all church members
+    notifyChurchMembers(supabase, churchId, {
+      title: `📢 New Announcement — ${churchName}`,
+      body: text.trim().slice(0, 100),
+      data: { type: 'announcement', churchId },
+    }).catch((e) => log.warn('Push for announcement failed:', e.message));
     res.json({ ok: true, id: data.id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -355,6 +365,114 @@ router.delete('/api/announcements/:id', requireOrgAdmin, async (req, res) => {
       .from('church_announcements')
       .delete()
       .eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Logo file upload ──────────────────────────────────────────────────────────
+router.post('/api/upload-logo', requireOrgAdmin, logoUpload.single('logo'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `logos/${churchId}/logo_${Date.now()}.${ext}`;
+
+  try {
+    // Ensure bucket exists (no-op if already present)
+    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+
+    const { error: uploadError } = await supabase.storage
+      .from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (uploadError) throw uploadError;
+
+    const { data: urlData } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    const publicUrl = urlData.publicUrl;
+
+    // Persist immediately to the churches row
+    await supabase.from('churches').update({ logo_url: publicUrl, updated_at: new Date().toISOString() }).eq('id', churchId);
+    log.info(`Logo uploaded for church ${churchId}: ${publicUrl}`);
+    res.json({ ok: true, url: publicUrl });
+  } catch (e) {
+    log.error('Logo upload error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Ads CRUD ───────────────────────────────────────────────────────────────────
+router.get('/api/ads', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data, error } = await supabase
+      .from('church_ads')
+      .select('id, title, image_url, link_url, is_active, created_at')
+      .eq('church_id', churchId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ ok: true, ads: data ?? [] });
+  } catch (e) {
+    res.json({ ok: true, ads: [], warning: e.message });
+  }
+});
+
+router.post('/api/ads', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+
+  // Gate: super-admin must grant can_post_ads before org-admin can post
+  const { data: church } = await supabase.from('churches').select('can_post_ads').eq('id', churchId).maybeSingle();
+  if (!church?.can_post_ads) {
+    return res.status(403).json({ ok: false, error: 'Ads posting is not enabled for your church. Contact The Living Olive support to enable this feature.' });
+  }
+
+  const { title, imageUrl, linkUrl } = req.body;
+  if (!title?.trim()) return res.status(400).json({ ok: false, error: 'title is required' });
+  try {
+    const { data, error } = await supabase
+      .from('church_ads')
+      .insert({ church_id: churchId, title: title.trim(), image_url: imageUrl || null, link_url: linkUrl || null, is_active: true })
+      .select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/api/ads/upload-image', requireOrgAdmin, adImageUpload.single('image'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `ads/${churchId}/ad_${Date.now()}.${ext}`;
+  try {
+    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+    const { error } = await supabase.storage.from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.put('/api/ads/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { is_active } = req.body;
+  try {
+    const { error } = await supabase.from('church_ads').update({ is_active: !!is_active }).eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/api/ads/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { error } = await supabase.from('church_ads').delete().eq('id', req.params.id).eq('church_id', churchId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

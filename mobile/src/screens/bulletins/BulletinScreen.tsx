@@ -5,14 +5,15 @@ import {
   Image, Animated,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import {
   fetchChurches, fetchMyChurch, setMyChurch, clearMyChurch,
   fetchTodayBulletin, fetchBulletinArchive, fetchBulletin,
-  fetchChurchExtras,
+  fetchChurchExtras, fetchChurchAds,
   initiateBulletinPayment, verifyBulletinPayment,
-  type Church, type Bulletin, type ChurchExtras,
+  type Church, type Bulletin, type ChurchExtras, type ChurchAd,
 } from "../../lib/api";
 import { colors, spacing, radii, typography, shadows } from "../../theme/theme";
 
@@ -46,18 +47,14 @@ function SkeletonBox({ width, height, style, borderRadius: br }: {
   );
 }
 
-// ── Skeleton for bulletin card ────────────────────────────────────────────────
 function BulletinSkeleton() {
   return (
     <View style={{ padding: spacing.lg }}>
-      {/* today card skeleton */}
       <SkeletonBox height={10} width={80} style={{ marginBottom: 12 }} />
       <SkeletonBox height={140} borderRadius={radii.xl} style={{ marginBottom: spacing.xl }} />
-      {/* announcements skeleton */}
       <SkeletonBox height={10} width={100} style={{ marginBottom: 12 }} />
       <SkeletonBox height={70} borderRadius={radii.lg} style={{ marginBottom: 8 }} />
       <SkeletonBox height={70} borderRadius={radii.lg} style={{ marginBottom: spacing.xl }} />
-      {/* archive skeleton */}
       <SkeletonBox height={10} width={120} style={{ marginBottom: 12 }} />
       <SkeletonBox height={56} borderRadius={radii.lg} style={{ marginBottom: 8 }} />
       <SkeletonBox height={56} borderRadius={radii.lg} style={{ marginBottom: 8 }} />
@@ -66,15 +63,15 @@ function BulletinSkeleton() {
   );
 }
 
-// ── Announcement type badge ───────────────────────────────────────────────────
-const ANNOUNCEMENT_COLORS: Record<string, { bg: string; text: string }> = {
-  general:   { bg: "#EFF4E9", text: "#3E4A2F" },
-  urgent:    { bg: "#FDECEA", text: "#8B1C1C" },
-  event:     { bg: "#FEF6D6", text: "#7A5F0D" },
-  reminder:  { bg: "#E8F4F8", text: "#1C4A5C" },
+const ANNOUNCEMENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  general:   { bg: "#EFF4E9", text: "#3E4A2F", border: "#8A9A6B" },
+  urgent:    { bg: "#FDECEA", text: "#8B1C1C", border: "#C1693A" },
+  event:     { bg: "#FEF6D6", text: "#7A5F0D", border: "#C9A227" },
+  reminder:  { bg: "#E8F4F8", text: "#1C4A5C", border: "#5B8FA8" },
 };
 
 export default function BulletinScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<"loading" | "picker" | "askConfirm" | "bulletin">("loading");
   const [churches, setChurches] = useState<Church[]>([]);
   const [selectedChurch, setSelectedChurch] = useState<Church | null>(null);
@@ -82,6 +79,7 @@ export default function BulletinScreen({ navigation }: Props) {
   const [todayBulletin, setTodayBulletin] = useState<Bulletin | null>(null);
   const [archive, setArchive] = useState<Bulletin[]>([]);
   const [extras, setExtras] = useState<ChurchExtras>({ announcements: [], orderOfService: [], social: {} });
+  const [ads, setAds] = useState<ChurchAd[]>([]);
   const [viewingBulletin, setViewingBulletin] = useState<Bulletin | null>(null);
   const [showArchive, setShowArchive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -107,11 +105,10 @@ export default function BulletinScreen({ navigation }: Props) {
         setPhase("picker");
       }
     } catch {
-      // Silent fallback — show picker so user can try again
       try {
         const list = await fetchChurches();
         setChurches(list);
-      } catch { /* no internet, show empty picker */ }
+      } catch { /* no internet */ }
       setPhase("picker");
     } finally {
       setLoading(false);
@@ -125,12 +122,13 @@ export default function BulletinScreen({ navigation }: Props) {
     ]);
     if (todayRes.status === "fulfilled") setTodayBulletin(todayRes.value.bulletin);
     if (archiveRes.status === "fulfilled") setArchive(archiveRes.value.bulletins);
-    // Extras load in background — don't block the main bulletin display
+
+    // Extras and ads load in background — don't block main bulletin display
     setExtrasLoading(true);
-    fetchChurchExtras(churchId)
-      .then(setExtras)
-      .catch(() => { /* silent — extras are supplementary */ })
-      .finally(() => setExtrasLoading(false));
+    Promise.allSettled([
+      fetchChurchExtras(churchId).then(setExtras),
+      fetchChurchAds(churchId).then(setAds),
+    ]).finally(() => setExtrasLoading(false));
   }
 
   async function onSelectChurch(church: Church) {
@@ -160,6 +158,7 @@ export default function BulletinScreen({ navigation }: Props) {
     setMyChurchState(null);
     setSelectedChurch(null);
     setExtras({ announcements: [], orderOfService: [], social: {} });
+    setAds([]);
     setPhase("loading");
     setLoading(true);
     try {
@@ -184,7 +183,7 @@ export default function BulletinScreen({ navigation }: Props) {
       const res = await fetchBulletin(selectedChurch.id, bulletin.id);
       setViewingBulletin(res.bulletin);
     } catch {
-      // Silent — user sees nothing broken, they can tap again
+      // Silent
     } finally {
       setLoading(false);
     }
@@ -230,7 +229,7 @@ export default function BulletinScreen({ navigation }: Props) {
   if (phase === "loading" || loading) {
     return (
       <View style={styles.container}>
-        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={styles.bulletinHeader}>
+        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={[styles.bulletinHeader, { paddingTop: 60 + insets.top }]}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹ Back</Text>
           </Pressable>
@@ -246,7 +245,7 @@ export default function BulletinScreen({ navigation }: Props) {
   if (phase === "picker") {
     return (
       <View style={styles.container}>
-        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={styles.pickerHeader}>
+        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={[styles.pickerHeader, { paddingTop: 60 + insets.top }]}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹ Back</Text>
           </Pressable>
@@ -264,7 +263,7 @@ export default function BulletinScreen({ navigation }: Props) {
           <FlatList
             data={churches}
             keyExtractor={(c) => c.id}
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.lg + insets.bottom }}
             renderItem={({ item }) => (
               <Pressable
                 style={({ pressed }) => [styles.churchCard, pressed && styles.pressed]}
@@ -296,10 +295,10 @@ export default function BulletinScreen({ navigation }: Props) {
   if (phase === "askConfirm") {
     return (
       <View style={styles.container}>
-        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={styles.pickerHeader}>
+        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={[styles.pickerHeader, { paddingTop: 60 + insets.top }]}>
           <Text style={styles.pickerTitle}>Is this your church?</Text>
         </LinearGradient>
-        <View style={styles.confirmCard}>
+        <View style={[styles.confirmCard, { paddingBottom: spacing.xl + insets.bottom }]}>
           {selectedChurch?.logo_url ? (
             <Image source={{ uri: selectedChurch.logo_url }} style={styles.confirmLogo} resizeMode="contain" />
           ) : (
@@ -322,10 +321,10 @@ export default function BulletinScreen({ navigation }: Props) {
   }
 
   // ── Bulletin view ────────────────────────────────────────────────────────────
-  const hasSocialLinks = extras.social &&
-    Object.values(extras.social).some((v) => !!v);
+  const hasSocialLinks = extras.social && Object.values(extras.social).some((v) => !!v);
   const hasOrderOfService = extras.orderOfService && extras.orderOfService.length > 0;
   const hasAnnouncements = extras.announcements && extras.announcements.length > 0;
+  const hasAds = ads.length > 0;
 
   return (
     <View style={styles.container}>
@@ -345,7 +344,7 @@ export default function BulletinScreen({ navigation }: Props) {
                   : ""}
               </Text>
             </LinearGradient>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.bulletinContent}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.bulletinContent, { paddingBottom: spacing.xl + insets.bottom }]}>
               {viewingBulletin.requiresPayment ? (
                 <View style={styles.paywallBox}>
                   <Text style={styles.paywallIcon}>🔒</Text>
@@ -379,7 +378,7 @@ export default function BulletinScreen({ navigation }: Props) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />}
       >
         {/* ── Header ── */}
-        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={styles.bulletinHeader}>
+        <LinearGradient colors={["#1C2712", "#3E4A2F"]} style={[styles.bulletinHeader, { paddingTop: 60 + insets.top }]}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹ Back</Text>
           </Pressable>
@@ -412,13 +411,11 @@ export default function BulletinScreen({ navigation }: Props) {
               {extras.announcements.map((ann) => {
                 const palette = ANNOUNCEMENT_COLORS[ann.type] ?? ANNOUNCEMENT_COLORS.general;
                 return (
-                  <View key={ann.id} style={[styles.announcementCard, { backgroundColor: palette.bg }]}>
-                    <View style={styles.announcementLeft}>
-                      <Text style={[styles.announcementType, { color: palette.text }]}>
-                        {ann.type?.toUpperCase() ?? "NOTICE"}
-                      </Text>
-                      <Text style={styles.announcementText}>{ann.text}</Text>
-                    </View>
+                  <View key={ann.id} style={[styles.announcementCard, { backgroundColor: palette.bg, borderLeftColor: palette.border }]}>
+                    <Text style={[styles.announcementType, { color: palette.text }]}>
+                      {ann.type?.toUpperCase() ?? "NOTICE"}
+                    </Text>
+                    <Text style={styles.announcementText}>{ann.text}</Text>
                   </View>
                 );
               })}
@@ -477,9 +474,6 @@ export default function BulletinScreen({ navigation }: Props) {
                       <Text style={styles.oosItem}>{item.item}</Text>
                       {item.notes ? <Text style={styles.oosNotes}>{item.notes}</Text> : null}
                     </View>
-                    {i === 0 ? null : (
-                      <View style={styles.oosDot} />
-                    )}
                   </View>
                 ))}
               </View>
@@ -517,12 +511,42 @@ export default function BulletinScreen({ navigation }: Props) {
             ))
           )}
           {showArchive && (
-            <Pressable
-              onPress={() => setShowArchive(false)}
-              style={{ alignItems: "center", paddingVertical: spacing.md }}
-            >
+            <Pressable onPress={() => setShowArchive(false)} style={{ alignItems: "center", paddingVertical: spacing.md }}>
               <Text style={{ color: colors.inkFaint, fontSize: 13 }}>Show less</Text>
             </Pressable>
+          )}
+
+          {/* ── Ads ── */}
+          {hasAds && (
+            <>
+              <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>FEATURED</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginHorizontal: -spacing.lg }}
+                contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.md }}
+              >
+                {ads.map((ad) => (
+                  <Pressable
+                    key={ad.id}
+                    style={({ pressed }) => [styles.adCard, pressed && { opacity: 0.85 }]}
+                    onPress={() => ad.link_url && Linking.openURL(ad.link_url)}
+                  >
+                    {ad.image_url ? (
+                      <Image source={{ uri: ad.image_url }} style={styles.adImage} resizeMode="cover" />
+                    ) : (
+                      <LinearGradient colors={["#3E4A2F", "#5B6B45"]} style={styles.adImagePlaceholder}>
+                        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 28 }}>🫒</Text>
+                      </LinearGradient>
+                    )}
+                    <View style={styles.adBody}>
+                      <Text style={styles.adTitle} numberOfLines={2}>{ad.title}</Text>
+                      {ad.link_url ? <Text style={styles.adCta}>Learn more →</Text> : null}
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </>
           )}
 
           {/* ── Social links ── */}
@@ -532,31 +556,26 @@ export default function BulletinScreen({ navigation }: Props) {
               <View style={styles.socialRow}>
                 {extras.social.website && (
                   <Pressable style={styles.socialBtn} onPress={() => Linking.openURL(extras.social.website!)}>
-                    <Text style={styles.socialBtnIcon}>🌐</Text>
                     <Text style={styles.socialBtnLabel}>Website</Text>
                   </Pressable>
                 )}
                 {extras.social.facebook && (
                   <Pressable style={styles.socialBtn} onPress={() => Linking.openURL(extras.social.facebook!)}>
-                    <Text style={styles.socialBtnIcon}>📘</Text>
                     <Text style={styles.socialBtnLabel}>Facebook</Text>
                   </Pressable>
                 )}
                 {extras.social.instagram && (
                   <Pressable style={styles.socialBtn} onPress={() => Linking.openURL(extras.social.instagram!)}>
-                    <Text style={styles.socialBtnIcon}>📸</Text>
                     <Text style={styles.socialBtnLabel}>Instagram</Text>
                   </Pressable>
                 )}
                 {extras.social.twitter && (
                   <Pressable style={styles.socialBtn} onPress={() => Linking.openURL(extras.social.twitter!)}>
-                    <Text style={styles.socialBtnIcon}>🐦</Text>
                     <Text style={styles.socialBtnLabel}>Twitter / X</Text>
                   </Pressable>
                 )}
                 {extras.social.youtube && (
                   <Pressable style={styles.socialBtn} onPress={() => Linking.openURL(extras.social.youtube!)}>
-                    <Text style={styles.socialBtnIcon}>▶️</Text>
                     <Text style={styles.socialBtnLabel}>YouTube</Text>
                   </Pressable>
                 )}
@@ -564,7 +583,7 @@ export default function BulletinScreen({ navigation }: Props) {
             </>
           )}
 
-          {/* ── Quick access ── */}
+          {/* ── Explore quick-links ── */}
           <Text style={[styles.sectionLabel, { marginTop: spacing.xl }]}>EXPLORE</Text>
           <View style={styles.exploreRow}>
             <Pressable
@@ -590,7 +609,7 @@ export default function BulletinScreen({ navigation }: Props) {
             </Pressable>
           </View>
 
-          <View style={{ height: spacing.xxxl }} />
+          <View style={{ height: spacing.xxxl + insets.bottom }} />
         </View>
       </ScrollView>
     </View>
@@ -602,7 +621,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, backgroundColor: colors.parchment },
 
   // Picker
-  pickerHeader: { paddingTop: 60, paddingBottom: 28, paddingHorizontal: spacing.lg },
+  pickerHeader: { paddingBottom: 28, paddingHorizontal: spacing.lg },
   pickerTitle: { fontSize: 26, fontWeight: "700", color: colors.white, marginBottom: 6 },
   pickerSub: { ...typography.bodySmall, color: "rgba(255,255,255,0.6)" },
   backBtn: { marginBottom: 12 },
@@ -634,7 +653,7 @@ const styles = StyleSheet.create({
   confirmBtnTextNo: { color: colors.inkSoft, fontWeight: "500", fontSize: 15 },
 
   // Bulletin header
-  bulletinHeader: { paddingTop: 60, paddingBottom: 24, paddingHorizontal: spacing.lg },
+  bulletinHeader: { paddingBottom: 24, paddingHorizontal: spacing.lg },
   bulletinHeaderRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginBottom: 6 },
   headerLogo: { width: 44, height: 44, borderRadius: radii.md, backgroundColor: "rgba(255,255,255,0.1)" },
   bulletinHeaderTitle: { fontSize: 22, fontWeight: "700", color: colors.white },
@@ -653,7 +672,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg, padding: spacing.md, marginBottom: 8,
     borderLeftWidth: 4, borderLeftColor: colors.olive,
   },
-  announcementLeft: { flex: 1 },
   announcementType: {
     fontSize: 10, fontWeight: "700", letterSpacing: 1.2,
     marginBottom: 4, textTransform: "uppercase",
@@ -693,16 +711,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   oosRowBorder: { borderTopWidth: 1, borderTopColor: colors.parchmentDark },
-  oosTime: {
-    fontSize: 12, fontWeight: "700", color: colors.gold,
-    width: 52, paddingTop: 2,
-  },
+  oosTime: { fontSize: 12, fontWeight: "700", color: colors.gold, width: 52, paddingTop: 2 },
   oosItem: { ...typography.bodySmall, color: colors.ink, fontWeight: "600", marginBottom: 2 },
   oosNotes: { fontSize: 12, color: colors.inkFaint, lineHeight: 18 },
-  oosDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: colors.oliveLight, marginTop: 8,
-  },
 
   // Archive
   archiveHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -717,15 +728,25 @@ const styles = StyleSheet.create({
   archivePaid: { fontSize: 12, fontWeight: "700", color: colors.gold, marginRight: 8 },
   archiveArrow: { fontSize: 20, color: colors.oliveFaint, fontWeight: "300" },
 
+  // Ads
+  adCard: {
+    width: 220, backgroundColor: colors.white, borderRadius: radii.xl,
+    overflow: "hidden", ...shadows.card,
+  },
+  adImage: { width: "100%", height: 120 },
+  adImagePlaceholder: { width: "100%", height: 120, alignItems: "center", justifyContent: "center" },
+  adBody: { padding: spacing.md },
+  adTitle: { ...typography.bodySmall, color: colors.ink, fontWeight: "600", marginBottom: 4 },
+  adCta: { fontSize: 12, color: colors.olive, fontWeight: "600" },
+
   // Social links
   socialRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: 4 },
   socialBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: colors.white, borderRadius: radii.lg,
     paddingHorizontal: spacing.md, paddingVertical: 10,
+    borderWidth: 1, borderColor: colors.parchmentDark,
     ...shadows.subtle,
   },
-  socialBtnIcon: { fontSize: 18 },
   socialBtnLabel: { fontSize: 13, fontWeight: "600", color: colors.ink },
 
   // Explore quick-links

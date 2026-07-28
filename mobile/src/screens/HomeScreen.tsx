@@ -205,7 +205,7 @@ export default function HomeScreen({ navigation }: Props) {
         <View style={styles.donateDivider} />
         <Text style={styles.donateEyebrow}>KEEP THE OLIVE GROWING</Text>
         <Text style={styles.donateMsg}>
-          Living Olive is free for everyone. If it's been a blessing to you, consider supporting the mission.
+          The Living Olive is free for everyone. If it's been a blessing to you, consider supporting the mission.
         </Text>
         <Pressable
           style={({ pressed }) => [styles.donateBtn, pressed && { opacity: 0.8 }]}
@@ -226,7 +226,7 @@ export default function HomeScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
-  content: { paddingBottom: spacing.xxl },
+  content: { paddingBottom: spacing.xxl + 32 },
   header: {
     paddingTop: 60,
     paddingBottom: 28,

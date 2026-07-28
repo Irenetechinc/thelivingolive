@@ -388,6 +388,26 @@ export async function fetchChurchExtras(churchId: string): Promise<ChurchExtras>
   }
 }
 
+// ─── Ads ──────────────────────────────────────────────────────────────────────
+
+export type ChurchAd = {
+  id: string;
+  title: string;
+  image_url?: string | null;
+  link_url?: string | null;
+  church_id: string;
+  created_at: string;
+};
+
+export async function fetchChurchAds(churchId: string): Promise<ChurchAd[]> {
+  try {
+    const res = await authedGet(`/api/bulletins/${churchId}/ads`);
+    return res.ads ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // ─── Donations ────────────────────────────────────────────────────────────────
 
 export async function initiateDonation(input: { amount: number; isRecurring: boolean }): Promise<{ paymentLink: string; txRef: string }> {
