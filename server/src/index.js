@@ -640,7 +640,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // so the user arrives at the app to find it already done — no "tap to generate".
     for (const plan of devotionPlans ?? []) {
       try {
-        const content = generateDevotional({ goal: plan.goal, dayNumber: plan.day_number ?? 0, weights: getWeights() });
+        const content = await generateDevotional({ goal: plan.goal, dayNumber: plan.day_number ?? 0, weights: getWeights() });
         const { data: entry } = await supabaseAdmin
           .from("devotion_entries")
           .insert({
@@ -681,7 +681,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Auto-generate prayer points and save before pushing.
     for (const plan of prayerPlans ?? []) {
       try {
-        const result = generatePrayerPoints({
+        const result = await generatePrayerPoints({
           desires: plan.desires,
           type: plan.prayer_type,
           count: plan.point_count ?? 3,

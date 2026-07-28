@@ -107,7 +107,7 @@ export async function scheduleRecurringReminder(params: {
       importance: ch.importance,
       vibrationPattern: ch.vibrationPattern,
       lightColor: "#5B7553",
-      sound: soundKey !== "silent" ? null : null, // system default per channel
+      sound: null, // use system default per channel; custom sounds would need to be bundled
     });
   }
 

@@ -1,7 +1,7 @@
 /**
  * admin.js — Super admin router for /admin
  * Access: livingolive.adroomai.com/admin
- * Credentials: livingoliveadmin / Meger2200@dav1960?
+ * Credentials: set ADMIN_USERNAME and ADMIN_PASSWORD in Railway environment variables.
  */
 
 import { Router } from 'express';

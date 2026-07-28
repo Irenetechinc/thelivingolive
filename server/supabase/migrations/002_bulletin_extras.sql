@@ -30,10 +30,12 @@ create index if not exists church_announcements_church_idx
   on public.church_announcements(church_id, is_active, created_at desc);
 
 alter table public.church_announcements enable row level security;
--- Service role (backend) manages all rows; authenticated users can read active ones
-drop policy if exists "service_all" on public.church_announcements;
-create policy "service_all" on public.church_announcements
-  for all using (true) with check (true);
+-- Authenticated users may read active announcements; writes go through the
+-- backend service role which bypasses RLS — no client-side write policy needed.
+drop policy if exists "service_all"         on public.church_announcements;
+drop policy if exists "authenticated_read"  on public.church_announcements;
+create policy "authenticated_read" on public.church_announcements
+  for select using (auth.role() = 'authenticated');
 
 -- ── Church ads ────────────────────────────────────────────────────────────────
 create table if not exists public.church_ads (
@@ -51,6 +53,9 @@ create index if not exists church_ads_church_idx
   on public.church_ads(church_id, created_at desc);
 
 alter table public.church_ads enable row level security;
-drop policy if exists "service_all" on public.church_ads;
-create policy "service_all" on public.church_ads
-  for all using (true) with check (true);
+-- Authenticated users may read active ads; writes go through the backend
+-- service role which bypasses RLS — no client-side write policy needed.
+drop policy if exists "service_all"         on public.church_ads;
+drop policy if exists "authenticated_read"  on public.church_ads;
+create policy "authenticated_read" on public.church_ads
+  for select using (auth.role() = 'authenticated');

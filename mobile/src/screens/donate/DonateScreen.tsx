@@ -109,7 +109,7 @@ export default function DonateScreen({ navigation }: Props) {
             </View>
           ))}
           <Text style={styles.breakdownNote}>
-            100% transparent — every rand and naira goes directly to keeping the app running.
+            100% transparent — every naira goes directly to keeping the app running.
           </Text>
         </View>
       </View>

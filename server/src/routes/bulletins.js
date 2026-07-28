@@ -336,37 +336,57 @@ router.post('/:bulletinId/pay', async (req, res) => {
 router.post('/:bulletinId/verify-payment', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { bulletinId } = req.params;
-  const { txRef, txId } = req.body;
+  const { txId } = req.body;
 
-  if (!txRef && !txId) return res.status(400).json({ error: 'txRef or txId is required' });
+  if (!txId) return res.status(400).json({ error: 'txId is required' });
 
   try {
-    // Verify via transaction ID or look up by ref
-    let verifyId = txId;
-    if (!verifyId && txRef) {
-      const searchRes = await fetch(
-        `https://api.flutterwave.com/v3/transactions?tx_ref=${encodeURIComponent(txRef)}`,
-        { headers: { Authorization: `Bearer ${flutterwaveSecret()}` }, signal: AbortSignal.timeout(10_000) }
-      );
-      const searchData = await searchRes.json();
-      verifyId = searchData.data?.[0]?.id;
+    // Step 1 — Load the pending access record that was created when the user
+    // initiated payment. This record binds the expected tx_ref, amount, and
+    // bulletin to the authenticated user. Any verification attempt that does
+    // not match this record is rejected before we even call Flutterwave.
+    const { data: pending, error: pendingErr } = await supabase
+      .from('bulletin_access')
+      .select('flw_tx_ref, amount_ngn, church_id')
+      .eq('bulletin_id', bulletinId)
+      .eq('user_id', req.user.id)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (pendingErr || !pending) {
+      return res.status(403).json({ error: 'No pending payment found for this bulletin. Please initiate payment first.' });
     }
 
-    if (!verifyId) return res.status(404).json({ error: 'Transaction not found' });
-
-    const result = await verifyFlwTransaction(verifyId);
+    // Step 2 — Verify the transaction with Flutterwave
+    const result = await verifyFlwTransaction(txId);
     const tx = result.data;
 
     if (tx.status !== 'successful') {
       return res.json({ ok: false, paid: false, status: tx.status });
     }
 
-    // Grant access
+    // Step 3 — Validate that this transaction belongs to this user's pending record:
+    //   • tx_ref must match exactly (prevents replaying another user's successful tx)
+    //   • currency must be NGN
+    //   • amount paid must be >= the expected bulletin price
+    if (tx.tx_ref !== pending.flw_tx_ref) {
+      log.warn(`tx_ref mismatch for bulletin ${bulletinId} user ${req.user.id}: expected ${pending.flw_tx_ref}, got ${tx.tx_ref}`);
+      return res.status(403).json({ error: 'Transaction reference mismatch. Payment not accepted.' });
+    }
+    if ((tx.currency ?? '').toUpperCase() !== 'NGN') {
+      return res.status(400).json({ error: 'Payment must be in NGN.' });
+    }
+    if (tx.amount < pending.amount_ngn) {
+      log.warn(`Underpayment for bulletin ${bulletinId}: expected ₦${pending.amount_ngn}, received ₦${tx.amount}`);
+      return res.status(400).json({ error: 'Payment amount is less than the bulletin price.' });
+    }
+
+    // Step 4 — Grant access
     await supabase.from('bulletin_access').upsert(
       {
         bulletin_id: bulletinId,
         user_id: req.user.id,
-        church_id: tx.meta?.church_id,
+        church_id: pending.church_id,
         flw_tx_ref: tx.tx_ref,
         flw_tx_id: String(tx.id),
         status: 'success',

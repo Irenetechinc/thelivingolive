@@ -137,7 +137,7 @@ export function detectCategory(desireText) {
   const scores = {};
   for (const cat of CATEGORIES) scores[cat.name] = 0;
 
-  // Single-word scoring (existing behaviour)
+  // Single-word scoring (existing behavior)
   for (const word of words) {
     for (const cat of CATEGORIES) {
       if (cat.keywords.has(word)) scores[cat.name] += cat.keywords.get(word);
@@ -165,7 +165,7 @@ export function detectCategory(desireText) {
   if (/\b(my friend|my family|my brother|my sister|my mother|my father|our church|our nation)\b/.test(full)) {
     scores["Intercession"] = (scores["Intercession"] || 0) + 2;
   }
-  if (/\b(thank|grateful|grateful|bless(ed|ing)?|praise)\b/.test(full)) {
+  if (/\b(thank|grateful|bless(ed|ing)?|praise)\b/.test(full)) {
     scores["Thanksgiving"] = (scores["Thanksgiving"] || 0) + 1.5;
   }
   if (/\b(fight|battle|overcome|enemy|attack|fear|anxiety|oppression|bondage|tempt)\b/.test(full)) {
