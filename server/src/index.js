@@ -618,10 +618,13 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     const mm = String(now.getUTCMinutes()).padStart(2, "0");
     const timeWindow = `${hh}:${mm}`;
 
+    // Day-of-week check: JS getDay() → 0=Sun … 6=Sat (UTC)
+    const todayDow = now.getUTCDay();
+
     // Find active devotion plans whose preferred_time matches this minute
     const { data: devotionPlans } = await supabaseAdmin
       .from("devotion_plans")
-      .select("id, user_id, goal, duration, day_number")
+      .select("id, user_id, goal, duration, day_number, days_count, excluded_days")
       .eq("active", true)
       .gte("preferred_time", `${timeWindow}:00`)
       .lt("preferred_time", `${timeWindow}:59`);
@@ -629,7 +632,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Find active prayer plans whose preferred_time matches this minute
     const { data: prayerPlans } = await supabaseAdmin
       .from("prayer_plans")
-      .select("id, user_id, desires, prayer_type, point_count")
+      .select("id, user_id, desires, prayer_type, point_count, days_count, excluded_days")
       .eq("active", true)
       .gte("preferred_time", `${timeWindow}:00`)
       .lt("preferred_time", `${timeWindow}:59`);
@@ -639,6 +642,23 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Auto-generate devotional content and save before sending push,
     // so the user arrives at the app to find it already done — no "tap to generate".
     for (const plan of devotionPlans ?? []) {
+      // Skip if today is an excluded day of week
+      if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
+        log.info(`Skipping devotion plan ${plan.id} — day ${todayDow} is excluded`);
+        continue;
+      }
+      // Skip if days_count limit already reached
+      if (plan.days_count != null) {
+        const { count } = await supabaseAdmin
+          .from("devotion_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("plan_id", plan.id);
+        if ((count ?? 0) >= plan.days_count) {
+          log.info(`Devotion plan ${plan.id} reached days_count limit (${plan.days_count}) — marking inactive`);
+          await supabaseAdmin.from("devotion_plans").update({ active: false }).eq("id", plan.id);
+          continue;
+        }
+      }
       try {
         const content = await generateDevotional({ goal: plan.goal, dayNumber: plan.day_number ?? 0, weights: getWeights() });
         const { data: entry } = await supabaseAdmin
@@ -651,6 +671,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
             scripture_text: content.scriptureText,
             body: content.body,
             closing_prayer: content.closingPrayer,
+            is_read: false,
           })
           .select("id")
           .single();
@@ -680,6 +701,25 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
 
     // Auto-generate prayer points and save before pushing.
     for (const plan of prayerPlans ?? []) {
+      // Skip if today is an excluded day of week
+      if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
+        log.info(`Skipping prayer plan ${plan.id} — day ${todayDow} is excluded`);
+        continue;
+      }
+      // Skip if days_count limit already reached (count distinct plan-days delivered)
+      if (plan.days_count != null) {
+        const { count } = await supabaseAdmin
+          .from("prayer_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("plan_id", plan.id);
+        // Each scheduled delivery inserts point_count rows; use ceil to get day count
+        const daysDelivered = Math.ceil((count ?? 0) / Math.max(plan.point_count ?? 3, 1));
+        if (daysDelivered >= plan.days_count) {
+          log.info(`Prayer plan ${plan.id} reached days_count limit (${plan.days_count}) — marking inactive`);
+          await supabaseAdmin.from("prayer_plans").update({ active: false }).eq("id", plan.id);
+          continue;
+        }
+      }
       try {
         const result = await generatePrayerPoints({
           desires: plan.desires,
@@ -693,6 +733,7 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
           title: p.title,
           prayer_text: p.prayerText,
           scripture_reference: p.scriptureReference,
+          is_read: false,
         }));
         const { data: entries } = await supabaseAdmin
           .from("prayer_entries")

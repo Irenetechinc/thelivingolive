@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,21 +9,26 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { useAuth } from "../context/AuthContext";
+import { supabase } from "../lib/supabase";
 import { colors, radii, spacing, typography, shadows } from "../theme/theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
-const cards: {
+type CardDef = {
   key: keyof RootStackParamList;
   title: string;
   description: string;
   symbol: string;
   gradient: [string, string];
   accent: string;
-}[] = [
+  unreadKey?: "devotion" | "prayer";
+};
+
+const CARDS: CardDef[] = [
   {
     key: "BibleHome",
     title: "Bible",
@@ -47,6 +52,7 @@ const cards: {
     symbol: "◎",
     gradient: ["#8A6A10", "#C9A227"],
     accent: "#E2C060",
+    unreadKey: "devotion",
   },
   {
     key: "Prayer",
@@ -55,6 +61,7 @@ const cards: {
     symbol: "✿",
     gradient: ["#2A3820", "#3E4A2F"],
     accent: "#6B8055",
+    unreadKey: "prayer",
   },
   {
     key: "Bulletin",
@@ -66,33 +73,58 @@ const cards: {
   },
 ];
 
-function useStaggeredAnim(count: number, delay = 80) {
-  const anims = useRef(cards.map(() => new Animated.Value(0))).current;
-  useEffect(() => {
-    Animated.stagger(
-      delay,
-      anims.map((a) =>
-        Animated.spring(a, { toValue: 1, tension: 60, friction: 9, useNativeDriver: true })
-      )
-    ).start();
-  }, []);
-  return anims;
-}
-
 export default function HomeScreen({ navigation }: Props) {
   const { signOut } = useAuth();
   const insets = useSafeAreaInsets();
   const headerAnim = useRef(new Animated.Value(0)).current;
-  const cardAnims = useStaggeredAnim(cards.length, 70);
+  const cardAnims = useRef(CARDS.map(() => new Animated.Value(0))).current;
+
+  const [unreadCounts, setUnreadCounts] = useState<{ devotion: number; prayer: number }>({
+    devotion: 0,
+    prayer: 0,
+  });
 
   useEffect(() => {
-    Animated.spring(headerAnim, {
-      toValue: 1,
-      tension: 55,
-      friction: 9,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(headerAnim, { toValue: 1, tension: 55, friction: 9, useNativeDriver: true }).start();
+    Animated.stagger(
+      70,
+      cardAnims.map((a) => Animated.spring(a, { toValue: 1, tension: 60, friction: 9, useNativeDriver: true }))
+    ).start();
   }, []);
+
+  // Refresh unread counts every time the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadUnreadCounts();
+    }, [])
+  );
+
+  async function loadUnreadCounts() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const [devotionRes, prayerRes] = await Promise.allSettled([
+        supabase
+          .from("devotion_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("is_read", false),
+        supabase
+          .from("prayer_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("is_read", false),
+      ]);
+
+      setUnreadCounts({
+        devotion: devotionRes.status === "fulfilled" ? (devotionRes.value.count ?? 0) : 0,
+        prayer:   prayerRes.status === "fulfilled"   ? (prayerRes.value.count ?? 0)   : 0,
+      });
+    } catch {
+      // Non-fatal — counters stay at 0
+    }
+  }
 
   const now = new Date();
   const hour = now.getHours();
@@ -109,14 +141,7 @@ export default function HomeScreen({ navigation }: Props) {
       <Animated.View
         style={{
           opacity: headerAnim,
-          transform: [
-            {
-              translateY: headerAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [-16, 0],
-              }),
-            },
-          ],
+          transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
         }}
       >
         <LinearGradient
@@ -124,7 +149,6 @@ export default function HomeScreen({ navigation }: Props) {
           locations={[0, 0.3, 0.65, 1]}
           style={[styles.header, { paddingTop: 60 + insets.top }]}
         >
-          {/* Decorative arcs */}
           <View style={styles.arcWrap} pointerEvents="none">
             <View style={[styles.arc, { width: 260, height: 260, borderRadius: 130 }]} />
             <View style={[styles.arc, { width: 380, height: 380, borderRadius: 190 }]} />
@@ -151,58 +175,66 @@ export default function HomeScreen({ navigation }: Props) {
             <Text style={styles.motto}>Rooted in the Word, growing every day</Text>
             <View style={styles.mottoDot} />
           </View>
+
+          {/* Total unread count in header */}
+          {(unreadCounts.devotion + unreadCounts.prayer) > 0 && (
+            <View style={styles.headerUnreadRow}>
+              <Text style={styles.headerUnreadText}>
+                {unreadCounts.devotion + unreadCounts.prayer} unread{" "}
+                {unreadCounts.devotion > 0 && unreadCounts.prayer > 0
+                  ? "devotions & prayers"
+                  : unreadCounts.devotion > 0 ? "devotions" : "prayers"}
+              </Text>
+            </View>
+          )}
         </LinearGradient>
       </Animated.View>
 
       {/* Cards */}
       <View style={styles.cardsSection}>
-        {cards.map((card, i) => (
-          <Animated.View
-            key={card.key}
-            style={{
-              opacity: cardAnims[i],
-              transform: [
-                {
-                  translateY: cardAnims[i].interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [24, 0],
-                  }),
-                },
-              ],
-            }}
-          >
-            <Pressable
-              style={({ pressed }) => [
-                styles.card,
-                pressed && styles.cardPressed,
-              ]}
-              onPress={() => navigation.navigate(card.key as any)}
+        {CARDS.map((card, i) => {
+          const unreadCount = card.unreadKey ? unreadCounts[card.unreadKey] : 0;
+          return (
+            <Animated.View
+              key={card.key}
+              style={{
+                opacity: cardAnims[i],
+                transform: [{ translateY: cardAnims[i].interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+              }}
             >
-              <LinearGradient
-                colors={card.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.cardIconWrap}
+              <Pressable
+                style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+                onPress={() => navigation.navigate(card.key as any)}
               >
-                <Text style={[styles.cardSymbol, { color: card.accent }]}>
-                  {card.symbol}
-                </Text>
-              </LinearGradient>
+                <LinearGradient
+                  colors={card.gradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.cardIconWrap}
+                >
+                  <Text style={[styles.cardSymbol, { color: card.accent }]}>{card.symbol}</Text>
+                </LinearGradient>
 
-              <View style={styles.cardBody}>
-                <Text style={styles.cardTitle}>{card.title}</Text>
-                <Text style={styles.cardDesc}>{card.description}</Text>
-              </View>
+                <View style={styles.cardBody}>
+                  <Text style={styles.cardTitle}>{card.title}</Text>
+                  <Text style={styles.cardDesc}>{card.description}</Text>
+                </View>
 
-              <View style={styles.cardArrow}>
-                <Text style={styles.cardArrowText}>›</Text>
-              </View>
-            </Pressable>
-          </Animated.View>
-        ))}
+                <View style={styles.cardRight}>
+                  {unreadCount > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+                    </View>
+                  )}
+                  <Text style={styles.cardArrowText}>›</Text>
+                </View>
+              </Pressable>
+            </Animated.View>
+          );
+        })}
       </View>
 
-      {/* Donate CTA — warm, not pushy */}
+      {/* Donate CTA */}
       <View style={styles.donateCta}>
         <View style={styles.donateDivider} />
         <Text style={styles.donateEyebrow}>KEEP THE OLIVE GROWING</Text>
@@ -234,152 +266,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     overflow: "hidden",
   },
-  arcWrap: {
-    ...StyleSheet.absoluteFill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  arc: {
-    position: "absolute",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-  },
-  headerTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 20,
-  },
-  eyebrow: {
-    ...typography.caption,
-    color: "rgba(255,255,255,0.55)",
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  headerTitle: {
-    fontSize: 30,
-    fontWeight: "700",
-    color: colors.white,
-    letterSpacing: -0.6,
-  },
-  signOutBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
-    marginTop: 4,
-  },
+  arcWrap: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
+  arc: { position: "absolute", borderWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
+  headerTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
+  eyebrow: { ...typography.caption, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", marginBottom: 4 },
+  headerTitle: { fontSize: 30, fontWeight: "700", color: colors.white, letterSpacing: -0.6 },
+  signOutBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: radii.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", marginTop: 4 },
   signOutText: { color: "rgba(255,255,255,0.65)", fontSize: 13, fontWeight: "500" },
-  headerDivider: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    marginBottom: 14,
+  headerDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 14 },
+  mottoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mottoDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.gold },
+  motto: { ...typography.caption, color: "rgba(255,255,255,0.5)", fontStyle: "italic", flex: 1 },
+  headerUnreadRow: { marginTop: 12, alignSelf: "flex-start" },
+  headerUnreadText: {
+    fontSize: 12, fontWeight: "600", color: colors.goldLight,
+    backgroundColor: "rgba(201,162,39,0.15)",
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1, borderColor: "rgba(201,162,39,0.3)",
   },
-  mottoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  mottoDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.gold,
-  },
-  motto: {
-    ...typography.caption,
-    color: "rgba(255,255,255,0.5)",
-    fontStyle: "italic",
-    flex: 1,
-  },
-  cardsSection: {
-    padding: spacing.lg,
-    paddingTop: spacing.lg,
-    gap: spacing.md,
-  },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.white,
-    borderRadius: radii.xl,
-    overflow: "hidden",
-    ...shadows.card,
-  },
+
+  cardsSection: { padding: spacing.lg, paddingTop: spacing.lg, gap: spacing.md },
+  card: { flexDirection: "row", alignItems: "center", backgroundColor: colors.white, borderRadius: radii.xl, overflow: "hidden", ...shadows.card },
   cardPressed: { transform: [{ scale: 0.975 }], opacity: 0.92 },
-  cardIconWrap: {
-    width: 72,
-    height: 80,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
+  cardIconWrap: { width: 72, height: 80, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   cardSymbol: { fontSize: 26, fontWeight: "700" },
-  cardBody: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-  },
+  cardBody: { flex: 1, paddingVertical: spacing.md, paddingHorizontal: spacing.md },
   cardTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 3 },
   cardDesc: { ...typography.bodySmall, color: colors.inkSoft, lineHeight: 20 },
-  cardArrow: {
-    paddingRight: spacing.md,
-    paddingLeft: spacing.xs,
-  },
+  cardRight: { flexDirection: "row", alignItems: "center", paddingRight: spacing.md, gap: 6 },
   cardArrowText: { fontSize: 26, color: colors.oliveFaint, fontWeight: "300" },
-  donateCta: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.xl,
-    alignItems: "center",
+  badge: {
+    minWidth: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.gold,
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 5,
   },
-  donateDivider: {
-    width: 32,
-    height: 1,
-    backgroundColor: colors.parchmentDark,
-    marginBottom: spacing.lg,
-  },
-  donateEyebrow: {
-    ...typography.micro,
-    color: colors.gold,
-    letterSpacing: 2,
-    marginBottom: spacing.sm,
-  },
-  donateMsg: {
-    ...typography.bodySmall,
-    color: colors.inkSoft,
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: spacing.lg,
-    paddingHorizontal: spacing.md,
-  },
-  donateBtn: {
-    paddingVertical: 11,
-    paddingHorizontal: spacing.xl,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.gold,
-    backgroundColor: "rgba(201,162,39,0.08)",
-  },
-  donateBtnText: {
-    color: colors.gold,
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-  },
-  footer: {
-    alignItems: "center",
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  footerLine: {
-    width: 32,
-    height: 1,
-    backgroundColor: colors.parchmentDark,
-    marginBottom: spacing.sm,
-  },
-  footerText: {
-    ...typography.micro,
-    color: colors.inkFaint,
-    letterSpacing: 2,
-  },
+  badgeText: { fontSize: 11, fontWeight: "800", color: colors.white },
+
+  donateCta: { marginHorizontal: spacing.lg, marginBottom: spacing.xl, alignItems: "center" },
+  donateDivider: { width: 32, height: 1, backgroundColor: colors.parchmentDark, marginBottom: spacing.lg },
+  donateEyebrow: { ...typography.micro, color: colors.gold, letterSpacing: 2, marginBottom: spacing.sm },
+  donateMsg: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22, marginBottom: spacing.lg, paddingHorizontal: spacing.md },
+  donateBtn: { paddingVertical: 11, paddingHorizontal: spacing.xl, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.gold, backgroundColor: "rgba(201,162,39,0.08)" },
+  donateBtnText: { color: colors.gold, fontSize: 14, fontWeight: "600", letterSpacing: 0.5 },
+
+  footer: { alignItems: "center", paddingTop: spacing.md, paddingBottom: spacing.sm },
+  footerLine: { width: 32, height: 1, backgroundColor: colors.parchmentDark, marginBottom: spacing.sm },
+  footerText: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2 },
 });

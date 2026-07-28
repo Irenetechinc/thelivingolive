@@ -284,6 +284,31 @@ router.post('/:bulletinId/like', async (req, res) => {
   res.json({ ok: true, liked: !existing, likes: count ?? 0 });
 });
 
+// ── Shared helper: resolve display names for a set of user IDs ────────────────
+// Uses the service-role admin API so it works server-side without a profiles table.
+// Falls back to a short anonymous handle if the user cannot be resolved.
+async function resolveUserNames(supabase, userIds) {
+  const map = {};
+  await Promise.all([...new Set(userIds)].map(async (uid) => {
+    try {
+      const { data: { user }, error } = await supabase.auth.admin.getUserById(uid);
+      if (error || !user) throw error ?? new Error('not found');
+      // Prefer: full_name metadata → display_name metadata → email prefix
+      const meta = user.user_metadata ?? {};
+      const name =
+        meta.full_name?.trim() ||
+        meta.name?.trim() ||
+        meta.display_name?.trim() ||
+        user.email?.split('@')[0] ||
+        `@user_${uid.slice(0, 6)}`;
+      map[uid] = name;
+    } catch {
+      map[uid] = `@user_${uid.slice(0, 6)}`;
+    }
+  }));
+  return map;
+}
+
 // GET comments for a bulletin (top-level + replies nested)
 router.get('/:bulletinId/comments', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
@@ -304,24 +329,26 @@ router.get('/:bulletinId/comments', async (req, res) => {
     const commentIds = (topComments ?? []).map(c => c.id);
 
     // Replies and comment likes for current user (in parallel)
-    const [repliesRes, userLikesRes, userEmailsRes] = await Promise.allSettled([
+    const [repliesRes, userLikesRes] = await Promise.allSettled([
       commentIds.length
         ? supabase.from('bulletin_comments').select('id, parent_id, user_id, body, like_count, created_at')
             .eq('bulletin_id', bulletinId).in('parent_id', commentIds).order('created_at', { ascending: true })
         : Promise.resolve({ data: [] }),
       supabase.from('bulletin_comment_likes').select('comment_id').eq('user_id', req.user.id),
-      // Get display names from auth.users via a workaround — just use truncated user_id as handle
-      Promise.resolve({ data: [] }),
     ]);
 
     const replies = repliesRes.value?.data ?? [];
     const userLikedCommentIds = new Set((userLikesRes.value?.data ?? []).map(r => r.comment_id));
 
+    // Resolve real display names for every unique commenter
+    const allRows = [...(topComments ?? []), ...replies];
+    const nameMap = await resolveUserNames(supabase, allRows.map(c => c.user_id));
+
     function formatComment(c) {
       return {
         id: c.id,
         userId: c.user_id,
-        handle: `@user_${c.user_id.slice(0, 6)}`,
+        handle: nameMap[c.user_id] ?? `@user_${c.user_id.slice(0, 6)}`,
         body: c.body,
         likeCount: c.like_count ?? 0,
         liked: userLikedCommentIds.has(c.id),
@@ -376,12 +403,15 @@ router.post('/:bulletinId/comments', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
+  // Resolve the poster's display name for the immediate response
+  const nameMap = await resolveUserNames(supabase, [data.user_id]);
+
   res.json({
     ok: true,
     comment: {
       id: data.id,
       userId: data.user_id,
-      handle: `@user_${data.user_id.slice(0, 6)}`,
+      handle: nameMap[data.user_id] ?? `@user_${data.user_id.slice(0, 6)}`,
       body: data.body,
       likeCount: 0,
       liked: false,

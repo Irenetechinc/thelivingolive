@@ -400,6 +400,24 @@ alter table public.prayer_plans enable row level security;
 alter table public.prayer_entries enable row level security;
 alter table public.push_tokens enable row level security;
 
+-- ──────────────────────────────────────────────────────────────
+-- Unread tracking + scheduling extras
+-- Safe to re-run (add column if not exists)
+-- ──────────────────────────────────────────────────────────────
+
+-- Mark devotion entries as read/unread
+alter table public.devotion_entries add column if not exists is_read boolean not null default false;
+-- Mark prayer entries as read/unread
+alter table public.prayer_entries add column if not exists is_read boolean not null default false;
+
+-- How many days to generate (null = unlimited)
+alter table public.devotion_plans add column if not exists days_count int;
+-- Days of week to skip: 0=Sun,1=Mon,...,6=Sat  e.g. '{0,6}' skips weekends
+alter table public.devotion_plans add column if not exists excluded_days int[] not null default '{}';
+
+alter table public.prayer_plans add column if not exists days_count int;
+alter table public.prayer_plans add column if not exists excluded_days int[] not null default '{}';
+
 -- ── Feature flags ─────────────────────────────────────────────────────────────
 create table if not exists public.feature_flags (
   key        text        primary key,
