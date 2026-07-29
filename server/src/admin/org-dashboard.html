@@ -183,8 +183,21 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
       </div>
       <div class="card-body">
         <div class="form-group">
-          <label>Announcement Text</label>
+          <label>Announcement Text <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional when a banner image is provided)</span></label>
           <textarea id="annText" placeholder="Type your announcement here…" style="min-height:80px"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Banner Image <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — recommended 16:9 or 2:1, max 8 MB)</span></label>
+          <input type="file" id="annBannerFile" accept="image/*"
+            style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+          <div id="annBannerStatus" style="font-size:12px;margin-top:6px;color:var(--inkFaint)"></div>
+          <div id="annBannerPreview" style="display:none;margin-top:10px;position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+            <img id="annBannerPreviewImg" style="width:100%;max-height:200px;object-fit:cover;display:block">
+            <button class="btn btn-ghost btn-sm" onclick="clearAnnBanner()"
+              style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,0.9);border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">
+              ✕ Remove
+            </button>
+          </div>
         </div>
         <div class="form-group">
           <label>Type</label>
@@ -195,7 +208,7 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
             <option value="reminder">Reminder</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="postAnnouncement()">Post Announcement</button>
+        <button class="btn btn-primary" id="annPostBtn" onclick="postAnnouncement()">Post Announcement</button>
       </div>
     </div>
     <div class="card">
@@ -742,6 +755,45 @@ async function deleteAd(id) {
 
 // ── Announcements ─────────────────────────────────────────────────────────────
 let allAnnouncements = [];
+let _uploadedAnnBannerUrl = null;
+
+// Wire up banner file input once DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('annBannerFile').addEventListener('change', async function() {
+    const file = this.files[0];
+    if (!file) { clearAnnBanner(); return; }
+    const statusEl = document.getElementById('annBannerStatus');
+    const postBtn  = document.getElementById('annPostBtn');
+    statusEl.textContent = 'Uploading image…';
+    statusEl.style.color = 'var(--inkFaint)';
+    postBtn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append('banner', file);
+      const res  = await fetch('/org-admin/api/announcements/upload-banner', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Upload failed');
+      _uploadedAnnBannerUrl = json.url;
+      document.getElementById('annBannerPreviewImg').src = json.url;
+      document.getElementById('annBannerPreview').style.display = 'block';
+      statusEl.textContent = '✔ Banner uploaded';
+      statusEl.style.color = 'var(--olive)';
+    } catch(err) {
+      statusEl.textContent = '✕ ' + err.message;
+      statusEl.style.color = 'var(--danger)';
+      toast('Banner upload failed: ' + err.message, 'error');
+    } finally {
+      postBtn.disabled = false;
+    }
+  });
+});
+
+function clearAnnBanner() {
+  _uploadedAnnBannerUrl = null;
+  document.getElementById('annBannerFile').value = '';
+  document.getElementById('annBannerPreview').style.display = 'none';
+  document.getElementById('annBannerStatus').textContent = '';
+}
 
 async function loadAnnouncements() {
   try {
@@ -759,9 +811,12 @@ function renderAnnouncements() {
   }
   const typeColors = {general:'badge-green',event:'badge-gold',urgent:'badge-red',reminder:'badge-gray'};
   el.innerHTML = `<table>
-    <thead><tr><th>Message</th><th>Type</th><th>Posted</th><th>Status</th><th>Action</th></tr></thead>
+    <thead><tr><th>Banner</th><th>Message</th><th>Type</th><th>Posted</th><th>Status</th><th>Action</th></tr></thead>
     <tbody>${allAnnouncements.map(a=>`<tr>
-      <td style="max-width:340px">${esc(a.text)}</td>
+      <td style="width:72px">${a.banner_url
+        ? `<img src="${esc(a.banner_url)}" style="width:64px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`
+        : `<span style="color:var(--inkFaint);font-size:12px">—</span>`}</td>
+      <td style="max-width:300px">${a.text ? esc(a.text) : '<em style="color:var(--inkFaint)">Image only</em>'}</td>
       <td><span class="badge ${typeColors[a.type]??'badge-gray'}">${a.type??'general'}</span></td>
       <td>${new Date(a.created_at).toLocaleDateString()}</td>
       <td>${a.is_active!==false?'<span class="badge badge-green">Active</span>':'<span class="badge badge-gray">Hidden</span>'}</td>
@@ -775,10 +830,18 @@ function renderAnnouncements() {
 async function postAnnouncement() {
   const text = document.getElementById('annText').value.trim();
   const type = document.getElementById('annType').value;
-  if (!text) { toast('Please enter an announcement message','error'); return; }
+  if (!text && !_uploadedAnnBannerUrl) {
+    toast('Add announcement text or upload a banner image', 'error');
+    return;
+  }
   try {
-    await api('/api/announcements','POST',{text,type});
-    document.getElementById('annText').value='';
+    await api('/api/announcements', 'POST', {
+      text: text || null,
+      type,
+      bannerUrl: _uploadedAnnBannerUrl || null,
+    });
+    document.getElementById('annText').value = '';
+    clearAnnBanner();
     toast('Announcement posted — it now appears in the app!');
     await loadAnnouncements();
   } catch(e) { toast(e.message,'error'); }
