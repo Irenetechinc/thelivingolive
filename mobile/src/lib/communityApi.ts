@@ -117,6 +117,17 @@ async function uploadFile(path: string, uri: string, mimeType: string): Promise<
   return json.url as string;
 }
 
+async function uploadFileWithMeta(path: string, uri: string, mimeType: string): Promise<{ url: string; thumbnailUrl?: string }> {
+  const headers = await authHeader();
+  delete (headers as any)['Content-Type'];
+  const fd = new FormData();
+  fd.append('file', { uri, name: uri.split('/').pop() ?? 'file', type: mimeType } as any);
+  const res = await fetch(`${API}${path}`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(180_000) });
+  const json = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));
+  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  return { url: json.url as string, thumbnailUrl: json.thumbnailUrl ?? undefined };
+}
+
 // ── Profile ───────────────────────────────────────────────────────────────────
 
 export async function getMyProfile(): Promise<UserProfile> {
@@ -255,8 +266,8 @@ export async function createPost(payload: {
   return mapPost(r.post);
 }
 
-export async function uploadPostMedia(uri: string, mimeType: string): Promise<string> {
-  return uploadFile('/api/community/posts/upload', uri, mimeType);
+export async function uploadPostMedia(uri: string, mimeType: string): Promise<{ url: string; thumbnailUrl?: string }> {
+  return uploadFileWithMeta('/api/community/posts/upload', uri, mimeType);
 }
 
 export async function deletePost(postId: string): Promise<void> {

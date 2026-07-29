@@ -12,6 +12,7 @@ import multer from 'multer';
 import { Expo } from 'expo-server-sdk';
 import { logger } from '../lib/logger.js';
 import { notifyCommunity } from '../lib/pushHelper.js';
+import { compressVideo } from '../lib/videoProcessor.js';
 
 const log = logger('community');
 const router = Router();
@@ -536,13 +537,46 @@ router.post('/posts', async (req, res) => {
 router.post('/posts/upload', upload.single('file'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'bin';
-  const path = `posts/${req.user.id}/${Date.now()}.${ext}`;
+
+  const isVideo = req.file.mimetype.startsWith('video/');
+  const ts = Date.now();
+  const uid = req.user.id;
+
+  if (isVideo) {
+    // ── Video: compress + generate thumbnail server-side ───────────────────
+    let videoBuffer, thumbBuffer;
+    try {
+      ({ videoBuffer, thumbBuffer } = await compressVideo(req.file.buffer));
+    } catch (err) {
+      log.error('Video compression failed', { err: err.message });
+      return res.status(500).json({ error: 'Video processing failed: ' + err.message });
+    }
+
+    const videoPath = `posts/${uid}/${ts}.mp4`;
+    const thumbPath = `posts/${uid}/${ts}_thumb.jpg`;
+
+    const [videoUp, thumbUp] = await Promise.all([
+      supabase.storage.from('community').upload(videoPath, videoBuffer, { contentType: 'video/mp4', upsert: false }),
+      supabase.storage.from('community').upload(thumbPath, thumbBuffer, { contentType: 'image/jpeg', upsert: false }),
+    ]);
+
+    if (videoUp.error) return res.status(500).json({ error: videoUp.error.message });
+    if (thumbUp.error) return res.status(500).json({ error: thumbUp.error.message });
+
+    const { data: { publicUrl: url } }          = supabase.storage.from('community').getPublicUrl(videoPath);
+    const { data: { publicUrl: thumbnailUrl } }  = supabase.storage.from('community').getPublicUrl(thumbPath);
+
+    return res.json({ ok: true, url, thumbnailUrl });
+  }
+
+  // ── Image: pass through unchanged ────────────────────────────────────────
+  const ext  = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'bin';
+  const path = `posts/${uid}/${ts}.${ext}`;
   const { error } = await supabase.storage
     .from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
   if (error) return res.status(500).json({ error: error.message });
-  const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
-  res.json({ ok: true, url: publicUrl });
+  const { data: { publicUrl: url } } = supabase.storage.from('community').getPublicUrl(path);
+  res.json({ ok: true, url });
 });
 
 router.post('/posts/:postId/like', async (req, res) => {

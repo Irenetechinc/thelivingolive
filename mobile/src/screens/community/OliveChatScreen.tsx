@@ -11,12 +11,12 @@
  *  - Notifications tab with unread badge
  *  - Delete own post
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, ActivityIndicator, Image, TouchableOpacity, Modal,
   KeyboardAvoidingView, Platform, Share, Alert, RefreshControl,
-  Animated,
+  Animated, ViewToken,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -74,36 +74,63 @@ function Avatar({ url, name, size = 36 }: { url: string | null; name: string; si
 }
 
 // ── Video post component ──────────────────────────────────────────────────────
-function VideoPost({ videoUrl, thumbnailUrl }: { videoUrl: string; thumbnailUrl: string | null }) {
+// Keeps VideoView always mounted (when isNearVisible) so expo-video buffers in
+// the background. On tap we just hide the thumbnail overlay — no cold-start.
+function VideoPost({
+  videoUrl,
+  thumbnailUrl,
+  isNearVisible,
+}: {
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  isNearVisible: boolean;
+}) {
   const [playing, setPlaying] = useState(false);
   const player = useVideoPlayer({ uri: videoUrl }, p => { p.loop = false; });
+
+  function handleTap() {
+    setPlaying(true);
+    player.play();
+  }
+
   return (
     <View style={vs.wrap}>
-      {!playing ? (
-        <Pressable onPress={() => { setPlaying(true); player.play(); }} style={vs.thumbWrap}>
+      {/* VideoView is always mounted when near visible so it pre-buffers */}
+      {isNearVisible && (
+        <VideoView
+          style={[vs.thumb, playing ? vs.visible : vs.hidden]}
+          player={player}
+          contentFit="cover"
+        />
+      )}
+      {/* Thumbnail overlay — hidden once user taps play */}
+      {!playing && (
+        <Pressable onPress={handleTap} style={[vs.thumbWrap, vs.overlayAbsolute]}>
           {thumbnailUrl
             ? <Image source={{ uri: thumbnailUrl }} style={vs.thumb} resizeMode="cover" />
             : <View style={[vs.thumb, { backgroundColor: '#1a1a1a' }]} />}
           <View style={vs.playBtn}><Text style={vs.playIcon}>▶</Text></View>
         </Pressable>
-      ) : (
-        <VideoView style={vs.thumb} player={player} contentFit="cover" />
       )}
     </View>
   );
 }
 const vs = StyleSheet.create({
-  wrap: { borderRadius: radii.md, overflow: 'hidden', marginTop: spacing.sm, backgroundColor: '#000' },
+  wrap: { borderRadius: radii.md, overflow: 'hidden', marginTop: spacing.sm, backgroundColor: '#000', height: 220 },
   thumbWrap: { position: 'relative' },
+  overlayAbsolute: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   thumb: { width: '100%', height: 220 },
+  visible: { opacity: 1 },
+  hidden: { opacity: 0 },
   playBtn: { position: 'absolute', top: '50%', left: '50%', marginTop: -24, marginLeft: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   playIcon: { color: '#fff', fontSize: 20, marginLeft: 4 },
 });
 
 // ── Post card ─────────────────────────────────────────────────────────────────
-function PostCard({ post, myId, onLike, onComment, onShare, onShareToRoom, onDelete }: {
+function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onShareToRoom, onDelete }: {
   post: CommunityPost;
   myId: string | null;
+  isNearVisible: boolean;
   onLike: () => void;
   onComment: () => void;
   onShare: () => void;
@@ -139,7 +166,7 @@ function PostCard({ post, myId, onLike, onComment, onShare, onShareToRoom, onDel
       </View>
       {post.body ? <Text style={ps.body}>{post.body}</Text> : null}
       {post.imageUrl ? <Image source={{ uri: post.imageUrl }} style={ps.image} resizeMode="cover" /> : null}
-      {post.videoUrl ? <VideoPost videoUrl={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl} /> : null}
+      {post.videoUrl ? <VideoPost videoUrl={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl} isNearVisible={isNearVisible} /> : null}
       <View style={ps.actions}>
         <Pressable style={ps.actionBtn} onPress={animLike}>
           <Animated.Text style={[ps.actionIcon, { transform: [{ scale: heartAnim }], color: post.liked ? '#E05252' : colors.inkFaint }]}>♥</Animated.Text>
@@ -438,10 +465,13 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
     try {
       let imageUrl: string | undefined, videoUrl: string | undefined, videoThumbnailUrl: string | undefined;
       if (mediaUri && mediaType === 'image') {
-        imageUrl = await uploadPostMedia(mediaUri, 'image/jpeg');
+        const result = await uploadPostMedia(mediaUri, 'image/jpeg');
+        imageUrl = result.url;
       } else if (mediaUri && mediaType === 'video') {
-        videoUrl = await uploadPostMedia(mediaUri, 'video/mp4');
-        if (thumbUri) videoThumbnailUrl = await uploadPostMedia(thumbUri, 'image/jpeg');
+        // Server compresses the video and generates thumbnail — no separate thumbnail upload
+        const result = await uploadPostMedia(mediaUri, 'video/mp4');
+        videoUrl = result.url;
+        videoThumbnailUrl = result.thumbnailUrl;
       }
       const post = await createPost({ body: text.trim() || undefined, imageUrl, videoUrl, videoThumbnailUrl });
       onCreated(post);
@@ -848,6 +878,15 @@ export default function OliveChatScreen() {
   const [notMember, setNotMember] = useState(false);
   const [commentPost, setCommentPost] = useState<CommunityPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  // Viewability — track which feed indices are currently on-screen
+  const visibleIndicesRef = useRef<Set<number>>(new Set());
+  const [visibleIndicesSnap, setVisibleIndicesSnap] = useState<Set<number>>(new Set());
+  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 20 });
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const s = new Set(viewableItems.map(v => v.index ?? -1).filter(i => i >= 0));
+    visibleIndicesRef.current = s;
+    setVisibleIndicesSnap(new Set(s));
+  });
   const [sharePost, setSharePost] = useState<CommunityPost | null>(null);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
@@ -1038,17 +1077,24 @@ export default function OliveChatScreen() {
           <FlatList
             data={posts}
             keyExtractor={p => p.id}
-            renderItem={({ item }) => (
-              <PostCard
-                post={item}
-                myId={myUserId}
-                onLike={() => handleLike(item)}
-                onComment={() => setCommentPost(item)}
-                onShare={() => handleNativeShare(item)}
-                onShareToRoom={() => setSharePost(item)}
-                onDelete={() => handleDeletePost(item)}
-              />
-            )}
+            renderItem={({ item, index }) => {
+              // Pre-cache VideoView for items within ±2 of any visible index
+              const isNearVisible = [...visibleIndicesSnap].some(vi => Math.abs(vi - index) <= 2);
+              return (
+                <PostCard
+                  post={item}
+                  myId={myUserId}
+                  isNearVisible={isNearVisible}
+                  onLike={() => handleLike(item)}
+                  onComment={() => setCommentPost(item)}
+                  onShare={() => handleNativeShare(item)}
+                  onShareToRoom={() => setSharePost(item)}
+                  onDelete={() => handleDeletePost(item)}
+                />
+              );
+            }}
+            viewabilityConfig={viewabilityConfig.current}
+            onViewableItemsChanged={onViewableItemsChanged.current}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshFeed} tintColor={colors.gold} />}
             ListEmptyComponent={
               <View style={main.empty}>
