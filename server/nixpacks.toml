@@ -1,8 +1,13 @@
 [variables]
 NODE_VERSION = "22"
 
+# Force public registry before install so Railway never hits Replit-internal URLs.
+# Uses npm ci (strict lockfile) for reproducible, fast builds.
 [phases.install]
-cmds = ['npm install']
+cmds = [
+  'npm config set registry https://registry.npmjs.org/',
+  'npm ci --omit=dev'
+]
 
 [phases.build]
 cmds = []
