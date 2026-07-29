@@ -54,15 +54,7 @@ create table if not exists public.chat_rooms (
 create index if not exists chat_rooms_church_idx on public.chat_rooms(church_id);
 alter table public.chat_rooms enable row level security;
 
--- Members of a room can read it (checked via chat_room_members join)
-drop policy if exists "rooms_member_read" on public.chat_rooms;
-create policy "rooms_member_read" on public.chat_rooms
-  for select using (
-    exists (
-      select 1 from public.chat_room_members
-      where room_id = id and user_id = auth.uid()
-    )
-  );
+-- NOTE: rooms_member_read policy is defined AFTER chat_room_members table below.
 
 -- ── Chat room members ─────────────────────────────────────────────────────────
 create table if not exists public.chat_room_members (
@@ -79,6 +71,16 @@ alter table public.chat_room_members enable row level security;
 drop policy if exists "crm_owner_read" on public.chat_room_members;
 create policy "crm_owner_read" on public.chat_room_members
   for select using (auth.uid() = user_id);
+
+-- Now that chat_room_members exists, create the rooms RLS policy that references it
+drop policy if exists "rooms_member_read" on public.chat_rooms;
+create policy "rooms_member_read" on public.chat_rooms
+  for select using (
+    exists (
+      select 1 from public.chat_room_members
+      where room_id = id and user_id = auth.uid()
+    )
+  );
 
 -- ── Chat messages ─────────────────────────────────────────────────────────────
 create table if not exists public.chat_messages (
