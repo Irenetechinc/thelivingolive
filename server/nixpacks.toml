@@ -10,7 +10,10 @@ cmds = [
 ]
 
 [phases.build]
-cmds = []
+# Fail the Railway build immediately if the lockfile was committed with
+# Replit-internal registry URLs — better to catch it here than debug a
+# broken install on the next deploy.
+cmds = ['node scripts/check-lockfile.cjs']
 
 [start]
 cmd = 'node src/index.js'

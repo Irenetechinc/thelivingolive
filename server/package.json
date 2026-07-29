@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "postinstall": "node scripts/fix-lockfile-urls.cjs",
-    "fix-lockfile": "node scripts/fix-lockfile-urls.cjs"
+    "postinstall": "node scripts/fix-lockfile-urls.cjs && node ../scripts/install-hooks.cjs",
+    "fix-lockfile": "node scripts/fix-lockfile-urls.cjs",
+    "check-lockfiles": "node ../scripts/check-lockfiles.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

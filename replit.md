@@ -140,7 +140,13 @@ cd mobile && npm run fix-lockfile
 cd server && npm run fix-lockfile
 ```
 
-A pre-commit git hook will also block any commit that still contains `package-firewall.replit.local` in a lockfile.
+**Three-layer gate** prevents contaminated lockfiles from ever reaching Railway or EAS:
+
+1. **Pre-commit hook** — blocks any `git commit` that stages a lockfile containing `package-firewall.replit.local`. Installed automatically by `postinstall`; template lives at `scripts/pre-commit-hook.sh`.
+2. **Railway build phase** — `server/nixpacks.toml` runs `node scripts/check-lockfile.cjs` before starting the server. The Railway deploy fails immediately with a clear fix message if the lockfile is contaminated.
+3. **Manual check** — run `node scripts/check-lockfiles.cjs` from the repo root at any time to audit both lockfiles.
+
+Re-clone or fresh environment? Run `node scripts/install-hooks.cjs` once to reinstall the hook (postinstall does this automatically).
 
 **Important:** always regenerate lockfiles with plain `npm install` (no `--legacy-peer-deps`). EAS runs `npm ci --include=dev` without that flag, and using `--legacy-peer-deps` can produce a lockfile that is out of sync (missing packages like `react-refresh@0.18.0`).
 
