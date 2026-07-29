@@ -82,11 +82,14 @@ export type CommunityNotification = {
 };
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
+// Throws if there is no active session so callers fail fast on the client
+// rather than making unauthenticated requests that the server will reject anyway.
 async function authHeader(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token
-    ? { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  if (!session?.access_token) {
+    throw new Error('Session expired. Please log in again.');
+  }
+  return { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' };
 }
 
 async function apiCall<T = any>(path: string, method = 'GET', body?: object): Promise<T> {

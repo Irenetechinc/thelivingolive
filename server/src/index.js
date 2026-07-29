@@ -7,6 +7,7 @@ import { Expo } from "expo-server-sdk";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import crypto from "node:crypto";
 import multer from "multer";
 import { toFile } from "openai/uploads";
 import { generatePrayerPoints, generateDevotional } from "./lib/prayerEngine.js";
@@ -74,8 +75,23 @@ app.use(express.urlencoded({ extended: true })); // needed for admin login form
 // allowing the same-origin admin tab to function. "none" is NOT used because it would expose
 // all admin write endpoints to cross-site request forgery. secure:true in production ensures
 // the cookie is never sent over plain HTTP behind Railway's HTTPS proxy.
+// Derive session secret: always use the env var in production.
+// In dev/ci, generate an ephemeral random secret so the fallback is never a
+// predictable, hard-coded string visible in source code.
+const _sessionSecret = process.env.SESSION_SECRET ?? (() => {
+  const s = crypto.randomBytes(32).toString("hex");
+  if (!isProd) {
+    console.warn(
+      "[WARN] SESSION_SECRET not set — using an ephemeral random secret. " +
+      "Admin sessions will not survive server restarts. " +
+      "Set SESSION_SECRET in your environment for persistent sessions."
+    );
+  }
+  return s;
+})();
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || "living-olive-admin-fallback-secret-2024",
+  secret: _sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {

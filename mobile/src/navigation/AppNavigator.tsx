@@ -8,7 +8,7 @@ import type { BibleVersion } from "../screens/bible/BibleHomeScreen";
 import OliveBranch from "../components/OliveBranch";
 import SkeletonHomeLoader from "../components/SkeletonHomeLoader";
 import FloatingRecordingWidget from "../components/FloatingRecordingWidget";
-import { navigationRef } from "./navigationRef";
+import { navigationRef, navigate } from "./navigationRef";
 import { setPendingAlarm } from "../lib/alarmState";
 
 import SplashScreen from "../screens/SplashScreen";
@@ -62,14 +62,23 @@ export default function AppNavigator() {
 
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = (response.notification.request.content.data ?? {}) as Record<string, string>;
+      // Type the notification payload explicitly rather than using a blind cast.
+      const data = (response.notification.request.content.data ?? {}) as {
+        type?: string;
+        entryId?: string;
+        goal?: string;
+        desires?: string;
+        prayerType?: string;
+        previewText?: string;
+      };
 
       if (data.type === "devotion" || data.type === "prayer") {
+        const alarmType = data.type as "prayer" | "devotion";
         const hasEntry = !!data.entryId;
 
         if (hasEntry) {
           setPendingAlarm({
-            type: data.type,
+            type: alarmType,
             goal: data.goal,
             desires: data.desires,
             prayerType: data.prayerType,
@@ -77,8 +86,8 @@ export default function AppNavigator() {
             previewText: data.previewText,
             timestamp: Date.now(),
           });
-          (navigationRef.current as any)?.navigate("NotificationAlarm", {
-            type: data.type,
+          navigate("NotificationAlarm", {
+            type: alarmType,
             entryId: data.entryId,
             goal: data.goal,
             desires: data.desires,
@@ -87,16 +96,16 @@ export default function AppNavigator() {
           });
         } else {
           setPendingAlarm({
-            type: data.type,
+            type: alarmType,
             goal: data.goal,
             desires: data.desires,
             prayerType: data.prayerType ?? "Petition",
             timestamp: Date.now(),
           });
-          if (data.type === "devotion") {
-            navigationRef.current?.navigate("Devotions" as never);
+          if (alarmType === "devotion") {
+            navigate("Devotions");
           } else {
-            navigationRef.current?.navigate("Prayer" as never);
+            navigate("Prayer");
           }
         }
       }

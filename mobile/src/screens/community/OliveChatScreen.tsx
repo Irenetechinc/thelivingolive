@@ -11,7 +11,7 @@
  *  - Notifications tab with unread badge
  *  - Delete own post
  */
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, ActivityIndicator, Image, TouchableOpacity, Modal,
@@ -86,7 +86,8 @@ function VideoPost({
   isNearVisible: boolean;
 }) {
   const [playing, setPlaying] = useState(false);
-  const player = useVideoPlayer({ uri: videoUrl }, p => { p.loop = false; });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const player = useVideoPlayer({ uri: videoUrl }, (p: any) => { p.loop = false; });
 
   function handleTap() {
     setPlaying(true);
