@@ -25,6 +25,9 @@ import PrayerScreen from "../screens/prayer/PrayerScreen";
 import NotificationAlarmScreen from "../screens/NotificationAlarmScreen";
 import BulletinScreen from "../screens/bulletins/BulletinScreen";
 import DonateScreen from "../screens/donate/DonateScreen";
+import OliveChatScreen from "../screens/community/OliveChatScreen";
+import ChatRoomScreen from "../screens/community/ChatRoomScreen";
+import MembersScreen from "../screens/community/MembersScreen";
 
 export type RootStackParamList = {
   Home: undefined;
@@ -38,6 +41,9 @@ export type RootStackParamList = {
   Prayer: undefined;
   Bulletin: undefined;
   Donate: undefined;
+  OliveChat: undefined;
+  ChatRoom: { roomId: string; roomName: string };
+  CommunityMembers: undefined;
   NotificationAlarm: {
     type: "prayer" | "devotion";
     entryId?: string;
@@ -54,9 +60,6 @@ export default function AppNavigator() {
   const { session, loading } = useAuth();
   const [splashDone, setSplashDone] = useState(false);
 
-  // Handle notification taps — shows the alarm screen with pre-generated content.
-  // When the server sends a scheduled push, it includes an entryId pointing to
-  // content already saved in Supabase, so the user never has to tap "Generate".
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = (response.notification.request.content.data ?? {}) as Record<string, string>;
@@ -65,9 +68,6 @@ export default function AppNavigator() {
         const hasEntry = !!data.entryId;
 
         if (hasEntry) {
-          // Server pre-generated content — show the alarm screen directly.
-          // Also store the alarm state so Prayer/Devotions screen knows to
-          // scroll to the latest entry on arrival.
           setPendingAlarm({
             type: data.type,
             goal: data.goal,
@@ -86,8 +86,6 @@ export default function AppNavigator() {
             previewText: data.previewText,
           });
         } else {
-          // Older-style push without pre-generated content — fall back to
-          // navigating directly to the relevant screen with prefilled data.
           setPendingAlarm({
             type: data.type,
             goal: data.goal,
@@ -106,13 +104,10 @@ export default function AppNavigator() {
     return () => sub.remove();
   }, []);
 
-  // Show splash while auth is loading OR before splash finishes
   if (!splashDone) {
     return <SplashScreen onFinish={() => setSplashDone(true)} />;
   }
 
-  // Auth still resolving after splash — show a shimmering skeleton instead
-  // of a dead blank screen, so the app always feels alive while loading.
   if (loading) return <SkeletonHomeLoader />;
 
   return (
@@ -135,27 +130,13 @@ export default function AppNavigator() {
             />
           ) : (
             <>
-              <Stack.Screen
-                name="Home"
-                component={HomeScreen}
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen
-                name="BibleHome"
-                component={BibleHomeScreen}
-                options={{ title: "Bible" }}
-              />
-              <Stack.Screen
-                name="BookPicker"
-                component={BookPickerScreen}
-                options={{ title: "Books" }}
-              />
+              <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+              <Stack.Screen name="BibleHome" component={BibleHomeScreen} options={{ title: "Bible" }} />
+              <Stack.Screen name="BookPicker" component={BookPickerScreen} options={{ title: "Books" }} />
               <Stack.Screen
                 name="ChapterReader"
                 component={ChapterReaderScreen}
-                options={({ route }) => ({
-                  title: `${route.params.bookName} ${route.params.chapter}`,
-                })}
+                options={({ route }) => ({ title: `${route.params.bookName} ${route.params.chapter}` })}
               />
               <Stack.Screen name="Notes" component={NotesScreen} options={{ title: "Highlights & Notes" }} />
               <Stack.Screen name="HymnsList" component={HymnsListScreen} options={{ title: "Hymns" }} />
@@ -164,6 +145,28 @@ export default function AppNavigator() {
               <Stack.Screen name="Prayer" component={PrayerScreen} options={{ title: "Prayer" }} />
               <Stack.Screen name="Bulletin" component={BulletinScreen} options={{ headerShown: false }} />
               <Stack.Screen name="Donate" component={DonateScreen} options={{ headerShown: false }} />
+
+              {/* ── Olive Chat ── */}
+              <Stack.Screen
+                name="OliveChat"
+                component={OliveChatScreen}
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="ChatRoom"
+                component={ChatRoomScreen}
+                options={{
+                  title: "",
+                  headerStyle: { backgroundColor: colors.oliveDark },
+                  headerTintColor: colors.parchment,
+                }}
+              />
+              <Stack.Screen
+                name="CommunityMembers"
+                component={MembersScreen}
+                options={{ title: "New Message" }}
+              />
+
               <Stack.Screen
                 name="NotificationAlarm"
                 component={NotificationAlarmScreen}
@@ -173,11 +176,7 @@ export default function AppNavigator() {
           )}
         </Stack.Navigator>
       </NavigationContainer>
-      {/* Global decorative branch — sits above every screen in the app. */}
       <OliveBranch />
-      {/* Floating control for an in-progress recording/transcription — visible
-          no matter which screen the user navigates to, tapping it jumps back
-          to Highlights & Notes. */}
       {session ? <FloatingRecordingWidget /> : null}
     </>
   );

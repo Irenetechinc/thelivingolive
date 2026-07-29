@@ -18,6 +18,7 @@ import { adminRouter } from "./routes/admin.js";
 import { orgAdminRouter } from "./routes/orgAdmin.js";
 import { bulletinsRouter } from "./routes/bulletins.js";
 import { donateRouter } from "./routes/donate.js";
+import { communityRouter } from "./routes/community.js";
 import { adminBus } from "./lib/adminBus.js";
 
 const log = logger("api");
@@ -777,6 +778,11 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
 // ── Bulletin & donation API (mobile-facing, Supabase auth required) ──────────
 // All bulletin routes require a signed-in user — the church picker is only
 // reachable after logging in, so there is no public use case.
+app.use("/api/community", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, communityRouter);
+
 app.use("/api/bulletins", requireUser, (req, _res, next) => {
   req.app.locals.supabaseAdmin = supabaseAdmin;
   next();

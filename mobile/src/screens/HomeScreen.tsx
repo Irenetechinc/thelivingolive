@@ -71,6 +71,14 @@ const CARDS: CardDef[] = [
     gradient: ["#1C3A4A", "#2E5C70"],
     accent: "#6BAEC9",
   },
+  {
+    key: "OliveChat",
+    title: "Olive Chat",
+    description: "Community feed, group chat & direct messages",
+    symbol: "🫒",
+    gradient: ["#3B1F4A", "#6B3FA0"],
+    accent: "#B07ADF",
+  },
 ];
 
 export default function HomeScreen({ navigation }: Props) {
