@@ -1,8 +1,8 @@
 /**
  * communityApi.ts — Olive Chat / community feature API helpers.
- * Uses the Supabase client directly for data operations (RLS covers auth),
- * and falls back to the Express server for operations requiring service-role
- * (PIN hashing, DM room creation, member resolution).
+ * Uses the Express server (service-role) for operations that need admin access
+ * (PIN hashing, DM room creation, member resolution, notifications).
+ * Uses Supabase Realtime directly for live subscriptions.
  */
 
 import { supabase } from './supabase';
@@ -66,7 +66,19 @@ export type ChatMessage = {
   mediaUrl: string | null;
   durationSeconds: number | null;
   sharedPostId: string | null;
+  sharedPost: { id: string; body: string | null; thumbnailUrl: string | null } | null;
   createdAt: string;
+};
+
+export type CommunityNotification = {
+  id: string;
+  type: 'post_like' | 'comment_like' | 'comment' | 'reply' | 'dm_message' | 'new_post';
+  isRead: boolean;
+  createdAt: string;
+  postId: string | null;
+  commentId: string | null;
+  roomId: string | null;
+  actor: Author;
 };
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
@@ -85,6 +97,10 @@ async function apiCall<T = any>(path: string, method = 'GET', body?: object): Pr
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(20_000),
   });
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('application/json')) {
+    throw new Error(`Server error (${res.status})`);
+  }
   const json = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
   return json as T;
@@ -92,7 +108,7 @@ async function apiCall<T = any>(path: string, method = 'GET', body?: object): Pr
 
 async function uploadFile(path: string, uri: string, mimeType: string): Promise<string> {
   const headers = await authHeader();
-  delete (headers as any)['Content-Type']; // let browser set multipart boundary
+  delete (headers as any)['Content-Type'];
   const fd = new FormData();
   fd.append('file', { uri, name: uri.split('/').pop() ?? 'file', type: mimeType } as any);
   const res = await fetch(`${API}${path}`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(120_000) });
@@ -148,6 +164,17 @@ export async function validatePin(pin: string): Promise<boolean> {
   return r.valid === true;
 }
 
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export async function getNotifications(): Promise<CommunityNotification[]> {
+  const r = await apiCall<any>('/api/community/notifications');
+  return r.notifications ?? [];
+}
+
+export async function markNotificationsRead(ids?: string[]): Promise<void> {
+  await apiCall('/api/community/notifications/read', 'PUT', ids?.length ? { ids } : {});
+}
+
 // ── Members ───────────────────────────────────────────────────────────────────
 
 export async function getChurchMembers(): Promise<Author[]> {
@@ -171,9 +198,15 @@ export async function getRoomMessages(roomId: string, before?: string): Promise<
   const qs = before ? `?before=${encodeURIComponent(before)}` : '';
   const r = await apiCall<any>(`/api/community/rooms/${roomId}/messages${qs}`);
   return (r.messages ?? []).map((m: any): ChatMessage => ({
-    id: m.id, sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
-    type: m.type, body: m.body ?? null, mediaUrl: m.media_url ?? null,
-    durationSeconds: m.duration_seconds ?? null, sharedPostId: m.shared_post_id ?? null, createdAt: m.created_at,
+    id: m.id,
+    sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
+    type: m.type,
+    body: m.body ?? null,
+    mediaUrl: m.media_url ?? null,
+    durationSeconds: m.duration_seconds ?? null,
+    sharedPostId: m.shared_post_id ?? null,
+    sharedPost: m.sharedPost ?? null,
+    createdAt: m.created_at,
   }));
 }
 
@@ -183,9 +216,12 @@ export async function sendMessage(roomId: string, payload: {
 }): Promise<ChatMessage> {
   const r = await apiCall<any>(`/api/community/rooms/${roomId}/messages`, 'POST', payload);
   const m = r.message;
-  return { id: m.id, sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
+  return {
+    id: m.id, sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
     type: m.type, body: m.body ?? null, mediaUrl: m.media_url ?? null,
-    durationSeconds: m.duration_seconds ?? null, sharedPostId: m.shared_post_id ?? null, createdAt: m.created_at };
+    durationSeconds: m.duration_seconds ?? null, sharedPostId: m.shared_post_id ?? null,
+    sharedPost: m.sharedPost ?? null, createdAt: m.created_at,
+  };
 }
 
 export async function uploadMessageMedia(roomId: string, uri: string, type: 'image' | 'voice'): Promise<string> {
@@ -223,6 +259,10 @@ export async function uploadPostMedia(uri: string, mimeType: string): Promise<st
   return uploadFile('/api/community/posts/upload', uri, mimeType);
 }
 
+export async function deletePost(postId: string): Promise<void> {
+  await apiCall(`/api/community/posts/${postId}`, 'DELETE');
+}
+
 export async function togglePostLike(postId: string): Promise<{ liked: boolean; likeCount: number }> {
   const r = await apiCall<any>(`/api/community/posts/${postId}/like`, 'POST');
   return { liked: r.liked, likeCount: r.likeCount };
@@ -243,7 +283,20 @@ export async function toggleCommentLike(postId: string, commentId: string): Prom
   return { liked: r.liked, likeCount: r.likeCount };
 }
 
-// ── Supabase Realtime subscription for a chat room ────────────────────────────
+export async function sharePostToRoom(postId: string, roomId: string, note?: string): Promise<ChatMessage> {
+  const r = await apiCall<any>(`/api/community/posts/${postId}/share-to-room`, 'POST', { roomId, note });
+  const m = r.message;
+  return {
+    id: m.id, sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
+    type: 'post_share', body: m.body ?? null, mediaUrl: null,
+    durationSeconds: null, sharedPostId: m.shared_post_id ?? null,
+    sharedPost: m.sharedPost ?? null, createdAt: m.created_at,
+  };
+}
+
+// ── Supabase Realtime subscriptions ──────────────────────────────────────────
+
+/** Real-time subscription for incoming chat messages in a room. */
 export function subscribeToRoom(
   roomId: string,
   onMessage: (msg: ChatMessage) => void
@@ -255,7 +308,6 @@ export function subscribeToRoom(
       { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room_id=eq.${roomId}` },
       async (payload) => {
         const raw = payload.new as any;
-        // Fetch sender display name
         const { data: profile } = await supabase
           .from('user_profiles').select('display_name, avatar_url').eq('id', raw.user_id).maybeSingle();
         const { data: { user } } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
@@ -263,10 +315,63 @@ export function subscribeToRoom(
         onMessage({
           id: raw.id, type: raw.type, body: raw.body ?? null,
           mediaUrl: raw.media_url ?? null, durationSeconds: raw.duration_seconds ?? null,
-          sharedPostId: raw.shared_post_id ?? null, createdAt: raw.created_at,
+          sharedPostId: raw.shared_post_id ?? null, sharedPost: null, createdAt: raw.created_at,
           sender: { userId: raw.user_id, name, avatarUrl: profile?.avatar_url ?? null },
         });
       }
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
+/** Real-time subscription for new posts in the timeline feed. */
+export function subscribeToTimeline(
+  onPost: (post: CommunityPost) => void
+) {
+  const channel = supabase
+    .channel('community_timeline')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'community_posts' },
+      async (payload) => {
+        const raw = payload.new as any;
+        const { data: profile } = await supabase
+          .from('user_profiles').select('display_name, avatar_url').eq('id', raw.user_id).maybeSingle();
+        const name = profile?.display_name || `user_${raw.user_id.slice(0, 6)}`;
+        onPost({
+          id: raw.id,
+          author: { userId: raw.user_id, name, avatarUrl: profile?.avatar_url ?? null },
+          body: raw.body ?? null,
+          imageUrl: raw.image_url ?? null,
+          videoUrl: raw.video_url ?? null,
+          videoThumbnailUrl: raw.video_thumbnail_url ?? null,
+          likeCount: 0,
+          commentCount: 0,
+          liked: false,
+          createdAt: raw.created_at,
+        });
+      }
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
+/** Real-time subscription for community notifications for the current user. */
+export function subscribeToNotifications(
+  userId: string,
+  onNotification: () => void
+) {
+  const channel = supabase
+    .channel(`notifications:${userId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'community_notifications',
+        filter: `recipient_id=eq.${userId}`,
+      },
+      () => onNotification()
     )
     .subscribe();
   return () => supabase.removeChannel(channel);

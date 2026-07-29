@@ -121,6 +121,8 @@ Two workflows start automatically:
 2. Run `cd server && npm install` (dependencies are tracked in `server/package.json`)
 3. Run `cd mobile && npm install`
 4. Both workflows start automatically
+5. **Run the community schema** in Supabase SQL Editor: `server/supabase/community-schema.sql` — adds all Olive Chat tables (`user_profiles`, `chat_rooms`, `chat_room_members`, `chat_messages`, `community_posts`, `post_likes`, `post_comments`, `post_comment_likes`, `community_notifications`) with full RLS
+6. **Create a `community` Supabase Storage bucket** (public) — stores avatars, covers, post images/videos, and chat media
 
 **Verified (2026-07-14):** Backend API starts cleanly on Node.js 22 with or without secrets (features degrade gracefully with warnings in logs). `GET /health` returns `{"ok":true,"service":"the-living-olive-api"}`.
 

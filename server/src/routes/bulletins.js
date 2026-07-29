@@ -7,6 +7,7 @@
 
 import { Router } from 'express';
 import { logger } from '../lib/logger.js';
+import { ensureUserInChurchGeneralRoom } from './community.js';
 
 const log = logger('bulletins');
 const router = Router();
@@ -89,6 +90,13 @@ router.post('/my-church', async (req, res) => {
   );
   if (error) return res.status(500).json({ error: error.message });
   log.info(`User ${req.user.id} joined church ${churchId}`);
+
+  // Auto-add user to their new church's General group chat room.
+  // Uses the internal helper — derives churchId from authoritative DB state, no
+  // HTTP self-call, no client-supplied data trusted for authorization.
+  ensureUserInChurchGeneralRoom(req.app.locals.supabaseAdmin, req.user.id)
+    .catch(e => log.warn('ensureUserInChurchGeneralRoom failed:', e.message));
+
   res.json({ ok: true });
 });
 

@@ -2,6 +2,14 @@
  * OliveChatScreen — Olive Chat main screen.
  * Tabs: Feed (timeline) | Chats (rooms) | Profile
  * Gated by church membership + optional PIN lock.
+ *
+ * Fixes / additions over prior version:
+ *  - Comment like count updates live in CommentsSheet
+ *  - Real-time timeline subscription (new posts appear instantly)
+ *  - In-app Share-to-room dialog (ShareToRoomModal)
+ *  - Age computed from date_of_birth in profile
+ *  - Notifications tab with unread badge
+ *  - Delete own post
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -22,13 +30,37 @@ import type { RootStackParamList } from '../../navigation/AppNavigator';
 import {
   getMyProfile, updateProfile, uploadAvatar, uploadCover,
   getPinStatus, setPin, validatePin,
-  getRooms, getTimeline, createPost, uploadPostMedia,
+  getRooms, getTimeline, createPost, uploadPostMedia, deletePost,
   togglePostLike, getPostComments, addPostComment, toggleCommentLike,
-  type UserProfile, type CommunityPost, type PostComment, type ChatRoom,
+  sharePostToRoom, getNotifications, markNotificationsRead,
+  subscribeToTimeline, subscribeToNotifications,
+  type UserProfile, type CommunityPost, type PostComment,
+  type ChatRoom, type CommunityNotification,
 } from '../../lib/communityApi';
+import { supabase } from '../../lib/supabase';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-type Tab = 'feed' | 'chats' | 'profile';
+type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function relTime(iso: string) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}d`;
+}
+
+function ageFromDob(dob: string | null): number | null {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age > 0 ? age : null;
+}
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 function Avatar({ url, name, size = 36 }: { url: string | null; name: string; size?: number }) {
@@ -39,15 +71,6 @@ function Avatar({ url, name, size = 36 }: { url: string | null; name: string; si
       <Text style={{ color: '#fff', fontSize: size * 0.36, fontWeight: '700' }}>{initials}</Text>
     </View>
   );
-}
-
-// ── Relative time ─────────────────────────────────────────────────────────────
-function relTime(iso: string) {
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
 }
 
 // ── Video post component ──────────────────────────────────────────────────────
@@ -78,13 +101,18 @@ const vs = StyleSheet.create({
 });
 
 // ── Post card ─────────────────────────────────────────────────────────────────
-function PostCard({ post, onLike, onComment, onShare }: {
+function PostCard({ post, myId, onLike, onComment, onShare, onShareToRoom, onDelete }: {
   post: CommunityPost;
+  myId: string | null;
   onLike: () => void;
   onComment: () => void;
   onShare: () => void;
+  onShareToRoom: () => void;
+  onDelete: () => void;
 }) {
   const heartAnim = useRef(new Animated.Value(1)).current;
+  const [menuOpen, setMenuOpen] = useState(false);
+
   function animLike() {
     Animated.sequence([
       Animated.spring(heartAnim, { toValue: 1.4, useNativeDriver: true, tension: 120 }),
@@ -92,6 +120,9 @@ function PostCard({ post, onLike, onComment, onShare }: {
     ]).start();
     onLike();
   }
+
+  const isOwner = myId === post.author.userId;
+
   return (
     <View style={ps.card}>
       <View style={ps.header}>
@@ -100,6 +131,11 @@ function PostCard({ post, onLike, onComment, onShare }: {
           <Text style={ps.authorName}>{post.author.name}</Text>
           <Text style={ps.time}>{relTime(post.createdAt)}</Text>
         </View>
+        {isOwner && (
+          <Pressable style={ps.menuBtn} onPress={() => setMenuOpen(true)}>
+            <Text style={ps.menuDots}>•••</Text>
+          </Pressable>
+        )}
       </View>
       {post.body ? <Text style={ps.body}>{post.body}</Text> : null}
       {post.imageUrl ? <Image source={{ uri: post.imageUrl }} style={ps.image} resizeMode="cover" /> : null}
@@ -107,17 +143,36 @@ function PostCard({ post, onLike, onComment, onShare }: {
       <View style={ps.actions}>
         <Pressable style={ps.actionBtn} onPress={animLike}>
           <Animated.Text style={[ps.actionIcon, { transform: [{ scale: heartAnim }], color: post.liked ? '#E05252' : colors.inkFaint }]}>♥</Animated.Text>
-          <Text style={[ps.actionText, post.liked && { color: '#E05252' }]}>{post.likeCount || ''}</Text>
+          <Text style={[ps.actionText, post.liked && { color: '#E05252' }]}>{post.likeCount > 0 ? post.likeCount : ''}</Text>
         </Pressable>
         <Pressable style={ps.actionBtn} onPress={onComment}>
           <Text style={ps.actionIcon}>💬</Text>
-          <Text style={ps.actionText}>{post.commentCount || ''}</Text>
+          <Text style={ps.actionText}>{post.commentCount > 0 ? post.commentCount : ''}</Text>
+        </Pressable>
+        <Pressable style={ps.actionBtn} onPress={onShareToRoom}>
+          <Text style={ps.actionIcon}>📤</Text>
+          <Text style={ps.actionText}>Share</Text>
         </Pressable>
         <Pressable style={ps.actionBtn} onPress={onShare}>
           <Text style={ps.actionIcon}>↗</Text>
-          <Text style={ps.actionText}>Share</Text>
+          <Text style={ps.actionText}>External</Text>
         </Pressable>
       </View>
+
+      {/* Owner context menu */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={ps.menuOverlay} onPress={() => setMenuOpen(false)}>
+          <View style={ps.menuCard}>
+            <Text style={ps.menuTitle}>Post Options</Text>
+            <Pressable style={ps.menuItem} onPress={() => { setMenuOpen(false); onDelete(); }}>
+              <Text style={[ps.menuItemText, { color: colors.danger }]}>🗑 Delete Post</Text>
+            </Pressable>
+            <Pressable style={ps.menuItem} onPress={() => setMenuOpen(false)}>
+              <Text style={ps.menuItemText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -126,12 +181,112 @@ const ps = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
   authorName: { ...typography.subtitle, color: colors.ink, fontSize: 14 },
   time: { ...typography.micro, color: colors.inkFaint, marginTop: 2 },
+  menuBtn: { padding: 6 },
+  menuDots: { fontSize: 14, color: colors.inkFaint, letterSpacing: 1 },
   body: { ...typography.body, color: colors.ink, lineHeight: 22, marginBottom: spacing.sm },
   image: { width: '100%', height: 220, borderRadius: radii.md, backgroundColor: colors.parchmentDark, marginBottom: spacing.sm },
-  actions: { flexDirection: 'row', gap: spacing.lg, borderTopWidth: 1, borderTopColor: colors.parchmentDark, paddingTop: spacing.sm, marginTop: spacing.xs },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  actionIcon: { fontSize: 17, color: colors.inkFaint },
-  actionText: { fontSize: 13, color: colors.inkFaint, fontWeight: '600' },
+  actions: { flexDirection: 'row', gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.parchmentDark, paddingTop: spacing.sm, marginTop: spacing.xs },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  actionIcon: { fontSize: 16, color: colors.inkFaint },
+  actionText: { fontSize: 12, color: colors.inkFaint, fontWeight: '600' },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'flex-end', padding: spacing.lg },
+  menuCard: { backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg, width: '100%', ...shadows.cardLg },
+  menuTitle: { ...typography.subtitle, color: colors.ink, marginBottom: spacing.md },
+  menuItem: { paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.parchmentDark },
+  menuItemText: { fontSize: 16, color: colors.ink, fontWeight: '600', textAlign: 'center' },
+});
+
+// ── Share to room modal ────────────────────────────────────────────────────────
+function ShareToRoomModal({ post, rooms, visible, onClose, onShared }: {
+  post: CommunityPost | null;
+  rooms: ChatRoom[];
+  visible: boolean;
+  onClose: () => void;
+  onShared: () => void;
+}) {
+  const [note, setNote] = useState('');
+  const [sharing, setSharing] = useState<string | null>(null);
+
+  async function doShare(room: ChatRoom) {
+    if (!post) return;
+    setSharing(room.id);
+    try {
+      await sharePostToRoom(post.id, room.id, note.trim() || undefined);
+      setNote('');
+      onShared();
+      Alert.alert('Shared!', `Post shared to ${room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'DM')}`);
+      onClose();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSharing(null);
+    }
+  }
+
+  const roomName = (r: ChatRoom) =>
+    r.type === 'group' ? `👥 ${r.name ?? 'General'}` : `💬 ${r.otherUser?.name ?? 'DM'}`;
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.parchment }}>
+        <View style={str.header}>
+          <Text style={str.title}>Share to Chat</Text>
+          <Pressable onPress={onClose}><Text style={str.close}>✕</Text></Pressable>
+        </View>
+        {post && (
+          <View style={str.previewCard}>
+            {post.body ? <Text style={str.previewBody} numberOfLines={2}>{post.body}</Text> : null}
+            {post.imageUrl ? <Image source={{ uri: post.imageUrl }} style={str.previewImage} resizeMode="cover" /> : null}
+          </View>
+        )}
+        <View style={str.noteWrap}>
+          <TextInput
+            style={str.noteInput}
+            value={note}
+            onChangeText={setNote}
+            placeholder="Add a note (optional)…"
+            placeholderTextColor={colors.inkFaint}
+          />
+        </View>
+        <Text style={str.sectionLabel}>CHOOSE A ROOM</Text>
+        <FlatList
+          data={rooms}
+          keyExtractor={r => r.id}
+          contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 40 }}
+          renderItem={({ item: room }) => (
+            <Pressable
+              style={({ pressed }) => [str.roomRow, pressed && { opacity: 0.7 }]}
+              onPress={() => doShare(room)}
+              disabled={sharing === room.id}
+            >
+              <Text style={str.roomName}>{roomName(room)}</Text>
+              {sharing === room.id
+                ? <ActivityIndicator size="small" color={colors.olive} />
+                : <Text style={str.roomArrow}>›</Text>}
+            </Pressable>
+          )}
+          ListEmptyComponent={
+            <Text style={str.empty}>No chats yet. Start a DM from the Chats tab first.</Text>
+          }
+        />
+      </View>
+    </Modal>
+  );
+}
+const str = StyleSheet.create({
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark, backgroundColor: colors.white },
+  title: { ...typography.subtitle, color: colors.ink },
+  close: { fontSize: 20, color: colors.inkFaint, padding: 4 },
+  previewCard: { margin: spacing.lg, backgroundColor: colors.white, borderRadius: radii.md, padding: spacing.md, ...shadows.subtle },
+  previewBody: { fontSize: 14, color: colors.ink, lineHeight: 20, marginBottom: spacing.xs },
+  previewImage: { width: '100%', height: 120, borderRadius: radii.sm },
+  noteWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  noteInput: { backgroundColor: colors.white, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: 15, color: colors.ink, borderWidth: 1.5, borderColor: colors.parchmentDark },
+  sectionLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
+  roomRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, borderRadius: radii.md, marginBottom: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, ...shadows.subtle },
+  roomName: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.ink },
+  roomArrow: { fontSize: 22, color: colors.inkFaint },
+  empty: { textAlign: 'center', color: colors.inkFaint, paddingVertical: 24, fontSize: 14 },
 });
 
 // ── Comments bottom sheet ─────────────────────────────────────────────────────
@@ -164,7 +319,20 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
     finally { setSending(false); }
   }
 
-  function renderComment(c: PostComment, isReply = false) {
+  async function handleToggleCommentLike(postId: string, comment: PostComment, isReply: boolean, parentId?: string) {
+    try {
+      const { liked, likeCount } = await toggleCommentLike(postId, comment.id);
+      setComments(prev => prev.map(c => {
+        if (!isReply && c.id === comment.id) return { ...c, liked, likeCount };
+        if (isReply && c.id === parentId) {
+          return { ...c, replies: c.replies.map(r => r.id === comment.id ? { ...r, liked, likeCount } : r) };
+        }
+        return c;
+      }));
+    } catch {}
+  }
+
+  function renderComment(c: PostComment, isReply = false, parentId?: string) {
     return (
       <View key={c.id} style={[cs.row, isReply && cs.replyRow]}>
         <Avatar url={c.author.avatarUrl} name={c.author.name} size={isReply ? 28 : 34} />
@@ -172,8 +340,8 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
           <Text style={cs.commentAuthor}>{c.author.name} <Text style={cs.commentTime}>{relTime(c.createdAt)}</Text></Text>
           <Text style={cs.commentBody}>{c.body}</Text>
           <View style={cs.commentActions}>
-            <TouchableOpacity onPress={() => { if (post) toggleCommentLike(post.id, c.id).catch(() => {}); }}>
-              <Text style={cs.commentAction}>♥ {c.likeCount > 0 ? c.likeCount : ''}</Text>
+            <TouchableOpacity onPress={() => post && handleToggleCommentLike(post.id, c, isReply, parentId)}>
+              <Text style={[cs.commentAction, c.liked && { color: '#E05252' }]}>♥ {c.likeCount > 0 ? c.likeCount : 'Like'}</Text>
             </TouchableOpacity>
             {!isReply && <TouchableOpacity onPress={() => setReplyTo(c)}><Text style={cs.commentAction}>Reply</Text></TouchableOpacity>}
           </View>
@@ -195,14 +363,14 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
             keyExtractor={c => c.id}
             contentContainerStyle={{ padding: spacing.md }}
             renderItem={({ item: c }) => (
-              <View>{renderComment(c)}{c.replies.map(r => renderComment(r, true))}</View>
+              <View>{renderComment(c)}{c.replies.map(r => renderComment(r, true, c.id))}</View>
             )}
             ListEmptyComponent={<Text style={cs.empty}>No comments yet. Be the first!</Text>}
           />
         )}
         {replyTo && (
           <View style={cs.replyBanner}>
-            <Text style={cs.replyBannerText}>Replying to {replyTo.author.name}</Text>
+            <Text style={cs.replyBannerText}>↩ Replying to {replyTo.author.name}</Text>
             <Pressable onPress={() => setReplyTo(null)}><Text style={cs.replyBannerClose}>✕</Text></Pressable>
           </View>
         )}
@@ -233,7 +401,7 @@ const cs = StyleSheet.create({
   sendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.olive, alignItems: 'center', justifyContent: 'center' },
   sendBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   replyBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.xs, backgroundColor: colors.parchment, borderTopWidth: 1, borderTopColor: colors.parchmentDark },
-  replyBannerText: { fontSize: 12, color: colors.olive },
+  replyBannerText: { fontSize: 12, color: colors.olive, fontWeight: '600' },
   replyBannerClose: { fontSize: 14, color: colors.inkFaint },
   empty: { textAlign: 'center', color: colors.inkFaint, paddingVertical: 24, fontSize: 14 },
 });
@@ -307,7 +475,9 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
               <Text style={cpm.toolIcon}>🖼</Text>
               <Text style={cpm.toolLabel}>Photo/Video</Text>
             </Pressable>
-            {mediaUri && <Pressable style={cpm.toolBtn} onPress={() => { setMediaUri(null); setMediaType(null); setThumbUri(null); }}><Text style={cpm.toolLabel}>Remove media</Text></Pressable>}
+            {mediaUri && <Pressable style={cpm.toolBtn} onPress={() => { setMediaUri(null); setMediaType(null); setThumbUri(null); }}>
+              <Text style={cpm.toolLabel}>Remove</Text>
+            </Pressable>}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -374,7 +544,7 @@ function PinGate({ onVerified }: { onVerified: () => void }) {
   );
 }
 const pg = StyleSheet.create({
-  bg: { ...StyleSheet.absoluteFillObject, zIndex: 100 },
+  bg: { ...StyleSheet.absoluteFill, zIndex: 100 },
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   lock: { fontSize: 48, marginBottom: spacing.md },
   title: { fontSize: 28, fontWeight: '700', color: '#fff', letterSpacing: -0.5, marginBottom: 4 },
@@ -409,7 +579,7 @@ function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onRelo
   }, [profile]);
 
   async function pickAndUpload(type: 'avatar' | 'cover') {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
     if (res.canceled || !res.assets[0]) return;
     try {
       if (type === 'avatar') await uploadAvatar(res.assets[0].uri);
@@ -435,13 +605,18 @@ function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onRelo
   }
 
   if (!profile) return <ActivityIndicator color={colors.gold} style={{ marginTop: 60 }} />;
+
+  const age = ageFromDob(profile.dateOfBirth);
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
       {/* Cover */}
       <Pressable onPress={() => pickAndUpload('cover')}>
         <View style={pf.cover}>
-          {profile.coverUrl ? <Image source={{ uri: profile.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <LinearGradient colors={['#3E4A2F','#8A6A10']} style={StyleSheet.absoluteFill} />}
-          <View style={pf.coverEdit}><Text style={pf.coverEditText}>Edit cover</Text></View>
+          {profile.coverUrl
+            ? <Image source={{ uri: profile.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            : <LinearGradient colors={['#3E4A2F','#8A6A10']} style={StyleSheet.absoluteFill} />}
+          <View style={pf.coverEdit}><Text style={pf.coverEditText}>✎ Edit cover</Text></View>
         </View>
       </Pressable>
       {/* Avatar */}
@@ -472,8 +647,12 @@ function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onRelo
           <>
             <Text style={pf.displayName}>{profile.displayName ?? profile.email?.split('@')[0]}</Text>
             {profile.bio ? <Text style={pf.bioText}>{profile.bio}</Text> : null}
-            {profile.email ? <Text style={pf.emailText}>📧 {profile.email}</Text> : null}
-            {profile.dateOfBirth ? <Text style={pf.emailText}>🎂 {profile.dateOfBirth}</Text> : null}
+            {profile.email ? <Text style={pf.metaText}>📧 {profile.email}</Text> : null}
+            {profile.dateOfBirth ? (
+              <Text style={pf.metaText}>
+                🎂 {profile.dateOfBirth}{age !== null ? `  ·  ${age} years old` : ''}
+              </Text>
+            ) : null}
           </>
         )}
       </View>
@@ -485,7 +664,6 @@ function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onRelo
           <Text style={pf.pinBtnText}>{pinSet ? '🔒 Change / Remove PIN' : '🔓 Set PIN'}</Text>
         </Pressable>
       </View>
-      {/* PIN modal */}
       <Modal visible={pinModal} animationType="fade" transparent onRequestClose={() => setPinModal(false)}>
         <View style={pf.pinOverlay}>
           <View style={pf.pinCard}>
@@ -518,7 +696,7 @@ const pf = StyleSheet.create({
   infoWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, backgroundColor: colors.white },
   displayName: { fontSize: 22, fontWeight: '700', color: colors.ink, letterSpacing: -0.3, marginBottom: 6 },
   bioText: { fontSize: 14, color: colors.inkSoft, lineHeight: 20, marginBottom: 6 },
-  emailText: { fontSize: 13, color: colors.inkFaint, marginBottom: 3 },
+  metaText: { fontSize: 13, color: colors.inkFaint, marginBottom: 3 },
   fieldLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.xs, marginTop: spacing.sm },
   fieldInput: { backgroundColor: colors.parchment, borderWidth: 1.5, borderColor: colors.parchmentDark, borderRadius: radii.md, padding: spacing.md, fontSize: 15, color: colors.ink, marginBottom: spacing.sm },
   section: { margin: spacing.lg, backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg, ...shadows.subtle },
@@ -534,7 +712,92 @@ const pf = StyleSheet.create({
   pinAction: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.md, borderRadius: radii.md },
 });
 
-// ── Chats tab ─────────────────────────────────────────────────────────────────
+// ── Notifications tab ─────────────────────────────────────────────────────────
+function NotificationsTab({ userId }: { userId: string | null }) {
+  const [notifs, setNotifs] = useState<CommunityNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) return;
+    setLoading(true);
+    getNotifications()
+      .then(n => { setNotifs(n); setLoading(false); })
+      .catch(() => setLoading(false));
+    // Mark all read after 2s
+    const t = setTimeout(() => markNotificationsRead().catch(() => {}), 2000);
+    return () => clearTimeout(t);
+  }, [userId]);
+
+  function notifIcon(type: CommunityNotification['type']) {
+    switch (type) {
+      case 'post_like': return '❤️';
+      case 'comment_like': return '❤️';
+      case 'comment': return '💬';
+      case 'reply': return '↩️';
+      case 'dm_message': return '✉️';
+      case 'new_post': return '🌿';
+      default: return '🔔';
+    }
+  }
+
+  function notifText(n: CommunityNotification) {
+    switch (n.type) {
+      case 'post_like': return `${n.actor.name} liked your post`;
+      case 'comment_like': return `${n.actor.name} liked your comment`;
+      case 'comment': return `${n.actor.name} commented on your post`;
+      case 'reply': return `${n.actor.name} replied to your comment`;
+      case 'dm_message': return `${n.actor.name} sent you a message`;
+      case 'new_post': return `${n.actor.name} posted something new`;
+      default: return `New activity from ${n.actor.name}`;
+    }
+  }
+
+  if (loading) return <ActivityIndicator color={colors.gold} style={{ marginTop: 40 }} />;
+
+  return (
+    <FlatList
+      data={notifs}
+      keyExtractor={n => n.id}
+      contentContainerStyle={{ paddingBottom: 80 }}
+      renderItem={({ item: n }) => (
+        <View style={[nt.row, !n.isRead && nt.rowUnread]}>
+          <View style={nt.iconWrap}>
+            <Avatar url={n.actor.avatarUrl} name={n.actor.name} size={42} />
+            <Text style={nt.typeIcon}>{notifIcon(n.type)}</Text>
+          </View>
+          <View style={nt.content}>
+            <Text style={nt.text}>{notifText(n)}</Text>
+            <Text style={nt.time}>{relTime(n.createdAt)}</Text>
+          </View>
+          {!n.isRead && <View style={nt.unreadDot} />}
+        </View>
+      )}
+      ListEmptyComponent={
+        <View style={nt.empty}>
+          <Text style={nt.emptyIcon}>🔔</Text>
+          <Text style={nt.emptyTitle}>No notifications yet</Text>
+          <Text style={nt.emptyDesc}>When someone likes or comments on your posts, it'll show up here.</Text>
+        </View>
+      }
+    />
+  );
+}
+const nt = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark, backgroundColor: colors.white, gap: spacing.md },
+  rowUnread: { backgroundColor: '#F0F7EB' },
+  iconWrap: { position: 'relative' },
+  typeIcon: { position: 'absolute', bottom: -4, right: -4, fontSize: 14, backgroundColor: colors.white, borderRadius: 10, overflow: 'hidden' },
+  content: { flex: 1 },
+  text: { fontSize: 14, color: colors.ink, lineHeight: 20 },
+  time: { fontSize: 12, color: colors.inkFaint, marginTop: 2 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.olive },
+  empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: spacing.xl },
+  emptyIcon: { fontSize: 48, marginBottom: 16 },
+  emptyTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 8 },
+  emptyDesc: { ...typography.bodySmall, color: colors.inkSoft, textAlign: 'center', lineHeight: 22 },
+});
+
+// ── Chats tab room row ────────────────────────────────────────────────────────
 function RoomRow({ room, onPress }: { room: ChatRoom; onPress: () => void }) {
   const name = room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'Member');
   const avatarUrl = room.type === 'dm' ? (room.otherUser?.avatarUrl ?? null) : null;
@@ -576,6 +839,7 @@ export default function OliveChatScreen() {
   const [pinLocked, setPinLocked] = useState(false);
   const [pinChecked, setPinChecked] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -584,30 +848,79 @@ export default function OliveChatScreen() {
   const [notMember, setNotMember] = useState(false);
   const [commentPost, setCommentPost] = useState<CommunityPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [sharePost, setSharePost] = useState<CommunityPost | null>(null);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+
+  // Real-time unsubscribe refs
+  const timelineUnsubRef = useRef<(() => void) | null>(null);
+  const notifUnsubRef = useRef<(() => void) | null>(null);
 
   useFocusEffect(useCallback(() => {
     let active = true;
     (async () => {
       try {
+        // Get current user id
+        const { data: { user } } = await supabase.auth.getUser();
+        if (active && user) setMyUserId(user.id);
+
         // Check PIN
         const pinActive = await getPinStatus();
         if (active) { setPinLocked(pinActive); setPinChecked(true); }
+
         // Load profile
         const p = await getMyProfile();
         if (active) setProfile(p);
-        // Load feed
-        const feed = await getTimeline();
-        if (active) { setPosts(feed); setLoadingFeed(false); }
-        // Load rooms
-        const r = await getRooms();
-        if (active) { setRooms(r); setLoadingRooms(false); }
+
+        // Load feed + rooms in parallel
+        const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
+        if (active) {
+          setPosts(feed);
+          setLoadingFeed(false);
+          setRooms(r);
+          setLoadingRooms(false);
+        }
+
+        // Load notifications unread count
+        const notifs = await getNotifications();
+        if (active) setUnreadNotifCount(notifs.filter(n => !n.isRead).length);
+
+        // Subscribe to new timeline posts
+        if (active && !timelineUnsubRef.current) {
+          timelineUnsubRef.current = subscribeToTimeline(newPost => {
+            setPosts(prev => {
+              if (prev.find(p => p.id === newPost.id)) return prev;
+              return [newPost, ...prev];
+            });
+          });
+        }
+
+        // Subscribe to notifications
+        if (active && user && !notifUnsubRef.current) {
+          notifUnsubRef.current = subscribeToNotifications(user.id, () => {
+            setUnreadNotifCount(c => c + 1);
+          });
+        }
       } catch (e: any) {
-        if (e.message?.includes('church')) { if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); } }
-        else { if (active) { setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); } }
+        if (e.message?.includes('church')) {
+          if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
+        } else {
+          if (active) { setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
+        }
       }
     })();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      // Don't unsubscribe on blur — keep realtime active while screen is mounted
+    };
   }, []));
+
+  // Clean up realtime on unmount
+  useEffect(() => {
+    return () => {
+      timelineUnsubRef.current?.();
+      notifUnsubRef.current?.();
+    };
+  }, []);
 
   async function refreshFeed() {
     setRefreshing(true);
@@ -626,27 +939,49 @@ export default function OliveChatScreen() {
     } catch {}
   }
 
-  async function handleShare(post: CommunityPost) {
+  async function handleNativeShare(post: CommunityPost) {
     try {
       const msg = post.body ?? (post.imageUrl ? '[Image]' : '[Video]');
-      await Share.share({ message: `${post.author.name} shared: ${msg}`, url: post.imageUrl ?? post.videoUrl ?? undefined });
+      await Share.share({ message: `${post.author.name}: ${msg}`, url: post.imageUrl ?? post.videoUrl ?? undefined });
     } catch {}
   }
 
-  if (!pinChecked) return <View style={{ flex: 1, backgroundColor: '#2E3A1F', alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.goldLight} /></View>;
+  async function handleDeletePost(post: CommunityPost) {
+    Alert.alert('Delete Post', 'Are you sure you want to delete this post?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await deletePost(post.id);
+            setPosts(prev => prev.filter(p => p.id !== post.id));
+          } catch (e: any) { Alert.alert('Error', e.message); }
+        },
+      },
+    ]);
+  }
+
+  if (!pinChecked) return (
+    <View style={{ flex: 1, backgroundColor: '#2E3A1F', alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color={colors.goldLight} />
+    </View>
+  );
   if (pinLocked) return <PinGate onVerified={() => setPinLocked(false)} />;
 
   if (notMember) return (
     <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center', padding: spacing.xl }}>
       <Text style={{ fontSize: 48, marginBottom: 20 }}>⛪</Text>
       <Text style={{ ...typography.title, color: colors.ink, textAlign: 'center', marginBottom: 12 }}>Join a Church First</Text>
-      <Text style={{ ...typography.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 22 }}>You need to select your church in the Bulletin section before you can access Olive Chat.</Text>
+      <Text style={{ ...typography.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 22 }}>
+        You need to select your church in the Bulletin section before you can access Olive Chat.
+      </Text>
     </View>
   );
 
-  const TABS: { key: Tab; icon: string; label: string }[] = [
+  const TABS: { key: Tab; icon: string; label: string; badge?: number }[] = [
     { key: 'feed', icon: '🌿', label: 'Feed' },
     { key: 'chats', icon: '💬', label: 'Chats' },
+    { key: 'notifications', icon: '🔔', label: 'Alerts', badge: unreadNotifCount },
     { key: 'profile', icon: '👤', label: 'Profile' },
   ];
 
@@ -656,22 +991,41 @@ export default function OliveChatScreen() {
       <LinearGradient colors={['#2E3A1F','#3E4A2F','#5B6B45']} style={[main.header, { paddingTop: spacing.sm + insets.top }]}>
         <View style={main.headerInner}>
           <Text style={main.headerTitle}>🫒 Olive Chat</Text>
-          {tab === 'chats' && (
-            <Pressable style={main.headerBtn} onPress={() => navigation.navigate('CommunityMembers' as any)}>
-              <Text style={main.headerBtnText}>✏️ New DM</Text>
-            </Pressable>
-          )}
-          {tab === 'feed' && (
-            <Pressable style={main.headerBtn} onPress={() => setShowCreate(true)}>
-              <Text style={main.headerBtnText}>+ Post</Text>
-            </Pressable>
-          )}
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            {tab === 'chats' && (
+              <Pressable style={main.headerBtn} onPress={() => navigation.navigate('CommunityMembers' as any)}>
+                <Text style={main.headerBtnText}>✏️ New DM</Text>
+              </Pressable>
+            )}
+            {tab === 'feed' && (
+              <Pressable style={main.headerBtn} onPress={() => setShowCreate(true)}>
+                <Text style={main.headerBtnText}>+ Post</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
         {/* Tab bar */}
         <View style={main.tabBar}>
           {TABS.map(t => (
-            <Pressable key={t.key} style={[main.tabItem, tab === t.key && main.tabItemActive]} onPress={() => setTab(t.key)}>
-              <Text style={main.tabIcon}>{t.icon}</Text>
+            <Pressable
+              key={t.key}
+              style={[main.tabItem, tab === t.key && main.tabItemActive]}
+              onPress={() => {
+                setTab(t.key);
+                if (t.key === 'notifications') {
+                  setUnreadNotifCount(0);
+                  markNotificationsRead().catch(() => {});
+                }
+              }}
+            >
+              <View style={{ position: 'relative' }}>
+                <Text style={main.tabIcon}>{t.icon}</Text>
+                {(t.badge ?? 0) > 0 && (
+                  <View style={main.notifBadge}>
+                    <Text style={main.notifBadgeText}>{(t.badge ?? 0) > 9 ? '9+' : t.badge}</Text>
+                  </View>
+                )}
+              </View>
               <Text style={[main.tabLabel, tab === t.key && main.tabLabelActive]}>{t.label}</Text>
             </Pressable>
           ))}
@@ -687,13 +1041,22 @@ export default function OliveChatScreen() {
             renderItem={({ item }) => (
               <PostCard
                 post={item}
+                myId={myUserId}
                 onLike={() => handleLike(item)}
                 onComment={() => setCommentPost(item)}
-                onShare={() => handleShare(item)}
+                onShare={() => handleNativeShare(item)}
+                onShareToRoom={() => setSharePost(item)}
+                onDelete={() => handleDeletePost(item)}
               />
             )}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshFeed} tintColor={colors.gold} />}
-            ListEmptyComponent={<View style={main.empty}><Text style={main.emptyIcon}>🌿</Text><Text style={main.emptyTitle}>Nothing here yet</Text><Text style={main.emptyDesc}>Be the first to post something in the community!</Text></View>}
+            ListEmptyComponent={
+              <View style={main.empty}>
+                <Text style={main.emptyIcon}>🌿</Text>
+                <Text style={main.emptyTitle}>Nothing here yet</Text>
+                <Text style={main.emptyDesc}>Be the first to post something in the community!</Text>
+              </View>
+            }
             contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
           />
         )
@@ -707,22 +1070,48 @@ export default function OliveChatScreen() {
             keyExtractor={r => r.id}
             renderItem={({ item: room }) => (
               <RoomRow room={room} onPress={() => {
-                navigation.navigate('ChatRoom' as any, { roomId: room.id, roomName: room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'Chat') });
+                navigation.navigate('ChatRoom' as any, {
+                  roomId: room.id,
+                  roomName: room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'Chat'),
+                });
                 refreshRooms();
               }} />
             )}
             refreshControl={<RefreshControl refreshing={false} onRefresh={refreshRooms} tintColor={colors.gold} />}
-            ListEmptyComponent={<View style={main.empty}><Text style={main.emptyIcon}>💬</Text><Text style={main.emptyTitle}>No chats yet</Text><Text style={main.emptyDesc}>When you join a church, the General group chat will appear here. Tap "New DM" to message a member.</Text></View>}
+            ListEmptyComponent={
+              <View style={main.empty}>
+                <Text style={main.emptyIcon}>💬</Text>
+                <Text style={main.emptyTitle}>No chats yet</Text>
+                <Text style={main.emptyDesc}>When you join a church, the General group chat appears here. Tap "New DM" to message a member.</Text>
+              </View>
+            }
             contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
           />
         )
       )}
 
+      {/* Notifications */}
+      {tab === 'notifications' && <NotificationsTab userId={myUserId} />}
+
       {/* Profile */}
-      {tab === 'profile' && <ProfileTab profile={profile} onReload={async () => { try { const p = await getMyProfile(); setProfile(p); } catch {} }} />}
+      {tab === 'profile' && (
+        <ProfileTab
+          profile={profile}
+          onReload={async () => {
+            try { const p = await getMyProfile(); setProfile(p); } catch {}
+          }}
+        />
+      )}
 
       <CommentsSheet post={commentPost} visible={!!commentPost} onClose={() => setCommentPost(null)} />
       <CreatePostModal visible={showCreate} onClose={() => setShowCreate(false)} onCreated={p => setPosts(prev => [p, ...prev])} />
+      <ShareToRoomModal
+        post={sharePost}
+        rooms={rooms}
+        visible={!!sharePost}
+        onClose={() => setSharePost(null)}
+        onShared={() => {}}
+      />
     </View>
   );
 }
@@ -737,8 +1126,10 @@ const main = StyleSheet.create({
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, flexDirection: 'row', justifyContent: 'center', gap: 5 },
   tabItemActive: { borderBottomWidth: 2, borderBottomColor: colors.goldLight },
   tabIcon: { fontSize: 15 },
-  tabLabel: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
+  tabLabel: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
   tabLabelActive: { color: '#fff' },
+  notifBadge: { position: 'absolute', top: -4, right: -6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#E05252', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 },
+  notifBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: spacing.xl },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 8 },

@@ -224,7 +224,8 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
       flatRef.current?.scrollToEnd({ animated: true });
       markRoomRead(roomId).catch(() => {});
     });
-    return unsub;
+    // Wrap to ensure cleanup returns void, not Promise
+    return () => { unsub(); };
   }, [roomId]);
 
   async function loadMore() {

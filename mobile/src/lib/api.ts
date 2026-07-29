@@ -7,7 +7,7 @@ import { supabase } from "./supabase";
 // EXPO_PUBLIC_API_URL can override this *only* for testing against the local
 // Replit server during development. Leave it unset for all EAS builds so
 // the app always points at the real Railway backend.
-const PRODUCTION_API_URL = "https://livingolive.adroomai.com";
+export const PRODUCTION_API_URL = "https://livingolive.adroomai.com";
 
 // Reject any override that points at Replit dev domains or localhost so a
 // stale environment variable can never break a real device in production.

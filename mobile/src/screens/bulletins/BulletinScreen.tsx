@@ -56,7 +56,7 @@ function SkeletonBox({ width, height, style, borderRadius: br }: {
 }
 
 // ── Auto slider (announcements + ads) ─────────────────────────────────────────
-const ANNOUNCEMENT_PALETTES: Record<string, { bg: string[]; text: string; badge: string }> = {
+const ANNOUNCEMENT_PALETTES: Record<string, { bg: [string, string]; text: string; badge: string }> = {
   general:  { bg: ["#3E4A2F", "#5B6B45"], text: "#E8F2DC", badge: "#8A9A6B" },
   urgent:   { bg: ["#7A1C1C", "#B03030"], text: "#FFE8E8", badge: "#E07060" },
   event:    { bg: ["#5C440A", "#8A6510"], text: "#FFF4D0", badge: "#C9A227" },
