@@ -51,12 +51,14 @@ router.get('/churches', async (req, res) => {
 
   if (error) { log.error('churches fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
-  // Filter to only churches that have at least one published bulletin
+  // Filter to only churches that have at least one published bulletin.
+  // No date restriction — a church is shown as long as it has any published bulletin.
+  // (The old 30-day filter silently hid churches whose bulletins had a NULL publish_at
+  //  or were published more than 30 days ago.)
   const { data: published } = await supabase
     .from('bulletins')
     .select('church_id')
-    .eq('is_published', true)
-    .gte('publish_at', new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString()); // active last 30d
+    .eq('is_published', true);
 
   const activeIds = new Set((published ?? []).map((r) => r.church_id));
   const churches = (data ?? []).filter((c) => activeIds.has(c.id));
@@ -119,12 +121,17 @@ router.get('/:churchId/today', async (req, res) => {
   if (!church || !church.active) return res.status(404).json({ error: 'Church not found' });
 
   const todayStr = today();
+  const nowIso = new Date().toISOString();
   const { data: bulletins, error } = await supabase
     .from('bulletins')
     .select('id, title, content_preview, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, featured_image_url')
     .eq('church_id', churchId)
     .eq('is_published', true)
-    .lte('publish_at', new Date().toISOString())
+    // Include bulletins where publish_at is NULL (published without a scheduled time)
+    // OR where publish_at is in the past/now. NULL never satisfies lte(), so we must
+    // explicitly allow it — otherwise bulletins published via the Supabase dashboard
+    // or any flow that leaves publish_at unset are silently excluded.
+    .or(`publish_at.is.null,publish_at.lte.${nowIso}`)
     .or(`expires_at.is.null,expires_at.gte.${todayStr}`)
     .order('publish_at', { ascending: false })
     .limit(1);
@@ -166,7 +173,10 @@ router.get('/:churchId/archive', async (req, res) => {
     .select('id, title, content_preview, frequency, publish_at, is_paid, price_ngn, is_published, featured_image_url', { count: 'exact' })
     .eq('church_id', churchId)
     .eq('is_published', true)
-    .order('publish_at', { ascending: false })
+    // Primary: newest publish_at first (NULLs sort first in DESC — still visible).
+    // Secondary: created_at so bulletins with NULL publish_at have a stable order.
+    .order('publish_at', { ascending: false, nullsFirst: true })
+    .order('created_at', { ascending: false })
     .range((page - 1) * perPage, page * perPage - 1);
 
   if (error) { log.error('bulletin-archive fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }

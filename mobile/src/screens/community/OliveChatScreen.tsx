@@ -1053,12 +1053,16 @@ export default function OliveChatScreen() {
   // Viewability — track which feed indices are currently on-screen
   const visibleIndicesRef = useRef<Set<number>>(new Set());
   const [visibleIndicesSnap, setVisibleIndicesSnap] = useState<Set<number>>(new Set());
+  // viewabilityConfig MUST be a stable ref (never recreated) — React Native throws if it changes.
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 20 });
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+  // onViewableItemsChanged MUST be a stable callback via useCallback (not useRef(...).current) —
+  // passing a ref's .current value can cross the null↔function boundary on remount and triggers
+  // "Changing onViewableItemsChanged nullability on the fly is not supported".
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     const s = new Set(viewableItems.map(v => v.index ?? -1).filter(i => i >= 0));
     visibleIndicesRef.current = s;
     setVisibleIndicesSnap(new Set(s));
-  });
+  }, []);
   const [sharePost, setSharePost] = useState<CommunityPost | null>(null);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
@@ -1391,7 +1395,7 @@ export default function OliveChatScreen() {
                 );
               }}
               viewabilityConfig={viewabilityConfig.current}
-              onViewableItemsChanged={onViewableItemsChanged.current}
+              onViewableItemsChanged={onViewableItemsChanged}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshFeed} tintColor={colors.gold} />}
               ListEmptyComponent={
                 <View style={main.empty}>
