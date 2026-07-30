@@ -59,7 +59,7 @@ export default function DonateScreen({ navigation }: Props) {
                   Alert.alert("Not confirmed", "We couldn't confirm the payment. Try again or contact support.");
                 }
               } catch (e: any) {
-                Alert.alert("Error", e.message);
+                Alert.alert("Error", "We couldn't verify the payment. Check your connection and try again.");
               } finally {
                 setLoading(false);
               }
@@ -68,7 +68,7 @@ export default function DonateScreen({ navigation }: Props) {
         ]
       );
     } catch (e: any) {
-      Alert.alert("Error", e.message);
+      Alert.alert("Error", "Something went wrong. Please try again.");
       setLoading(false);
     }
   }

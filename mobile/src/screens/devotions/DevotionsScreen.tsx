@@ -352,7 +352,7 @@ export default function DevotionsScreen() {
       // Scroll to the new unread entry
       setTimeout(() => scrollRef.current?.scrollTo({ y: 420, animated: true }), 300);
     } catch (e: any) {
-      setError(e.message ?? "Couldn't generate your devotion. Try again.");
+      setError("Couldn't generate your devotion. Try again.");
     } finally {
       setBusy(false);
     }

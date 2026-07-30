@@ -337,7 +337,7 @@ export default function PrayerScreen() {
       setDaysCount(null);
       setTimeout(() => scrollRef.current?.scrollTo({ y: 420, animated: true }), 300);
     } catch (e: any) {
-      setError(e.message ?? "Couldn't generate prayers. Try again.");
+      setError("Couldn't generate prayers. Try again.");
     } finally {
       setBusy(false);
     }

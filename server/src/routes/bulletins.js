@@ -48,7 +48,7 @@ router.get('/churches', async (req, res) => {
     .eq('active', true)
     .order('name');
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('churches fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   // Filter to only churches that have at least one published bulletin
   const { data: published } = await supabase
@@ -74,7 +74,7 @@ router.get('/my-church', async (req, res) => {
     .eq('user_id', req.user.id)
     .maybeSingle();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('my-church fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   res.json({ membership: data ?? null });
 });
 
@@ -88,7 +88,7 @@ router.post('/my-church', async (req, res) => {
     { user_id: req.user.id, church_id: churchId, confirmed_at: new Date().toISOString() },
     { onConflict: 'user_id' }
   );
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('set-church error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   log.info(`User ${req.user.id} joined church ${churchId}`);
 
   // Auto-add user to their new church's General group chat room.
@@ -104,7 +104,7 @@ router.post('/my-church', async (req, res) => {
 router.delete('/my-church', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { error } = await supabase.from('church_members').delete().eq('user_id', req.user.id);
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('clear-church error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   res.json({ ok: true });
 });
 
@@ -128,7 +128,7 @@ router.get('/:churchId/today', async (req, res) => {
     .order('publish_at', { ascending: false })
     .limit(1);
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('today-bulletin fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   if (!bulletins?.length) {
     return res.json({ bulletin: null, message: `No bulletin available for ${church.name} today.` });
@@ -168,7 +168,7 @@ router.get('/:churchId/archive', async (req, res) => {
     .order('publish_at', { ascending: false })
     .range((page - 1) * perPage, page * perPage - 1);
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('bulletin-archive fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   res.json({ bulletins: data ?? [], total: count ?? 0, page });
 });
 
@@ -409,7 +409,7 @@ router.post('/:bulletinId/comments', async (req, res) => {
     body: body.trim(),
   }).select('id, user_id, body, like_count, created_at').single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('post-comment insert error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   // Resolve the poster's display name for the immediate response
   const nameMap = await resolveUserNames(supabase, [data.user_id]);
@@ -527,7 +527,8 @@ router.post('/:bulletinId/pay', async (req, res) => {
 
   if (!flwRes.ok) {
     const err = await flwRes.json().catch(() => ({}));
-    return res.status(502).json({ error: err.message ?? 'Payment initiation failed' });
+    log.error('flutterwave payment initiation error:', err.message);
+    return res.status(502).json({ error: 'Payment initiation failed. Please try again.' });
   }
 
   const flwData = await flwRes.json();

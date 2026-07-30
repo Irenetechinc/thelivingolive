@@ -313,8 +313,8 @@ function ShareToRoomModal({ post, rooms, visible, onClose, onShared }: {
       onShared();
       Alert.alert('Shared!', `Post shared to ${room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'DM')}`);
       onClose();
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+    } catch {
+      Alert.alert('Error', 'Could not share. Please try again.');
     } finally {
       setSharing(null);
     }
@@ -412,7 +412,7 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
         setComments(prev => [c, ...prev]);
       }
       setText(''); setReplyTo(null);
-    } catch (e: any) { Alert.alert('Error', e.message); }
+    } catch { Alert.alert('Error', 'Could not post comment. Please try again.'); }
     finally { setSending(false); }
   }
 
@@ -573,7 +573,7 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
       });
       onCreated(post);
       onClose();
-    } catch (e: any) { Alert.alert('Error', e.message); }
+    } catch { Alert.alert('Error', 'Could not create post. Please try again.'); }
     finally { setUploading(false); }
   }
 
@@ -742,13 +742,13 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
       if (type === 'avatar') await uploadAvatar(res.assets[0].uri);
       else await uploadCover(res.assets[0].uri);
       onReload();
-    } catch (e: any) { Alert.alert('Upload error', e.message); }
+    } catch { Alert.alert('Upload error', 'Upload failed. Please try again.'); }
   }
 
   async function saveProfile() {
     setSavingProfile(true);
     try { await updateProfile({ displayName: name.trim(), bio: bio.trim(), dateOfBirth: dob || undefined }); onReload(); setEditing(false); }
-    catch (e: any) { Alert.alert('Error', e.message); }
+    catch { Alert.alert('Error', 'Could not save profile. Please try again.'); }
     finally { setSavingProfile(false); }
   }
 
@@ -757,7 +757,7 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
     if (!/^\d{4,8}$/.test(newPin)) { Alert.alert('Invalid PIN', 'PIN must be 4–8 digits'); return; }
     setSettingPin(true);
     try { await setPin(newPin); setPinSet(true); setPinModal(false); setNewPin(''); Alert.alert('PIN set', 'Your Olive Chat PIN has been saved.'); }
-    catch (e: any) { Alert.alert('Error', e.message); }
+    catch { Alert.alert('Error', 'Could not save PIN. Please try again.'); }
     finally { setSettingPin(false); }
   }
 
@@ -1119,11 +1119,11 @@ export default function OliveChatScreen() {
           });
         }
       } catch (e: any) {
-        if (e.message?.includes('church')) {
+        if ((e as any)?.message?.includes('church') || (e as any)?.message?.includes('Join a church')) {
           if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
         } else {
           if (active) {
-            setLoadError(e?.message ?? 'Could not connect to the server.');
+            setLoadError('Could not connect. Check your connection and try again.');
             setLoadingFeed(false);
             setLoadingRooms(false);
             setPinChecked(true);
@@ -1190,7 +1190,7 @@ export default function OliveChatScreen() {
                   if (remaining.length === 0) setShowRequestsModal(false);
                   return remaining;
                 });
-              } catch (e: any) { Alert.alert('Error', e.message); }
+              } catch { Alert.alert('Error', 'Could not block user. Please try again.'); }
               setRespondingId(null);
             },
           },
@@ -1213,7 +1213,7 @@ export default function OliveChatScreen() {
           roomName: req.fromUser.name,
         });
       }
-    } catch (e: any) { Alert.alert('Error', e.message); }
+    } catch { Alert.alert('Error', 'Could not respond to request. Please try again.'); }
     setRespondingId(null);
   }
 
@@ -1240,7 +1240,7 @@ export default function OliveChatScreen() {
           try {
             await deletePost(post.id);
             setPosts(prev => prev.filter(p => p.id !== post.id));
-          } catch (e: any) { Alert.alert('Error', e.message); }
+          } catch { Alert.alert('Error', 'Could not delete post. Please try again.'); }
         },
       },
     ]);

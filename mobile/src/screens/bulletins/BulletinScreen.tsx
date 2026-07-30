@@ -401,7 +401,7 @@ function CommentsModal({
       setReplyingTo(null);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (e: any) {
-      Alert.alert("Couldn't post", e.message ?? "Please try again.");
+      Alert.alert("Couldn't post", "Please try again.");
     } finally {
       setPosting(false);
     }

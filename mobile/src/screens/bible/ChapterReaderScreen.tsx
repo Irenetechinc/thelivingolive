@@ -57,7 +57,7 @@ export default function ChapterReaderScreen({ route }: Props) {
           setFallbackNotice(result.fallbackReason);
         }
       })
-      .catch((e) => setLoadError(e.message ?? "Couldn't load this chapter."))
+      .catch(() => setLoadError("Couldn't load this chapter. Check your connection and try again."))
       .finally(() => setLoadingChapter(false));
   }, [bookId, chapter, requestedVersion]);
 
@@ -193,7 +193,7 @@ export default function ChapterReaderScreen({ route }: Props) {
       setStudyExplanation(result.explanation);
       setStudyScriptures(result.supportingScriptures ?? []);
     } catch (e: any) {
-      setStudyError(e.message ?? "Couldn't generate explanation.");
+      setStudyError("Couldn't generate explanation. Please try again.");
     } finally {
       setStudyLoading(false);
     }
@@ -281,7 +281,7 @@ export default function ChapterReaderScreen({ route }: Props) {
       setExplanation(result.explanation);
       setSupportingScriptures(result.supportingScriptures ?? []);
     } catch (e: any) {
-      setExplainError(e.message ?? "Couldn't generate explanation.");
+      setExplainError("Couldn't generate explanation. Please try again.");
     } finally {
       setLoadingExplanation(false);
     }

@@ -16,7 +16,19 @@ import { compressVideo } from '../lib/videoProcessor.js';
 
 const log = logger('community');
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+// Allowed MIME type sets for each upload context
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+const ALLOWED_MEDIA_TYPES = new Set([...ALLOWED_IMAGE_TYPES, 'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac', 'audio/ogg', 'video/mp4', 'video/quicktime', 'video/webm']);
+const ALLOWED_POST_TYPES  = new Set([...ALLOWED_IMAGE_TYPES, 'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v']);
+
+function mimeFilter(allowed) {
+  return (_req, file, cb) => {
+    if (allowed.has(file.mimetype)) return cb(null, true);
+    cb(Object.assign(new Error(`File type not allowed: ${file.mimetype}`), { status: 400 }), false);
+  };
+}
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
 
 // ── Expo client (shared from app.locals or created locally) ──────────────────
 function getExpo() {
@@ -132,7 +144,7 @@ router.get('/profile/pin-status', async (req, res) => {
   res.json({ ok: true, pinSet: !!data?.chat_pin_hash });
 });
 
-const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_IMAGE_TYPES) });
 router.post('/profile/upload/:type', avatarUpload.single('file'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { type } = req.params;
@@ -143,7 +155,7 @@ router.post('/profile/upload/:type', avatarUpload.single('file'), async (req, re
   const { error } = await supabase.storage
     .from('community')
     .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
   const field = type === 'avatar' ? 'avatar_url' : 'cover_url';
   await supabase.from('user_profiles').upsert({ id: req.user.id, [field]: publicUrl }, { onConflict: 'id' });
@@ -205,7 +217,7 @@ router.get('/notifications', async (req, res) => {
     .eq('recipient_id', req.user.id)
     .order('created_at', { ascending: false })
     .limit(50);
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('notifications fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   const actorIds = [...new Set((data ?? []).map(n => n.actor_id))];
   const nameMap = await resolveDisplayNames(supabase, actorIds);
@@ -358,7 +370,7 @@ router.post('/rooms/dm', async (req, res) => {
   // Create the DM room
   const { data: room, error } = await supabase.from('chat_rooms')
     .insert({ type: 'dm', name: null }).select('id').single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   await supabase.from('chat_room_members').insert([
     { room_id: room.id, user_id: req.user.id },
     { room_id: room.id, user_id: targetUserId },
@@ -393,7 +405,7 @@ router.get('/rooms/:roomId/messages', async (req, res) => {
   if (before) q = q.lt('created_at', before);
 
   const { data: msgs, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   // Enrich shared posts with a body preview
   const sharedPostIds = (msgs ?? []).filter(m => m.shared_post_id).map(m => m.shared_post_id);
@@ -437,7 +449,7 @@ router.post('/rooms/:roomId/messages', async (req, res) => {
     body: body?.trim() ?? null, media_url: mediaUrl ?? null,
     duration_seconds: durationSeconds ?? null, shared_post_id: sharedPostId ?? null,
   }).select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, created_at').single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
   const actorName = nameMap[req.user.id]?.name ?? 'Someone';
@@ -486,7 +498,7 @@ router.put('/rooms/:roomId/read', async (req, res) => {
   res.json({ ok: true });
 });
 
-const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_MEDIA_TYPES) });
 router.post('/rooms/:roomId/upload', mediaUpload.single('file'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
@@ -494,7 +506,7 @@ router.post('/rooms/:roomId/upload', mediaUpload.single('file'), async (req, res
   const path = `messages/${req.params.roomId}/${req.user.id}_${Date.now()}.${ext}`;
   const { error } = await supabase.storage
     .from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
   res.json({ ok: true, url: publicUrl });
 });
@@ -516,7 +528,7 @@ router.get('/timeline', async (req, res) => {
   if (before) q = q.lt('created_at', before);
 
   const { data: posts, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   const nameMap = await resolveDisplayNames(supabase, (posts ?? []).map(p => p.user_id));
 
@@ -548,7 +560,7 @@ router.post('/posts', async (req, res) => {
     video_url: videoUrl ?? null,
     video_thumbnail_url: videoThumbnailUrl ?? null,
   }).select().single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
   res.json({ ok: true, post: { ...data, author: { userId: req.user.id, ...nameMap[req.user.id] }, liked: false } });
 });
@@ -568,7 +580,7 @@ router.post('/posts/upload', upload.single('file'), async (req, res) => {
       ({ videoBuffer, thumbBuffer } = await compressVideo(req.file.buffer));
     } catch (err) {
       log.error('Video compression failed', { err: err.message });
-      return res.status(500).json({ error: 'Video processing failed: ' + err.message });
+      return res.status(500).json({ error: 'Video processing failed. Please try again with a shorter clip.' });
     }
 
     const videoPath = `posts/${uid}/${ts}.mp4`;
@@ -579,8 +591,8 @@ router.post('/posts/upload', upload.single('file'), async (req, res) => {
       supabase.storage.from('community').upload(thumbPath, thumbBuffer, { contentType: 'image/jpeg', upsert: false }),
     ]);
 
-    if (videoUp.error) return res.status(500).json({ error: videoUp.error.message });
-    if (thumbUp.error) return res.status(500).json({ error: thumbUp.error.message });
+    if (videoUp.error) { log.error('video upload error:', videoUp.error.message); return res.status(500).json({ error: 'Upload failed. Please try again.' }); }
+    if (thumbUp.error) { log.error('thumbnail upload error:', thumbUp.error.message); return res.status(500).json({ error: 'Upload failed. Please try again.' }); }
 
     const { data: { publicUrl: url } }          = supabase.storage.from('community').getPublicUrl(videoPath);
     const { data: { publicUrl: thumbnailUrl } }  = supabase.storage.from('community').getPublicUrl(thumbPath);
@@ -593,7 +605,7 @@ router.post('/posts/upload', upload.single('file'), async (req, res) => {
   const path = `posts/${uid}/${ts}.${ext}`;
   const { error } = await supabase.storage
     .from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   const { data: { publicUrl: url } } = supabase.storage.from('community').getPublicUrl(path);
   res.json({ ok: true, url });
 });
@@ -693,7 +705,7 @@ router.post('/posts/:postId/comments', async (req, res) => {
     post_id: postId, user_id: req.user.id, body: body.trim(),
     parent_id: parentId ?? null,
   }).select('id, user_id, body, like_count, created_at').single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('post comment insert error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   // Update comment_count
   const { count } = await supabase.from('post_comments').select('*', { count: 'exact', head: true })
@@ -804,7 +816,7 @@ router.post('/posts/:postId/share-to-room', async (req, res) => {
     body,
     shared_post_id: postId,
   }).select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, created_at').single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('share-to-room insert error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
   const actorName = nameMap[req.user.id]?.name ?? 'Someone';
@@ -838,7 +850,7 @@ router.get('/message-requests', async (req, res) => {
     .select('id, room_id, sender_id, receiver_id, status, created_at')
     .eq('receiver_id', req.user.id)
     .order('created_at', { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('message-requests fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   // Enrich with sender display name
   const senderIds = [...new Set((data ?? []).map(r => r.sender_id))];
@@ -914,7 +926,7 @@ router.get('/blocked', async (req, res) => {
     .from('blocked_users')
     .select('blocked_user_id, created_at')
     .eq('user_id', req.user.id);
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) { log.error('blocked-users fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   res.json({ blocked: data ?? [] });
 });
 

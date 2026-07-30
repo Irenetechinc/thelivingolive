@@ -161,7 +161,7 @@ function RecordButton({ onRecordingDone }: { onRecordingDone: (uri: string, dura
         Animated.timing(pulseAnim, { toValue: 1.3, duration: 500, useNativeDriver: true }),
         Animated.timing(pulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       ])).start();
-    } catch (e: any) { Alert.alert('Recording error', e.message); }
+    } catch { Alert.alert('Recording error', 'Could not start recording. Please try again.'); }
   }
 
   async function stop() {
@@ -282,7 +282,7 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
       const msg = await sendMessage(roomId, { type: 'text', body });
       setMessages(prev => [...prev, msg]);
       flatRef.current?.scrollToEnd({ animated: true });
-    } catch (e: any) { Alert.alert('Error', e.message); setText(body); }
+    } catch { Alert.alert('Error', 'Message could not be sent. Please try again.'); setText(body); }
     finally { setSending(false); }
   }
 
@@ -295,7 +295,7 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
       const msg = await sendMessage(roomId, { type: 'image', mediaUrl: url });
       setMessages(prev => [...prev, msg]);
       flatRef.current?.scrollToEnd({ animated: true });
-    } catch (e: any) { Alert.alert('Upload error', e.message); }
+    } catch { Alert.alert('Upload error', 'Upload failed. Please try again.'); }
     finally { setUploading(false); }
   }
 
@@ -306,7 +306,7 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
       const msg = await sendMessage(roomId, { type: 'voice', mediaUrl: url, durationSeconds: duration });
       setMessages(prev => [...prev, msg]);
       flatRef.current?.scrollToEnd({ animated: true });
-    } catch (e: any) { Alert.alert('Upload error', e.message); }
+    } catch { Alert.alert('Upload error', 'Upload failed. Please try again.'); }
     finally { setUploading(false); }
   }
 

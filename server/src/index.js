@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import session from "express-session";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
@@ -66,7 +67,26 @@ const app = express();
 // Trust Railway's reverse proxy so express-session secure cookies work over HTTPS
 app.set("trust proxy", 1);
 
-app.use(cors());
+// Security headers — helmet sets sensible defaults (X-Frame-Options, HSTS, etc.)
+// contentSecurityPolicy is relaxed so the admin dashboard HTML inline scripts still work.
+app.use(helmet({
+  contentSecurityPolicy: false, // admin dashboard uses inline <script> blocks
+  crossOriginEmbedderPolicy: false,
+}));
+
+// CORS — the mobile app is a native client (CORS doesn't apply to it).
+// Only the admin dashboard makes cross-origin XHR, and it is same-origin in
+// production. Restrict to the production domain; allow all in development so
+// Expo Go / local tools work without config changes.
+const ALLOWED_ORIGINS = isProd
+  ? ["https://livingolive.adroomai.com"]
+  : true; // allow all in development
+app.use(cors({
+  origin: ALLOWED_ORIGINS,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Cron-Secret"],
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // needed for admin login form
 
@@ -179,7 +199,15 @@ app.get("/payment/success", (_req, res) => {
 // In-memory upload handling for sermon audio — files are transcribed and
 // discarded immediately, never written to disk. Cap keeps a single request
 // from exhausting server memory on a long recording.
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
+const ALLOWED_AUDIO_TYPES = new Set([
+  'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac',
+  'audio/ogg', 'audio/webm', 'audio/x-m4a', 'audio/3gpp',
+]);
+function audioOnlyFilter(_req, file, cb) {
+  if (ALLOWED_AUDIO_TYPES.has(file.mimetype)) return cb(null, true);
+  cb(Object.assign(new Error('Only audio files are accepted for transcription.'), { status: 400 }), false);
+}
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 }, fileFilter: audioOnlyFilter });
 
 // ── Feature flag guard — returns 503 when a feature is disabled by admin ──────
 function requireFlag(flag) {
@@ -199,7 +227,7 @@ function requireFlag(flag) {
 async function requireUser(req, res, next) {
   if (!supabaseAdmin) {
     return res.status(503).json({
-      error: "Authentication unavailable: server is missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY environment variables. Contact the administrator.",
+      error: "Authentication service is temporarily unavailable. Please try again later.",
     });
   }
   const authHeader = req.headers.authorization || "";
@@ -624,6 +652,12 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     return res.status(503).json({ error: "Database unavailable: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured." });
   }
   const secret = process.env.CRON_SECRET;
+  // In production, CRON_SECRET MUST be set — an unconfigured endpoint is open
+  // to anyone and will fire notifications for every user every minute.
+  if (!secret && isProd) {
+    console.error("[FATAL] CRON_SECRET is not set in production. The notify-scheduled endpoint is blocked until it is configured in Railway → Variables.");
+    return res.status(503).json({ error: "Endpoint not available." });
+  }
   if (secret && req.headers["x-cron-secret"] !== secret) {
     return res.status(401).json({ error: "Unauthorized" });
   }

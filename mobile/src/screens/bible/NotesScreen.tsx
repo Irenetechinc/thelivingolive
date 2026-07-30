@@ -273,7 +273,7 @@ function ManualNoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
       setOpen(false);
       Keyboard.dismiss();
     } catch (e: any) {
-      setError(e.message ?? "Couldn't save the note. Try again.");
+      setError("Couldn't save the note. Try again.");
     } finally {
       setSaving(false);
     }

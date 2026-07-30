@@ -60,7 +60,7 @@ export default function BookPickerScreen({ navigation, route }: Props) {
   useEffect(() => {
     loadBibleBooks()
       .then(setBibleBooks)
-      .catch((e) => setError(e.message ?? "Couldn't load books."))
+      .catch(() => setError("Couldn't load books. Check your connection and try again."))
       .finally(() => setLoading(false));
   }, []);
 

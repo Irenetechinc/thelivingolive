@@ -13,8 +13,13 @@ import multer from 'multer';
 import { logger } from '../lib/logger.js';
 import { adminBus } from '../lib/adminBus.js';
 
-const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+function imageOnlyFilter(_req, file, cb) {
+  if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) return cb(null, true);
+  cb(Object.assign(new Error('Only image files are allowed (JPEG, PNG, WebP, GIF).'), { status: 400 }), false);
+}
+const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 
 const log = logger('org-admin');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -353,7 +358,7 @@ router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
 });
 
 // Upload announcement banner image
-const announcementBannerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+const announcementBannerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 router.post('/api/announcements/upload-banner', requireOrgAdmin, announcementBannerUpload.single('banner'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { churchId } = req.session.orgAdmin;

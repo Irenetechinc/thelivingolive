@@ -55,8 +55,8 @@ export default function AuthScreen() {
     try {
       await sendMagicLink(email.trim().toLowerCase());
       setCooldown(RESEND_COOLDOWN_SECONDS);
-    } catch (e: any) {
-      setError(e.message ?? "Could not send the sign-in link. Try again.");
+    } catch {
+      setError("Could not send the sign-in link. Try again.");
     } finally {
       setBusy(false);
     }
@@ -68,8 +68,8 @@ export default function AuthScreen() {
     try {
       await resendMagicLink();
       setCooldown(RESEND_COOLDOWN_SECONDS);
-    } catch (e: any) {
-      setError(e.message ?? "Could not resend the link. Try again.");
+    } catch {
+      setError("Could not resend the link. Try again.");
     } finally {
       setBusy(false);
     }
