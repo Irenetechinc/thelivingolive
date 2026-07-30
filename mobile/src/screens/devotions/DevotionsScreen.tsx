@@ -159,6 +159,35 @@ function EntryCard({
   );
 }
 
+// ── Skeleton card ─────────────────────────────────────────────────────────────
+function SkeletonPulse({ style }: { style?: object }) {
+  const anim = React.useRef(new Animated.Value(0.4)).current;
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return (
+    <Animated.View
+      style={[{ backgroundColor: colors.parchmentDark, borderRadius: radii.sm, opacity: anim }, style]}
+    />
+  );
+}
+function EntrySkeletonCard() {
+  return (
+    <View style={{ padding: spacing.lg, marginHorizontal: spacing.lg, marginBottom: spacing.md, backgroundColor: colors.white, borderRadius: radii.xl }}>
+      <SkeletonPulse style={{ height: 14, width: '40%', marginBottom: 10 }} />
+      <SkeletonPulse style={{ height: 18, width: '75%', marginBottom: 12 }} />
+      <SkeletonPulse style={{ height: 12, width: '60%', marginBottom: 6 }} />
+      <SkeletonPulse style={{ height: 12, width: '85%', marginBottom: 6 }} />
+      <SkeletonPulse style={{ height: 12, width: '50%' }} />
+    </View>
+  );
+}
+
 // ── Section divider ───────────────────────────────────────────────────────────
 function SectionDivider({ label, count }: { label: string; count?: number }) {
   return (
@@ -518,7 +547,11 @@ export default function DevotionsScreen() {
 
         {/* ── Entries ── */}
         {loadingEntries ? (
-          <ActivityIndicator color={colors.gold} style={{ marginTop: spacing.xl }} />
+          <View style={{ marginTop: spacing.lg }}>
+            {[0,1,2].map(i => (
+              <EntrySkeletonCard key={i} />
+            ))}
+          </View>
         ) : (
           <>
             {/* UNREAD — collapsible, first one expanded */}

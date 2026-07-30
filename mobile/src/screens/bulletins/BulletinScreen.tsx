@@ -211,59 +211,7 @@ const sliderStyles = StyleSheet.create({
   dotInactive: { width: 6, backgroundColor: colors.parchmentDark },
 });
 
-// ── Order of Service strip ─────────────────────────────────────────────────────
-function OrderOfServiceStrip({ items }: { items: { time?: string; item: string; notes?: string }[] }) {
-  const scrollRef = useRef<ScrollView>(null);
-  const [autoIdx, setAutoIdx] = useState(0);
-
-  useEffect(() => {
-    if (items.length <= 1) return;
-    const timer = setInterval(() => {
-      setAutoIdx((prev) => {
-        const next = (prev + 1) % items.length;
-        scrollRef.current?.scrollTo({ x: next * (OOS_CARD_W + spacing.sm), animated: true });
-        return next;
-      });
-    }, 3500);
-    return () => clearInterval(timer);
-  }, [items.length]);
-
-  return (
-    <ScrollView
-      ref={scrollRef}
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={{ width: SCREEN_WIDTH }}
-      contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.sm }}
-    >
-      {items.map((item, i) => (
-        <View key={i} style={oosStyles.card}>
-          {item.time ? (
-            <Text style={oosStyles.time}>{item.time}</Text>
-          ) : (
-            <Text style={oosStyles.num}>{String(i + 1).padStart(2, "0")}</Text>
-          )}
-          <Text style={oosStyles.item} numberOfLines={2}>{item.item}</Text>
-          {item.notes ? <Text style={oosStyles.notes} numberOfLines={2}>{item.notes}</Text> : null}
-        </View>
-      ))}
-    </ScrollView>
-  );
-}
-
-const OOS_CARD_W = 160;
-const oosStyles = StyleSheet.create({
-  card: {
-    width: OOS_CARD_W, borderRadius: radii.lg,
-    backgroundColor: colors.white, padding: spacing.md,
-    ...shadows.card, justifyContent: "center",
-    borderTopWidth: 3, borderTopColor: colors.gold,
-  },
-  time: { fontSize: 11, fontWeight: "700", color: colors.gold, marginBottom: 6, letterSpacing: 0.5 },
-  num: { fontSize: 22, fontWeight: "700", color: colors.oliveFaint, marginBottom: 4 },
-  item: { fontSize: 13, fontWeight: "600", color: colors.ink, lineHeight: 18 },
-  notes: { fontSize: 11, color: colors.inkFaint, marginTop: 4, lineHeight: 16 },
-});
+// Order of Service has been removed from the app entirely.
 
 // ── Social bar (like / comment / share) ───────────────────────────────────────
 function SocialBar({
@@ -1132,41 +1080,46 @@ export default function BulletinScreen({ navigation }: Props) {
           )}
         </View>
 
-        {/* ── 5. Social links ── */}
+        {/* ── 5. Social links — vibrant icon strip ── */}
         {hasSocialLinks && (
-          <View style={styles.section}>
-            <View style={styles.socialRow}>
-              {extras.social.website && (
-                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.website!)}>
-                  <Ionicons name="globe-outline" size={22} color={colors.olive} />
-                  <Text style={styles.socialIconLabel}>Website</Text>
-                </Pressable>
-              )}
-              {extras.social.facebook && (
-                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.facebook!)}>
-                  <Ionicons name="logo-facebook" size={22} color="#1877F2" />
-                  <Text style={styles.socialIconLabel}>Facebook</Text>
-                </Pressable>
-              )}
-              {extras.social.instagram && (
-                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.instagram!)}>
-                  <Ionicons name="logo-instagram" size={22} color="#E1306C" />
-                  <Text style={styles.socialIconLabel}>Instagram</Text>
-                </Pressable>
-              )}
-              {extras.social.twitter && (
-                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.twitter!)}>
-                  <Ionicons name="logo-twitter" size={22} color="#1DA1F2" />
-                  <Text style={styles.socialIconLabel}>Twitter</Text>
-                </Pressable>
-              )}
-              {extras.social.youtube && (
-                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.youtube!)}>
-                  <Ionicons name="logo-youtube" size={22} color="#FF0000" />
-                  <Text style={styles.socialIconLabel}>YouTube</Text>
-                </Pressable>
-              )}
-            </View>
+          <View style={{ marginHorizontal: spacing.lg, marginBottom: spacing.xl }}>
+            <LinearGradient
+              colors={["#1C2712", "#2E3A1F"]}
+              style={styles.socialStrip}
+            >
+              <View style={styles.socialStripRow}>
+                {extras.social.website && (
+                  <Pressable style={styles.socialPill} onPress={() => Linking.openURL(extras.social.website!)}>
+                    <Ionicons name="globe-outline" size={20} color="#A8D5A2" />
+                    <Text style={styles.socialPillText}>Website</Text>
+                  </Pressable>
+                )}
+                {extras.social.facebook && (
+                  <Pressable style={[styles.socialPill, { backgroundColor: "rgba(24,119,242,0.18)" }]} onPress={() => Linking.openURL(extras.social.facebook!)}>
+                    <Ionicons name="logo-facebook" size={20} color="#6BA3F5" />
+                    <Text style={styles.socialPillText}>Facebook</Text>
+                  </Pressable>
+                )}
+                {extras.social.instagram && (
+                  <Pressable style={[styles.socialPill, { backgroundColor: "rgba(225,48,108,0.18)" }]} onPress={() => Linking.openURL(extras.social.instagram!)}>
+                    <Ionicons name="logo-instagram" size={20} color="#F06090" />
+                    <Text style={styles.socialPillText}>Instagram</Text>
+                  </Pressable>
+                )}
+                {extras.social.twitter && (
+                  <Pressable style={[styles.socialPill, { backgroundColor: "rgba(29,161,242,0.18)" }]} onPress={() => Linking.openURL(extras.social.twitter!)}>
+                    <Ionicons name="logo-twitter" size={20} color="#5BB8F5" />
+                    <Text style={styles.socialPillText}>Twitter</Text>
+                  </Pressable>
+                )}
+                {extras.social.youtube && (
+                  <Pressable style={[styles.socialPill, { backgroundColor: "rgba(255,0,0,0.18)" }]} onPress={() => Linking.openURL(extras.social.youtube!)}>
+                    <Ionicons name="logo-youtube" size={20} color="#FF6060" />
+                    <Text style={styles.socialPillText}>YouTube</Text>
+                  </Pressable>
+                )}
+              </View>
+            </LinearGradient>
           </View>
         )}
 
@@ -1312,20 +1265,23 @@ const styles = StyleSheet.create({
   archivePaid: { fontSize: 12, fontWeight: "700", color: colors.gold, marginRight: 8 },
   archiveArrow: { fontSize: 20, color: colors.oliveFaint, fontWeight: "300" },
 
-  // Social links
+  // Social links — vibrant dark strip
+  socialStrip: {
+    borderRadius: radii.xl, padding: spacing.lg, overflow: "hidden",
+  },
+  socialStripRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  socialPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "rgba(255,255,255,0.08)", borderRadius: radii.pill,
+    paddingVertical: 9, paddingHorizontal: 16,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.1)",
+  },
+  socialPillText: { fontSize: 12, fontWeight: "600", color: "rgba(255,255,255,0.75)" },
+  // Legacy (kept for any lingering references)
   socialRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: 4 },
-  socialLinkBtn: {
-    backgroundColor: colors.white, borderRadius: radii.lg,
-    paddingHorizontal: spacing.md, paddingVertical: 10,
-    borderWidth: 1, borderColor: colors.parchmentDark, ...shadows.subtle,
-  },
+  socialLinkBtn: { backgroundColor: colors.white, borderRadius: radii.lg, paddingHorizontal: spacing.md, paddingVertical: 10, borderWidth: 1, borderColor: colors.parchmentDark },
   socialLinkText: { fontSize: 13, fontWeight: "600", color: colors.ink },
-  socialIconBtn: {
-    alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.white, borderRadius: radii.xl,
-    paddingVertical: 14, paddingHorizontal: spacing.lg,
-    borderWidth: 1, borderColor: colors.parchmentDark, ...shadows.subtle, gap: 6,
-  },
+  socialIconBtn: { alignItems: "center", justifyContent: "center", backgroundColor: colors.white, borderRadius: radii.xl, paddingVertical: 14, paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.parchmentDark, gap: 6 },
   socialIconLabel: { fontSize: 11, fontWeight: "600", color: colors.inkSoft },
 
   // Explore

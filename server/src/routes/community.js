@@ -565,9 +565,33 @@ router.post('/posts', async (req, res) => {
   res.json({ ok: true, post: { ...data, author: { userId: req.user.id, ...nameMap[req.user.id] }, liked: false } });
 });
 
+// Ensure the community storage bucket exists (created once per process lifetime).
+let _bucketReady = false;
+async function ensureStorageBucket(supabase) {
+  if (_bucketReady) return;
+  try {
+    const { error } = await supabase.storage.createBucket('community', {
+      public: true,
+      fileSizeLimit: 100 * 1024 * 1024, // 100MB
+      allowedMimeTypes: ['image/*', 'video/*'],
+    });
+    // "already exists" is fine — we just need to know it's there
+    if (!error || error.message?.toLowerCase().includes('already exists') || error.message?.toLowerCase().includes('duplicate')) {
+      _bucketReady = true;
+    } else {
+      log.warn('storage bucket check:', error.message);
+      _bucketReady = true; // try anyway — might already exist with different settings
+    }
+  } catch (e) {
+    log.warn('storage bucket ensure failed (non-fatal):', e.message);
+    _bucketReady = true; // proceed regardless
+  }
+}
+
 router.post('/posts/upload', upload.single('file'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
+  await ensureStorageBucket(supabase);
 
   const isVideo = req.file.mimetype.startsWith('video/');
   const ts = Date.now();
@@ -605,11 +629,15 @@ router.post('/posts/upload', upload.single('file'), async (req, res) => {
   }
 
   // ── Image: pass through unchanged ────────────────────────────────────────
-  const ext  = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'bin';
-  const path = `posts/${uid}/${ts}.${ext}`;
+  const ext  = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const imgPath = `posts/${uid}/${ts}.${ext}`;
   const { error } = await supabase.storage
-    .from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
-  if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
+    .from('community').upload(imgPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (error) {
+    log.error('image upload error:', error.message);
+    return res.status(500).json({ error: `Upload failed: ${error.message}` });
+  }
+  const path = imgPath;
   const { data: { publicUrl: url } } = supabase.storage.from('community').getPublicUrl(path);
   res.json({ ok: true, url });
 });

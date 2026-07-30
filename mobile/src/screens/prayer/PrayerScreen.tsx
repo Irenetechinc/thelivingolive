@@ -134,6 +134,35 @@ function PrayerCard({
   );
 }
 
+// ── Skeleton card ─────────────────────────────────────────────────────────────
+function SkeletonPulse({ style }: { style?: object }) {
+  const anim = React.useRef(new Animated.Value(0.4)).current;
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return (
+    <Animated.View
+      style={[{ backgroundColor: colors.parchmentDark, borderRadius: radii.sm, opacity: anim }, style]}
+    />
+  );
+}
+function PrayerSkeletonCard() {
+  return (
+    <View style={{ padding: spacing.lg, marginHorizontal: spacing.lg, marginBottom: spacing.md, backgroundColor: colors.white, borderRadius: radii.xl }}>
+      <SkeletonPulse style={{ height: 14, width: '35%', marginBottom: 10 }} />
+      <SkeletonPulse style={{ height: 18, width: '70%', marginBottom: 12 }} />
+      <SkeletonPulse style={{ height: 12, width: '90%', marginBottom: 6 }} />
+      <SkeletonPulse style={{ height: 12, width: '65%', marginBottom: 6 }} />
+      <SkeletonPulse style={{ height: 12, width: '80%' }} />
+    </View>
+  );
+}
+
 // ── Section divider ───────────────────────────────────────────────────────────
 function SectionDivider({ label, count }: { label: string; count?: number }) {
   return (
@@ -521,7 +550,11 @@ export default function PrayerScreen() {
 
         {/* ── Entries ── */}
         {loadingEntries ? (
-          <ActivityIndicator color={colors.gold} style={{ marginTop: spacing.xl }} />
+          <View style={{ marginTop: spacing.lg }}>
+            {[0,1,2].map(i => (
+              <PrayerSkeletonCard key={i} />
+            ))}
+          </View>
         ) : (
           <>
             {unread.length > 0 && (

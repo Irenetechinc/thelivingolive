@@ -41,7 +41,7 @@ import {
 } from '../../lib/communityApi';
 import { supabase } from '../../lib/supabase';
 import OliveChatSplash from '../../components/OliveChatSplash';
-import { PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
+import { SkeletonBox, PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
@@ -770,7 +770,29 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
       </Pressable>
     </View>
   );
-  if (!profile) return <ActivityIndicator color={colors.gold} style={{ marginTop: 60 }} />;
+  if (!profile) return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      {/* Cover skeleton */}
+      <SkeletonBox style={{ height: 160, borderRadius: 0 }} />
+      {/* Avatar + edit button row */}
+      <View style={{ paddingHorizontal: spacing.lg, marginTop: -40, marginBottom: spacing.sm, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+        <SkeletonBox style={{ width: 84, height: 84, borderRadius: 42 }} />
+        <SkeletonBox style={{ width: 100, height: 34, borderRadius: 20 }} />
+      </View>
+      {/* Info skeleton */}
+      <View style={{ padding: spacing.lg, backgroundColor: colors.white }}>
+        <SkeletonBox style={{ height: 20, width: '60%', marginBottom: 10 }} />
+        <SkeletonBox style={{ height: 13, width: '80%', marginBottom: 6 }} />
+        <SkeletonBox style={{ height: 13, width: '50%', marginBottom: 6 }} />
+      </View>
+      {/* Section skeleton */}
+      <View style={{ margin: spacing.lg, backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg }}>
+        <SkeletonBox style={{ height: 12, width: '40%', marginBottom: 12 }} />
+        <SkeletonBox style={{ height: 13, width: '85%', marginBottom: 8 }} />
+        <SkeletonBox style={{ height: 36, borderRadius: radii.pill, marginTop: spacing.sm }} />
+      </View>
+    </ScrollView>
+  );
 
   const age = ageFromDob(profile.dateOfBirth);
 
@@ -1069,19 +1091,20 @@ export default function OliveChatScreen() {
           if (active) setProfileError(true);
         }
 
-        // Load feed + rooms in parallel
-        let feed: CommunityPost[] = [], r: ChatRoom[] = [];
+        // Load feed + rooms in parallel — keep skeletons if fetch fails
         try {
-          [feed, r] = await Promise.all([getTimeline(), getRooms()]);
-          if (active) setLoadError(null);
+          const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
+          if (active) {
+            setLoadError(null);
+            setPosts(feed);
+            setLoadingFeed(false);
+            setRooms(r);
+            setLoadingRooms(false);
+          }
         } catch (fetchErr: any) {
+          // Don't hide skeletons on error — auto-retry at 15s keeps them visible
+          // until the server is actually reachable. Never show an error banner.
           if (active) setLoadError(fetchErr?.message ?? 'Could not connect to the server.');
-        }
-        if (active) {
-          setPosts(feed);
-          setLoadingFeed(false);
-          setRooms(r);
-          setLoadingRooms(false);
         }
 
         // Load notifications unread count
@@ -1122,9 +1145,9 @@ export default function OliveChatScreen() {
           if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
         } else {
           if (active) {
-            setLoadError('Could not connect. Check your connection and try again.');
-            setLoadingFeed(false);
-            setLoadingRooms(false);
+            // Keep loadingFeed/loadingRooms true so skeletons stay visible.
+            // Auto-retry fires every 15s — no error banner ever shown to user.
+            setLoadError('Could not connect to the server.');
             setPinChecked(true);
             setProfileError(true);
           }
@@ -1155,11 +1178,17 @@ export default function OliveChatScreen() {
 
   async function retryLoad() {
     setRetrying(true);
+    // Re-show skeletons so the user sees loading state while retrying
+    setLoadingFeed(true);
+    setLoadingRooms(true);
     setLoadError(null);
     try {
       const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
       setPosts(feed); setRooms(r);
+      setLoadingFeed(false);
+      setLoadingRooms(false);
     } catch (e: any) {
+      // Leave loadingFeed/loadingRooms true — skeletons stay until server responds
       setLoadError(e?.message ?? 'Could not connect to the server.');
     }
     setRetrying(false);
@@ -1533,7 +1562,8 @@ function MessageRequestsModal({
 
 const mr = StyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0, right: 0, top: 0, bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
