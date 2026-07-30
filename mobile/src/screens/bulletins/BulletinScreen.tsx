@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView, Platform, TouchableOpacity,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
@@ -107,20 +108,6 @@ function AutoSlider({ slides, onAdPress }: { slides: SlideItem[]; onAdPress: (ur
         ))}
       </ScrollView>
 
-      {slides.length > 1 && (
-        <View style={sliderStyles.dots}>
-          {slides.map((_, i) => (
-            <Animated.View
-              key={i}
-              style={[
-                sliderStyles.dot,
-                i === active ? sliderStyles.dotActive : sliderStyles.dotInactive,
-                { transform: [{ scale: dotScale[i] }] },
-              ]}
-            />
-          ))}
-        </View>
-      )}
     </View>
   );
 }
@@ -312,23 +299,27 @@ function SocialBar({
   return (
     <View style={socialStyles.bar}>
       <TouchableOpacity style={socialStyles.btn} onPress={handleLike} activeOpacity={0.7}>
-        <Animated.Text style={[socialStyles.icon, { transform: [{ scale: heartScale }] }]}>
-          {social.liked ? "❤️" : "🤍"}
-        </Animated.Text>
+        <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+          <Ionicons
+            name={social.liked ? "heart" : "heart-outline"}
+            size={18}
+            color={social.liked ? "#E04050" : colors.inkSoft}
+          />
+        </Animated.View>
         <Text style={[socialStyles.count, social.liked && { color: "#E04050" }]}>
           {social.likes > 0 ? social.likes : "Like"}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={socialStyles.btn} onPress={onCommentPress} activeOpacity={0.7}>
-        <Text style={socialStyles.icon}>💬</Text>
+        <Ionicons name="chatbubble-outline" size={17} color={colors.inkSoft} />
         <Text style={socialStyles.count}>
           {social.comments > 0 ? `${social.comments} Comment${social.comments !== 1 ? "s" : ""}` : "Comment"}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={socialStyles.btn} onPress={onShare} activeOpacity={0.7}>
-        <Text style={socialStyles.icon}>↗️</Text>
+        <Ionicons name="share-social-outline" size={18} color={colors.inkSoft} />
         <Text style={socialStyles.count}>Share</Text>
       </TouchableOpacity>
     </View>
@@ -338,14 +329,12 @@ function SocialBar({
 const socialStyles = StyleSheet.create({
   bar: {
     flexDirection: "row", backgroundColor: colors.white,
-    borderRadius: radii.lg, marginTop: 8, overflow: "hidden",
-    ...shadows.subtle,
+    overflow: "hidden",
   },
   btn: {
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
-    paddingVertical: 12, gap: 5,
+    paddingVertical: 11, gap: 5,
   },
-  icon: { fontSize: 16 },
   count: { fontSize: 12, fontWeight: "600", color: colors.inkSoft },
 });
 
@@ -793,7 +782,7 @@ export default function BulletinScreen({ navigation }: Props) {
           <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹ Back</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>📋 Bulletin</Text>
+          <Text style={styles.headerTitle}>Bulletin</Text>
         </LinearGradient>
         <View style={{ padding: spacing.lg }}>
           <SkeletonBox height={10} width={120} style={{ marginBottom: 14 }} />
@@ -875,7 +864,6 @@ export default function BulletinScreen({ navigation }: Props) {
   }
 
   // ── Bulletin view ──────────────────────────────────────────────────────────
-  const hasOrderOfService = extras.orderOfService?.length > 0;
   const hasSocialLinks = extras.social && Object.values(extras.social).some(Boolean);
 
   // Build slide array: announcements first, then ads
@@ -916,29 +904,39 @@ export default function BulletinScreen({ navigation }: Props) {
                 {viewingBulletin.publish_at ? ` · ${new Date(viewingBulletin.publish_at).toLocaleDateString()}` : ""}
               </Text>
             </LinearGradient>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl + insets.bottom }}>
-              {viewingBulletin.requiresPayment ? (
-                <View style={styles.paywallBox}>
-                  <Text style={{ fontSize: 48, marginBottom: 16 }}>🔒</Text>
-                  <Text style={styles.paywallTitle}>Paid Bulletin</Text>
-                  <Text style={styles.paywallDesc}>
-                    This bulletin is available for ₦{viewingBulletin.price_ngn?.toLocaleString()}. Purchase to read the full content.
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: spacing.xl + insets.bottom }}>
+              {/* Featured image banner */}
+              {viewingBulletin.featured_image_url ? (
+                <Image
+                  source={{ uri: viewingBulletin.featured_image_url }}
+                  style={{ width: "100%", height: 220 }}
+                  resizeMode="cover"
+                />
+              ) : null}
+              <View style={{ padding: spacing.lg }}>
+                {viewingBulletin.requiresPayment ? (
+                  <View style={styles.paywallBox}>
+                    <Text style={{ fontSize: 48, marginBottom: 16 }}>🔒</Text>
+                    <Text style={styles.paywallTitle}>Paid Bulletin</Text>
+                    <Text style={styles.paywallDesc}>
+                      This bulletin is available for ₦{viewingBulletin.price_ngn?.toLocaleString()}. Purchase to read the full content.
+                    </Text>
+                    <Pressable
+                      style={[styles.payBtn, payingFor === viewingBulletin.id && { opacity: 0.6 }]}
+                      onPress={() => payForBulletin(viewingBulletin)}
+                      disabled={payingFor === viewingBulletin.id}
+                    >
+                      {payingFor === viewingBulletin.id
+                        ? <ActivityIndicator color={colors.white} />
+                        : <Text style={styles.payBtnText}>Pay ₦{viewingBulletin.price_ngn?.toLocaleString()} to Read</Text>}
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Text style={{ ...typography.body, color: colors.ink, lineHeight: 28 }}>
+                    {(viewingBulletin.content ?? "").replace(/<[^>]+>/g, "\n").replace(/\n{3,}/g, "\n\n").trim()}
                   </Text>
-                  <Pressable
-                    style={[styles.payBtn, payingFor === viewingBulletin.id && { opacity: 0.6 }]}
-                    onPress={() => payForBulletin(viewingBulletin)}
-                    disabled={payingFor === viewingBulletin.id}
-                  >
-                    {payingFor === viewingBulletin.id
-                      ? <ActivityIndicator color={colors.white} />
-                      : <Text style={styles.payBtnText}>Pay ₦{viewingBulletin.price_ngn?.toLocaleString()} to Read</Text>}
-                  </Pressable>
-                </View>
-              ) : (
-                <Text style={{ ...typography.body, color: colors.ink, lineHeight: 28 }}>
-                  {(viewingBulletin.content ?? "").replace(/<[^>]+>/g, "\n").replace(/\n{3,}/g, "\n\n").trim()}
-                </Text>
-              )}
+                )}
+              </View>
             </ScrollView>
             {/* Social bar inside bulletin viewer */}
             <View style={{ paddingHorizontal: spacing.lg, paddingBottom: insets.bottom + spacing.md }}>
@@ -983,7 +981,7 @@ export default function BulletinScreen({ navigation }: Props) {
               <Image source={{ uri: selectedChurch.logo_url }} style={styles.headerLogo} resizeMode="contain" />
             ) : null}
             <View style={{ flex: 1 }}>
-              <Text style={styles.headerTitle}>📋 Bulletin</Text>
+              <Text style={styles.headerTitle}>Bulletin</Text>
               <Text style={styles.headerChurch}>{selectedChurch?.name}</Text>
             </View>
           </View>
@@ -994,49 +992,60 @@ export default function BulletinScreen({ navigation }: Props) {
 
         {/* ── 1. TODAY'S BULLETIN (first) ── */}
         <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>TODAY'S BULLETIN</Text>
-            {todayBulletin && <View style={styles.liveDot} />}
-          </View>
+          {todayBulletin && (
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveLabel}>LIVE</Text>
+            </View>
+          )}
 
           <FadeInView delay={50}>
             {todayBulletin ? (
-              <Pressable
-                style={({ pressed }) => [styles.todayCard, pressed && styles.pressed]}
-                onPress={() => openBulletin(todayBulletin)}
-              >
-                <LinearGradient colors={["#2E3A1F", "#3E4A2F", "#5B6B45"]} style={styles.todayGrad}>
-                  {/* Decorative circles */}
-                  <View style={styles.decor1} />
-                  <View style={styles.decor2} />
+              <View style={styles.todayCardOuter}>
+                <Pressable
+                  style={({ pressed }) => [pressed && { opacity: 0.9 }]}
+                  onPress={() => openBulletin(todayBulletin)}
+                >
+                  <LinearGradient colors={["#2E3A1F", "#3E4A2F", "#5B6B45"]} style={styles.todayGrad}>
+                    {/* Decorative circles */}
+                    <View style={styles.decor1} />
+                    <View style={styles.decor2} />
 
-                  <View style={styles.todayRow}>
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.todayFreqRow}>
-                        <Text style={styles.todayFreq}>{todayBulletin.frequency?.toUpperCase() ?? "BULLETIN"}</Text>
-                        {todayBulletin.is_paid && (
-                          <View style={styles.paidBadge}>
-                            <Text style={styles.paidBadgeText}>₦{todayBulletin.price_ngn?.toLocaleString()}</Text>
-                          </View>
-                        )}
+                    <View style={styles.todayRow}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.todayFreqRow}>
+                          <Text style={styles.todayFreq}>{todayBulletin.frequency?.toUpperCase() ?? "BULLETIN"}</Text>
+                          {todayBulletin.is_paid && (
+                            <View style={styles.paidBadge}>
+                              <Text style={styles.paidBadgeText}>₦{todayBulletin.price_ngn?.toLocaleString()}</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.todayTitle}>{todayBulletin.title}</Text>
+                        {todayBulletin.content_preview ? (
+                          <Text style={styles.todayPreview} numberOfLines={3}>{todayBulletin.content_preview}</Text>
+                        ) : null}
                       </View>
-                      <Text style={styles.todayTitle}>{todayBulletin.title}</Text>
-                      {todayBulletin.content_preview ? (
-                        <Text style={styles.todayPreview} numberOfLines={3}>{todayBulletin.content_preview}</Text>
-                      ) : null}
                     </View>
-                  </View>
 
-                  <View style={styles.todayFooter}>
-                    <Text style={styles.todayDate}>
-                      {todayBulletin.publish_at
-                        ? new Date(todayBulletin.publish_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })
-                        : "Today"}
-                    </Text>
-                    <Text style={styles.readMore}>{todayBulletin.hasAccess ? "Read bulletin →" : "View →"}</Text>
-                  </View>
-                </LinearGradient>
-              </Pressable>
+                    <View style={styles.todayFooter}>
+                      <Text style={styles.todayDate}>
+                        {todayBulletin.publish_at
+                          ? new Date(todayBulletin.publish_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })
+                          : "Today"}
+                      </Text>
+                      <Text style={styles.readMore}>{todayBulletin.hasAccess ? "Read bulletin →" : "View →"}</Text>
+                    </View>
+                  </LinearGradient>
+                </Pressable>
+                {/* Social bar attached to the bottom of today's card */}
+                <SocialBar
+                  bulletinId={todayBulletin.id}
+                  initialSocial={getSocial(todayBulletin.id)}
+                  onCommentPress={() => openComments(todayBulletin)}
+                  onShare={() => handleShare(todayBulletin)}
+                />
+              </View>
             ) : (
               <View style={styles.noBulletinCard}>
                 <Text style={{ fontSize: 36, marginBottom: 12 }}>📭</Text>
@@ -1047,18 +1056,6 @@ export default function BulletinScreen({ navigation }: Props) {
               </View>
             )}
           </FadeInView>
-
-          {/* Social bar for today's bulletin */}
-          {todayBulletin && (
-            <FadeInView delay={120}>
-              <SocialBar
-                bulletinId={todayBulletin.id}
-                initialSocial={getSocial(todayBulletin.id)}
-                onCommentPress={() => openComments(todayBulletin)}
-                onShare={() => handleShare(todayBulletin)}
-              />
-            </FadeInView>
-          )}
         </View>
 
         {/* ── 2. ANNOUNCEMENTS + ADS AUTO-SLIDER (full width) ── */}
@@ -1071,66 +1068,58 @@ export default function BulletinScreen({ navigation }: Props) {
           </View>
         ) : slides.length > 0 ? (
           <FadeInView delay={180}>
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>ANNOUNCEMENTS & FEATURED</Text>
-            </View>
             <AutoSlider slides={slides} onAdPress={(url) => Linking.openURL(url)} />
             <View style={{ height: spacing.xl }} />
           </FadeInView>
         ) : null}
 
-        {/* ── 3. ORDER OF SERVICE (horizontal strip, edge-to-edge) ── */}
-        {hasOrderOfService && (
-          <FadeInView delay={240}>
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>ORDER OF SERVICE</Text>
-            </View>
-            <View style={{ marginBottom: spacing.xl }}>
-              <OrderOfServiceStrip items={extras.orderOfService} />
-            </View>
-          </FadeInView>
-        )}
-
         {/* ── 4. PREVIOUS BULLETINS (archive) ── */}
         <View style={styles.section}>
-          <View style={styles.archiveHeaderRow}>
-            <Text style={styles.sectionLabel}>PREVIOUS BULLETINS</Text>
-            {!showArchive && archive.length > 3 && (
-              <Pressable onPress={() => setShowArchive(true)}>
-                <Text style={styles.showAll}>Show all</Text>
-              </Pressable>
-            )}
-          </View>
+          {archive.length > 3 && (
+            <View style={styles.archiveHeaderRow}>
+              {!showArchive && (
+                <Pressable onPress={() => setShowArchive(true)}>
+                  <Text style={styles.showAll}>Show all →</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
 
           {archive.length === 0 ? (
             <Text style={styles.noArchive}>No previous bulletins available.</Text>
           ) : (
             (showArchive ? archive : archive.slice(0, 3)).map((b, idx) => (
               <FadeInView key={b.id} delay={300 + idx * 60}>
-                <Pressable
-                  style={({ pressed }) => [styles.archiveCard, pressed && styles.pressed]}
-                  onPress={() => openBulletin(b)}
-                >
-                  <LinearGradient
-                    colors={["#3E4A2F15", "#00000000"]}
-                    style={styles.archiveGradAccent}
+                <View style={styles.archiveCardOuter}>
+                  {b.featured_image_url ? (
+                    <Image source={{ uri: b.featured_image_url }} style={styles.archiveThumb} resizeMode="cover" />
+                  ) : null}
+                  <Pressable
+                    style={({ pressed }) => [styles.archiveCard, pressed && { opacity: 0.85 }]}
+                    onPress={() => openBulletin(b)}
+                  >
+                    <LinearGradient
+                      colors={["#3E4A2F15", "#00000000"]}
+                      style={styles.archiveGradAccent}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.archiveTitle}>{b.title}</Text>
+                      <Text style={styles.archiveMeta}>
+                        {b.frequency?.charAt(0).toUpperCase() + (b.frequency?.slice(1) ?? "")}
+                        {b.publish_at ? ` · ${new Date(b.publish_at).toLocaleDateString()}` : ""}
+                      </Text>
+                    </View>
+                    {b.is_paid && <Text style={styles.archivePaid}>₦{b.price_ngn?.toLocaleString()}</Text>}
+                    <Text style={styles.archiveArrow}>›</Text>
+                  </Pressable>
+                  <View style={styles.archiveDivider} />
+                  <SocialBar
+                    bulletinId={b.id}
+                    initialSocial={getSocial(b.id)}
+                    onCommentPress={() => openComments(b)}
+                    onShare={() => handleShare(b)}
                   />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.archiveTitle}>{b.title}</Text>
-                    <Text style={styles.archiveMeta}>
-                      {b.frequency?.charAt(0).toUpperCase() + (b.frequency?.slice(1) ?? "")}
-                      {b.publish_at ? ` · ${new Date(b.publish_at).toLocaleDateString()}` : ""}
-                    </Text>
-                  </View>
-                  {b.is_paid && <Text style={styles.archivePaid}>₦{b.price_ngn?.toLocaleString()}</Text>}
-                  <Text style={styles.archiveArrow}>›</Text>
-                </Pressable>
-                <SocialBar
-                  bulletinId={b.id}
-                  initialSocial={getSocial(b.id)}
-                  onCommentPress={() => openComments(b)}
-                  onShare={() => handleShare(b)}
-                />
+                </View>
                 <View style={{ height: spacing.md }} />
               </FadeInView>
             ))
@@ -1146,13 +1135,37 @@ export default function BulletinScreen({ navigation }: Props) {
         {/* ── 5. Social links ── */}
         {hasSocialLinks && (
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>CONNECT WITH US</Text>
             <View style={styles.socialRow}>
-              {extras.social.website && <SocialLink label="🌐 Website" url={extras.social.website} />}
-              {extras.social.facebook && <SocialLink label="📘 Facebook" url={extras.social.facebook} />}
-              {extras.social.instagram && <SocialLink label="📸 Instagram" url={extras.social.instagram} />}
-              {extras.social.twitter && <SocialLink label="🐦 Twitter/X" url={extras.social.twitter} />}
-              {extras.social.youtube && <SocialLink label="▶️ YouTube" url={extras.social.youtube} />}
+              {extras.social.website && (
+                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.website!)}>
+                  <Ionicons name="globe-outline" size={22} color={colors.olive} />
+                  <Text style={styles.socialIconLabel}>Website</Text>
+                </Pressable>
+              )}
+              {extras.social.facebook && (
+                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.facebook!)}>
+                  <Ionicons name="logo-facebook" size={22} color="#1877F2" />
+                  <Text style={styles.socialIconLabel}>Facebook</Text>
+                </Pressable>
+              )}
+              {extras.social.instagram && (
+                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.instagram!)}>
+                  <Ionicons name="logo-instagram" size={22} color="#E1306C" />
+                  <Text style={styles.socialIconLabel}>Instagram</Text>
+                </Pressable>
+              )}
+              {extras.social.twitter && (
+                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.twitter!)}>
+                  <Ionicons name="logo-twitter" size={22} color="#1DA1F2" />
+                  <Text style={styles.socialIconLabel}>Twitter</Text>
+                </Pressable>
+              )}
+              {extras.social.youtube && (
+                <Pressable style={styles.socialIconBtn} onPress={() => Linking.openURL(extras.social.youtube!)}>
+                  <Ionicons name="logo-youtube" size={22} color="#FF0000" />
+                  <Text style={styles.socialIconLabel}>YouTube</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         )}
@@ -1245,8 +1258,12 @@ const styles = StyleSheet.create({
   sectionLabel: { fontSize: 10, fontWeight: "600", color: colors.inkFaint, letterSpacing: 2, marginBottom: 12 },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#4CAF50", marginBottom: 12 },
 
+  // Live indicator
+  liveLabel: { fontSize: 9, fontWeight: "700", color: "#4CAF50", letterSpacing: 2, marginBottom: 12 },
+
   // Today's bulletin
   todayCard: { borderRadius: radii.xl, overflow: "hidden", ...shadows.cardLg, marginBottom: 0 },
+  todayCardOuter: { borderRadius: radii.xl, overflow: "hidden", ...shadows.cardLg, marginBottom: 0, backgroundColor: colors.white },
   todayGrad: { padding: spacing.lg, minHeight: 180 },
   decor1: {
     position: "absolute", right: -30, top: -30, width: 130, height: 130,
@@ -1278,14 +1295,17 @@ const styles = StyleSheet.create({
   archiveHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   showAll: { color: colors.olive, fontWeight: "600", fontSize: 13 },
   noArchive: { fontSize: 13, color: colors.inkFaint, textAlign: "center", paddingVertical: spacing.lg },
+  archiveCardOuter: {
+    backgroundColor: colors.white, borderRadius: radii.lg, overflow: "hidden",
+    ...shadows.subtle,
+  },
+  archiveThumb: { width: "100%", height: 130 },
+  archiveDivider: { height: 1, backgroundColor: colors.parchmentDark, marginHorizontal: spacing.md },
   archiveCard: {
-    flexDirection: "row", alignItems: "center", backgroundColor: colors.white,
-    borderRadius: radii.lg, padding: spacing.md, overflow: "hidden",
-    ...shadows.subtle, marginBottom: spacing.xs,
+    flexDirection: "row", alignItems: "center", padding: spacing.md, overflow: "hidden",
   },
   archiveGradAccent: {
     position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
-    borderTopLeftRadius: radii.lg, borderBottomLeftRadius: radii.lg,
   },
   archiveTitle: { fontSize: 14, fontWeight: "600", color: colors.ink, marginBottom: 3 },
   archiveMeta: { fontSize: 12, color: colors.inkFaint },
@@ -1300,6 +1320,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.parchmentDark, ...shadows.subtle,
   },
   socialLinkText: { fontSize: 13, fontWeight: "600", color: colors.ink },
+  socialIconBtn: {
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.white, borderRadius: radii.xl,
+    paddingVertical: 14, paddingHorizontal: spacing.lg,
+    borderWidth: 1, borderColor: colors.parchmentDark, ...shadows.subtle, gap: 6,
+  },
+  socialIconLabel: { fontSize: 11, fontWeight: "600", color: colors.inkSoft },
 
   // Explore
   exploreRow: { flexDirection: "row", gap: spacing.md },

@@ -521,12 +521,12 @@ export default function DevotionsScreen() {
           <ActivityIndicator color={colors.gold} style={{ marginTop: spacing.xl }} />
         ) : (
           <>
-            {/* UNREAD — always expanded */}
+            {/* UNREAD — collapsible, first one expanded */}
             {unread.length > 0 && (
               <View style={s.historySection}>
                 <SectionDivider label="UNREAD" count={unread.length} />
                 {unread.map((e, i) => (
-                  <EntryCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} />
+                  <EntryCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} collapsible defaultExpanded={i === 0} />
                 ))}
               </View>
             )}

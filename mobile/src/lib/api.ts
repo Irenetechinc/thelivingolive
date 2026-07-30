@@ -241,6 +241,7 @@ export type Bulletin = {
   frequency: string; publish_at?: string; expires_at?: string;
   is_paid?: boolean; price_ngn?: number; is_published?: boolean;
   hasAccess?: boolean; requiresPayment?: boolean;
+  featured_image_url?: string | null;
 };
 
 async function publicFetch(path: string) {

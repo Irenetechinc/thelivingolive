@@ -20,6 +20,7 @@ function imageOnlyFilter(_req, file, cb) {
 }
 const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const bulletinImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 
 const log = logger('org-admin');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -161,7 +162,7 @@ router.post('/api/bulletins', requireOrgAdmin, async (req, res) => {
   if (!supabase) return res.status(503).json({ ok: false, error: 'Database unavailable' });
 
   const { churchId } = req.session.orgAdmin;
-  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn } = req.body;
+  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn, featuredImageUrl } = req.body;
 
   if (!title?.trim() || !content?.trim()) {
     return res.status(400).json({ ok: false, error: 'title and content are required' });
@@ -179,6 +180,7 @@ router.post('/api/bulletins', requireOrgAdmin, async (req, res) => {
     is_paid: !!isPaid,
     price_ngn: isPaid ? (parseInt(priceNgn, 10) || 0) : 0,
     is_published: false,
+    featured_image_url: featuredImageUrl ?? null,
   }).select('id').single();
 
   if (error) return res.status(500).json({ ok: false, error: error.message });
@@ -189,7 +191,7 @@ router.post('/api/bulletins', requireOrgAdmin, async (req, res) => {
 router.put('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { churchId } = req.session.orgAdmin;
-  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn } = req.body;
+  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn, featuredImageUrl } = req.body;
 
   const preview = content ? content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) : undefined;
   const updates = {};
@@ -199,11 +201,38 @@ router.put('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {
   if (publishAt !== undefined) updates.publish_at = publishAt;
   if (expiresAt !== undefined) updates.expires_at = expiresAt;
   if (isPaid !== undefined) { updates.is_paid = !!isPaid; updates.price_ngn = isPaid ? (parseInt(priceNgn, 10) || 0) : 0; }
+  if (featuredImageUrl !== undefined) updates.featured_image_url = featuredImageUrl;
   updates.updated_at = new Date().toISOString();
 
   const { error } = await supabase.from('bulletins').update(updates).eq('id', req.params.id).eq('church_id', churchId);
   if (error) return res.status(500).json({ ok: false, error: error.message });
   res.json({ ok: true });
+});
+
+// ── Bulletin featured image upload ─────────────────────────────────────────────
+router.post('/api/bulletins/:id/upload-featured-image', requireOrgAdmin, bulletinImageUpload.single('image'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No image file provided' });
+
+  // Verify bulletin belongs to this church
+  const { data: bulletin } = await supabase.from('bulletins').select('id').eq('id', req.params.id).eq('church_id', churchId).maybeSingle();
+  if (!bulletin) return res.status(404).json({ ok: false, error: 'Bulletin not found' });
+
+  const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const storagePath = `bulletins/${churchId}/${req.params.id}/featured.${ext}`;
+
+  await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+  const { error } = await supabase.storage.from('church-assets').upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (error) { log.error('bulletin image upload error:', error.message); return res.status(500).json({ ok: false, error: 'Upload failed' }); }
+
+  const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+  const featuredImageUrl = data.publicUrl;
+
+  // Save URL to bulletin record
+  await supabase.from('bulletins').update({ featured_image_url: featuredImageUrl, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('church_id', churchId);
+
+  res.json({ ok: true, featuredImageUrl });
 });
 
 router.delete('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {

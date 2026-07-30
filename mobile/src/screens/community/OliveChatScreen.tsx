@@ -42,7 +42,6 @@ import {
 import { supabase } from '../../lib/supabase';
 import OliveChatSplash from '../../components/OliveChatSplash';
 import { PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
-import NetworkErrorBanner from '../../components/NetworkErrorBanner';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
@@ -1127,6 +1126,7 @@ export default function OliveChatScreen() {
             setLoadingFeed(false);
             setLoadingRooms(false);
             setPinChecked(true);
+            setProfileError(true);
           }
         }
       }
@@ -1145,6 +1145,13 @@ export default function OliveChatScreen() {
       reqUnsubRef.current?.();
     };
   }, []);
+
+  // Auto-retry silently when server is unreachable — keeps skeleton visible
+  useEffect(() => {
+    if (!loadError) return;
+    const timer = setInterval(() => retryLoad(), 15_000);
+    return () => clearInterval(timer);
+  }, [loadError]);
 
   async function retryLoad() {
     setRetrying(true);
@@ -1247,8 +1254,8 @@ export default function OliveChatScreen() {
   }
 
   if (!pinChecked) return (
-    <View style={{ flex: 1, backgroundColor: '#2E3A1F', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color={colors.goldLight} />
+    <View style={{ flex: 1 }}>
+      <OliveChatSplash onFinish={() => {}} />
     </View>
   );
   if (pinLocked) return <PinGate onVerified={() => setPinLocked(false)} />;
@@ -1331,18 +1338,9 @@ export default function OliveChatScreen() {
         </View>
       </LinearGradient>
 
-      {/* Network error banner — shown on Feed and Chats when server unreachable */}
-      {loadError && (tab === 'feed' || tab === 'chats') && (
-        <NetworkErrorBanner
-          message={loadError}
-          retrying={retrying}
-          onRetry={retryLoad}
-        />
-      )}
-
       {/* Feed */}
       {tab === 'feed' && (
-        loadingFeed
+        (loadingFeed || (loadError != null && posts.length === 0))
           ? <FlatList data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
           : (
             <FlatList
@@ -1380,7 +1378,7 @@ export default function OliveChatScreen() {
 
       {/* Chats */}
       {tab === 'chats' && (
-        loadingRooms
+        (loadingRooms || (loadError != null && rooms.length === 0))
           ? <FlatList data={[1,2,3,4,5]} keyExtractor={i => String(i)} renderItem={() => <ChatRoomSkeleton />} />
           : (
             <FlatList

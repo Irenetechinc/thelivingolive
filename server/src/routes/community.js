@@ -575,27 +575,31 @@ router.post('/posts/upload', upload.single('file'), async (req, res) => {
 
   if (isVideo) {
     // ── Video: compress + generate thumbnail server-side ───────────────────
-    let videoBuffer, thumbBuffer;
+    let videoBuffer = req.file.buffer;
+    let thumbBuffer = null;
     try {
       ({ videoBuffer, thumbBuffer } = await compressVideo(req.file.buffer));
     } catch (err) {
-      log.error('Video compression failed', { err: err.message });
-      return res.status(500).json({ error: 'Video processing failed. Please try again with a shorter clip.' });
+      log.warn('Video compression failed, using original:', err.message);
+      // Fall back to original video — compression is optional
     }
 
     const videoPath = `posts/${uid}/${ts}.mp4`;
     const thumbPath = `posts/${uid}/${ts}_thumb.jpg`;
 
-    const [videoUp, thumbUp] = await Promise.all([
-      supabase.storage.from('community').upload(videoPath, videoBuffer, { contentType: 'video/mp4', upsert: false }),
-      supabase.storage.from('community').upload(thumbPath, thumbBuffer, { contentType: 'image/jpeg', upsert: false }),
-    ]);
-
+    const videoUp = await supabase.storage.from('community').upload(videoPath, videoBuffer, { contentType: 'video/mp4', upsert: true });
     if (videoUp.error) { log.error('video upload error:', videoUp.error.message); return res.status(500).json({ error: 'Upload failed. Please try again.' }); }
-    if (thumbUp.error) { log.error('thumbnail upload error:', thumbUp.error.message); return res.status(500).json({ error: 'Upload failed. Please try again.' }); }
 
-    const { data: { publicUrl: url } }          = supabase.storage.from('community').getPublicUrl(videoPath);
-    const { data: { publicUrl: thumbnailUrl } }  = supabase.storage.from('community').getPublicUrl(thumbPath);
+    const { data: { publicUrl: url } } = supabase.storage.from('community').getPublicUrl(videoPath);
+    let thumbnailUrl = null;
+    if (thumbBuffer) {
+      const thumbUp = await supabase.storage.from('community').upload(thumbPath, thumbBuffer, { contentType: 'image/jpeg', upsert: true });
+      if (!thumbUp.error) {
+        thumbnailUrl = supabase.storage.from('community').getPublicUrl(thumbPath).data.publicUrl;
+      } else {
+        log.warn('thumbnail upload failed (non-fatal):', thumbUp.error.message);
+      }
+    }
 
     return res.json({ ok: true, url, thumbnailUrl });
   }

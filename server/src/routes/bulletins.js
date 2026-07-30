@@ -121,7 +121,7 @@ router.get('/:churchId/today', async (req, res) => {
   const todayStr = today();
   const { data: bulletins, error } = await supabase
     .from('bulletins')
-    .select('id, title, content_preview, frequency, publish_at, expires_at, is_paid, price_ngn, is_published')
+    .select('id, title, content_preview, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, featured_image_url')
     .eq('church_id', churchId)
     .eq('is_published', true)
     .lte('publish_at', new Date().toISOString())
@@ -163,7 +163,7 @@ router.get('/:churchId/archive', async (req, res) => {
 
   const { data, error, count } = await supabase
     .from('bulletins')
-    .select('id, title, content_preview, frequency, publish_at, is_paid, price_ngn, is_published', { count: 'exact' })
+    .select('id, title, content_preview, frequency, publish_at, is_paid, price_ngn, is_published, featured_image_url', { count: 'exact' })
     .eq('church_id', churchId)
     .eq('is_published', true)
     .order('publish_at', { ascending: false })
@@ -458,7 +458,7 @@ router.get('/:churchId/:bulletinId', async (req, res) => {
 
   const { data: bulletin, error } = await supabase
     .from('bulletins')
-    .select('id, title, content, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, churches(name)')
+    .select('id, title, content, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, featured_image_url, churches(name)')
     .eq('id', bulletinId)
     .eq('church_id', churchId)
     .eq('is_published', true)
