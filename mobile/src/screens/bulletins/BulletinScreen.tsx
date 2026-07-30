@@ -939,7 +939,7 @@ export default function BulletinScreen({ navigation }: Props) {
         </LinearGradient>
 
         {/* ── 1. TODAY'S BULLETIN (first) ── */}
-        <View style={styles.section}>
+        <View style={[styles.section, { marginTop: '10%' }]}>
           {todayBulletin && (
             <View style={styles.sectionHeaderRow}>
               <View style={styles.liveDot} />

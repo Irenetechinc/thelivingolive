@@ -77,17 +77,31 @@ function Avatar({ url, name, size = 36 }: { url: string | null; name: string; si
   );
 }
 
+// ── Video thumbnail placeholder (no player — shown when post is off-screen) ──
+// Renders a static image + play icon without creating any native player object.
+// This avoids allocating a useVideoPlayer() instance for every video in the feed
+// regardless of scroll position, which was the root cause of the video-scroll crash.
+function VideoThumbnailPlaceholder({ thumbnailUrl }: { thumbnailUrl: string | null }) {
+  return (
+    <View style={vs.wrap}>
+      {thumbnailUrl
+        ? <Image source={{ uri: thumbnailUrl }} style={vs.thumb} resizeMode="cover" />
+        : <View style={[vs.thumb, { backgroundColor: '#1a1a1a' }]} />}
+      <View style={vs.playBtn}><Text style={vs.playIcon}>▶</Text></View>
+    </View>
+  );
+}
+
 // ── Video post component ──────────────────────────────────────────────────────
-// Keeps VideoView always mounted (when isNearVisible) so expo-video buffers in
-// the background. On tap we just hide the thumbnail overlay — no cold-start.
+// Only rendered when the post IS near-visible (controlled by PostCard below).
+// Because VideoPost is conditionally mounted, useVideoPlayer() is only called
+// for posts currently on or near the screen — not for every video in the feed.
 function VideoPost({
   videoUrl,
   thumbnailUrl,
-  isNearVisible,
 }: {
   videoUrl: string;
   thumbnailUrl: string | null;
-  isNearVisible: boolean;
 }) {
   const [playing, setPlaying] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,14 +114,11 @@ function VideoPost({
 
   return (
     <View style={vs.wrap}>
-      {/* VideoView is always mounted when near visible so it pre-buffers */}
-      {isNearVisible && (
-        <VideoView
-          style={[vs.thumb, playing ? vs.visible : vs.hidden]}
-          player={player}
-          contentFit="cover"
-        />
-      )}
+      <VideoView
+        style={[vs.thumb, playing ? vs.visible : vs.hidden]}
+        player={player}
+        contentFit="cover"
+      />
       {/* Thumbnail overlay — hidden once user taps play */}
       {!playing && (
         <Pressable onPress={handleTap} style={[vs.thumbWrap, vs.overlayAbsolute]}>
@@ -209,7 +220,11 @@ function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onSha
 
       {/* Media */}
       {post.imageUrl ? <Image source={{ uri: post.imageUrl }} style={ps.image} resizeMode="cover" /> : null}
-      {post.videoUrl ? <VideoPost videoUrl={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl} isNearVisible={isNearVisible} /> : null}
+      {post.videoUrl ? (
+        isNearVisible
+          ? <VideoPost videoUrl={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl ?? null} />
+          : <VideoThumbnailPlaceholder thumbnailUrl={post.videoThumbnailUrl ?? null} />
+      ) : null}
 
       {/* Reaction counts */}
       {(post.likeCount > 0 || post.commentCount > 0) && (
