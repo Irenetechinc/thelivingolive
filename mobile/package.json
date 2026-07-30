@@ -55,5 +55,8 @@
     "prebuild:ios": "node scripts/stub-devtools-shell.js; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
     "build:ios": "NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform ios --profile production --non-interactive"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "brace-expansion": "^5.0.8"
+  }
 }
