@@ -918,7 +918,14 @@ function NotificationsTab({ userId }: { userId: string | null }) {
     }
   }
 
-  if (loading) return <ActivityIndicator color={colors.gold} style={{ marginTop: 40 }} />;
+  if (loading) return (
+    <FlatList
+      data={[1,2,3,4,5]}
+      keyExtractor={i => String(i)}
+      renderItem={() => <NotifSkeleton />}
+      contentContainerStyle={{ paddingTop: 8 }}
+    />
+  );
 
   return (
     <FlatList
