@@ -23,7 +23,8 @@ function today() {
 
 function flutterwaveSecret() {
   const key = process.env.FLUTTERWAVE_SECRET_KEY;
-  if (!key) throw new Error('FLUTTERWAVE_SECRET_KEY environment variable is not set');
+  // Use a generic error — the env var name stays in Railway logs, never in API responses
+  if (!key) throw new Error('Payment system is not configured');
   return key;
 }
 
@@ -33,7 +34,7 @@ async function verifyFlwTransaction(txId) {
     headers: { Authorization: `Bearer ${key}` },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`Flutterwave verify returned ${res.status}`);
+  if (!res.ok) throw new Error(`Payment gateway returned ${res.status}`);
   return res.json();
 }
 
@@ -572,36 +573,73 @@ router.post('/:bulletinId/verify-payment', async (req, res) => {
 
     // Step 2 — Verify the transaction with Flutterwave
     const result = await verifyFlwTransaction(txId);
-    const tx = result.data;
+    const tx = result?.data;
+
+    // Guard: Flutterwave returned no transaction data
+    if (!tx) {
+      log.warn(`Flutterwave returned no transaction data for txId ${txId}`);
+      return res.status(502).json({ error: 'Could not retrieve transaction details. Try again.' });
+    }
 
     if (tx.status !== 'successful') {
       return res.json({ ok: false, paid: false, status: tx.status });
     }
 
-    // Step 3 — Validate that this transaction belongs to this user's pending record:
-    //   • tx_ref must match exactly (prevents replaying another user's successful tx)
-    //   • currency must be NGN
-    //   • amount paid must be >= the expected bulletin price
+    // Step 3 — Validate the transaction against the pending record.
+    // These checks together prevent the four main manipulation attacks:
+    //
+    //   a) tx_ref mismatch — replaying a different user's successful transaction
+    //   b) wrong currency   — paying in a currency that maps to a lower NGN value
+    //   c) zero / negative amount — Flutterwave occasionally marks ₦0 test
+    //      transactions as "successful"; we must never grant access for free
+    //   d) underpayment    — amount paid is less than the bulletin's price
+    //   e) pending price is zero — if the DB record somehow has a ₦0 expected
+    //      amount the amount check would trivially pass; block this explicitly
+
     if (tx.tx_ref !== pending.flw_tx_ref) {
-      log.warn(`tx_ref mismatch for bulletin ${bulletinId} user ${req.user.id}: expected ${pending.flw_tx_ref}, got ${tx.tx_ref}`);
+      log.warn(`tx_ref mismatch — bulletin ${bulletinId} user ${req.user.id}: expected ${pending.flw_tx_ref}, got ${tx.tx_ref}`);
       return res.status(403).json({ error: 'Transaction reference mismatch. Payment not accepted.' });
     }
     if ((tx.currency ?? '').toUpperCase() !== 'NGN') {
+      log.warn(`Wrong currency for bulletin ${bulletinId}: ${tx.currency}`);
       return res.status(400).json({ error: 'Payment must be in NGN.' });
+    }
+    if (!pending.amount_ngn || pending.amount_ngn <= 0) {
+      log.error(`Bulletin ${bulletinId} has invalid pending amount_ngn: ${pending.amount_ngn}`);
+      return res.status(500).json({ error: 'Payment record is invalid. Please contact support.' });
+    }
+    if (!tx.amount || tx.amount <= 0) {
+      log.warn(`Zero/negative tx.amount for bulletin ${bulletinId}: ${tx.amount}`);
+      return res.status(400).json({ error: 'Payment amount is invalid.' });
     }
     if (tx.amount < pending.amount_ngn) {
       log.warn(`Underpayment for bulletin ${bulletinId}: expected ₦${pending.amount_ngn}, received ₦${tx.amount}`);
       return res.status(400).json({ error: 'Payment amount is less than the bulletin price.' });
     }
 
-    // Step 4 — Grant access
+    // Step 4 — Prevent replay: ensure this Flutterwave transaction ID has not
+    // already been used to grant access to any bulletin (not just this one).
+    const flwTxIdStr = String(tx.id);
+    const { data: existingUse } = await supabase
+      .from('bulletin_access')
+      .select('bulletin_id')
+      .eq('flw_tx_id', flwTxIdStr)
+      .eq('status', 'success')
+      .maybeSingle();
+
+    if (existingUse) {
+      log.warn(`Replay attempt — tx ${flwTxIdStr} already used for bulletin ${existingUse.bulletin_id}, rejected for ${bulletinId} by user ${req.user.id}`);
+      return res.status(403).json({ error: 'This transaction has already been used. Please initiate a new payment.' });
+    }
+
+    // Step 5 — Grant access
     await supabase.from('bulletin_access').upsert(
       {
         bulletin_id: bulletinId,
         user_id: req.user.id,
         church_id: pending.church_id,
         flw_tx_ref: tx.tx_ref,
-        flw_tx_id: String(tx.id),
+        flw_tx_id: flwTxIdStr,
         status: 'success',
         amount_ngn: tx.amount,
         paid_at: new Date().toISOString(),
