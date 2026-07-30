@@ -214,7 +214,7 @@ export async function getMessageRequests(): Promise<MessageRequest[]> {
   return r.requests ?? [];
 }
 
-export async function respondToRequest(requestId: string, action: 'accept' | 'reject'): Promise<{ roomId?: string }> {
+export async function respondToRequest(requestId: string, action: 'accept' | 'reject' | 'block'): Promise<{ roomId?: string }> {
   const r = await apiCall<any>(`/api/community/message-requests/${requestId}/respond`, 'PUT', { action });
   return { roomId: r.roomId };
 }

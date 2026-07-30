@@ -103,7 +103,7 @@ export default function OliveChatSplash({ onFinish }: Props) {
 
         {/* Tagline */}
         <Animated.View style={{ opacity: tagOpacity, alignItems: 'center', marginTop: spacing.sm }}>
-          <Text style={styles.tagline}>Your faith community</Text>
+          <Text style={styles.tagline}>Connecting the body of Christ worldwide</Text>
           <View style={styles.dotsRow}>
             {[0, 1, 2].map(i => (
               <View key={i} style={styles.dot} />

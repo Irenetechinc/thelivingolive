@@ -42,6 +42,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import OliveChatSplash from '../../components/OliveChatSplash';
 import { PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
+import NetworkErrorBanner from '../../components/NetworkErrorBanner';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
@@ -1012,6 +1013,8 @@ export default function OliveChatScreen() {
   const [pinLocked, setPinLocked] = useState(false);
   const [pinChecked, setPinChecked] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileError, setProfileError] = useState(false);
   const [myUserId, setMyUserId] = useState<string | null>(null);
@@ -1024,6 +1027,8 @@ export default function OliveChatScreen() {
   const [commentPost, setCommentPost] = useState<CommunityPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [messageRequests, setMessageRequests] = useState<MessageRequest[]>([]);
+  const [showRequestsModal, setShowRequestsModal] = useState(false);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
   // Viewability — track which feed indices are currently on-screen
   const visibleIndicesRef = useRef<Set<number>>(new Set());
   const [visibleIndicesSnap, setVisibleIndicesSnap] = useState<Set<number>>(new Set());
@@ -1066,7 +1071,13 @@ export default function OliveChatScreen() {
         }
 
         // Load feed + rooms in parallel
-        const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
+        let feed: CommunityPost[] = [], r: ChatRoom[] = [];
+        try {
+          [feed, r] = await Promise.all([getTimeline(), getRooms()]);
+          if (active) setLoadError(null);
+        } catch (fetchErr: any) {
+          if (active) setLoadError(fetchErr?.message ?? 'Could not connect to the server.');
+        }
         if (active) {
           setPosts(feed);
           setLoadingFeed(false);
@@ -1111,7 +1122,12 @@ export default function OliveChatScreen() {
         if (e.message?.includes('church')) {
           if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
         } else {
-          if (active) { setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
+          if (active) {
+            setLoadError(e?.message ?? 'Could not connect to the server.');
+            setLoadingFeed(false);
+            setLoadingRooms(false);
+            setPinChecked(true);
+          }
         }
       }
     })();
@@ -1130,14 +1146,75 @@ export default function OliveChatScreen() {
     };
   }, []);
 
+  async function retryLoad() {
+    setRetrying(true);
+    setLoadError(null);
+    try {
+      const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
+      setPosts(feed); setRooms(r);
+    } catch (e: any) {
+      setLoadError(e?.message ?? 'Could not connect to the server.');
+    }
+    setRetrying(false);
+  }
+
   async function refreshFeed() {
     setRefreshing(true);
-    try { const feed = await getTimeline(); setPosts(feed); } catch {}
+    try { const feed = await getTimeline(); setPosts(feed); setLoadError(null); } catch (e: any) {
+      setLoadError(e?.message ?? 'Could not connect to the server.');
+    }
     setRefreshing(false);
   }
 
   async function refreshRooms() {
-    try { const r = await getRooms(); setRooms(r); } catch {}
+    try { const r = await getRooms(); setRooms(r); setLoadError(null); } catch (e: any) {
+      setLoadError(e?.message ?? 'Could not connect to the server.');
+    }
+  }
+
+  async function handleRespondToRequest(req: MessageRequest, action: 'accept' | 'reject' | 'block') {
+    if (action === 'block') {
+      Alert.alert(
+        'Block this person?',
+        `${req.fromUser.name} won't be able to message you. You can unblock them later.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Block', style: 'destructive',
+            onPress: async () => {
+              setRespondingId(req.id);
+              try {
+                await respondToRequest(req.id, 'block');
+                setMessageRequests(prev => {
+                  const remaining = prev.filter(r => r.id !== req.id);
+                  if (remaining.length === 0) setShowRequestsModal(false);
+                  return remaining;
+                });
+              } catch (e: any) { Alert.alert('Error', e.message); }
+              setRespondingId(null);
+            },
+          },
+        ]
+      );
+      return;
+    }
+    setRespondingId(req.id);
+    try {
+      await respondToRequest(req.id, action);
+      setMessageRequests(prev => {
+        const remaining = prev.filter(r => r.id !== req.id);
+        if (remaining.length === 0) setShowRequestsModal(false);
+        return remaining;
+      });
+      if (action === 'accept' && req.roomId) {
+        setShowRequestsModal(false);
+        navigation.navigate('ChatRoom' as any, {
+          roomId: req.roomId,
+          roomName: req.fromUser.name,
+        });
+      }
+    } catch (e: any) { Alert.alert('Error', e.message); }
+    setRespondingId(null);
   }
 
   async function handleLike(post: CommunityPost) {
@@ -1254,6 +1331,15 @@ export default function OliveChatScreen() {
         </View>
       </LinearGradient>
 
+      {/* Network error banner — shown on Feed and Chats when server unreachable */}
+      {loadError && (tab === 'feed' || tab === 'chats') && (
+        <NetworkErrorBanner
+          message={loadError}
+          retrying={retrying}
+          onRetry={retryLoad}
+        />
+      )}
+
       {/* Feed */}
       {tab === 'feed' && (
         loadingFeed
@@ -1302,7 +1388,7 @@ export default function OliveChatScreen() {
               keyExtractor={r => r.id}
               ListHeaderComponent={
                 pendingRequestCount > 0 ? (
-                  <Pressable style={main.requestsBanner} onPress={() => {/* TODO: open requests modal */}}>
+                  <Pressable style={main.requestsBanner} onPress={() => setShowRequestsModal(true)}>
                     <Ionicons name="mail-outline" size={18} color={colors.olive} />
                     <Text style={main.requestsBannerText}>{pendingRequestCount} pending message request{pendingRequestCount > 1 ? 's' : ''}</Text>
                     <Ionicons name="chevron-forward" size={16} color={colors.olive} />
@@ -1356,9 +1442,153 @@ export default function OliveChatScreen() {
         onClose={() => setSharePost(null)}
         onShared={() => {}}
       />
+
+      {/* Message requests modal */}
+      <MessageRequestsModal
+        visible={showRequestsModal}
+        requests={messageRequests}
+        respondingId={respondingId}
+        onClose={() => setShowRequestsModal(false)}
+        onRespond={handleRespondToRequest}
+      />
     </View>
   );
 }
+
+// ── Message Requests Modal ────────────────────────────────────────────────────
+function MessageRequestsModal({
+  visible, requests, respondingId, onClose, onRespond,
+}: {
+  visible: boolean;
+  requests: MessageRequest[];
+  respondingId: string | null;
+  onClose: () => void;
+  onRespond: (req: MessageRequest, action: 'accept' | 'reject' | 'block') => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
+      <Pressable style={mr.backdrop} onPress={onClose} />
+      <View style={mr.sheet}>
+        {/* Handle */}
+        <View style={mr.handle} />
+        {/* Header */}
+        <View style={mr.header}>
+          <Text style={mr.title}>Message Requests</Text>
+          <Pressable onPress={onClose} hitSlop={12}>
+            <Ionicons name="close" size={22} color={colors.inkSoft} />
+          </Pressable>
+        </View>
+        {requests.length === 0 ? (
+          <View style={mr.empty}>
+            <Ionicons name="mail-open-outline" size={48} color={colors.inkFaint} />
+            <Text style={mr.emptyText}>No pending requests</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={requests}
+            keyExtractor={r => r.id}
+            contentContainerStyle={{ paddingBottom: 32 }}
+            renderItem={({ item: req }) => {
+              const busy = respondingId === req.id;
+              return (
+                <View style={mr.row}>
+                  <Avatar url={req.fromUser.avatarUrl} name={req.fromUser.name} size={46} />
+                  <View style={mr.info}>
+                    <Text style={mr.name}>{req.fromUser.name}</Text>
+                    <Text style={mr.sub}>Wants to send you a message</Text>
+                    <Text style={mr.time}>{relTime(req.createdAt)}</Text>
+                  </View>
+                  {busy ? (
+                    <ActivityIndicator size="small" color={colors.olive} />
+                  ) : (
+                    <View style={mr.actions}>
+                      <Pressable
+                        style={[mr.btn, mr.btnAccept]}
+                        onPress={() => onRespond(req, 'accept')}
+                      >
+                        <Ionicons name="checkmark" size={16} color="#fff" />
+                        <Text style={mr.btnAcceptText}>Accept</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[mr.btn, mr.btnDecline]}
+                        onPress={() => onRespond(req, 'reject')}
+                      >
+                        <Text style={mr.btnDeclineText}>Decline</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[mr.btn, mr.btnBlock]}
+                        onPress={() => onRespond(req, 'block')}
+                      >
+                        <Ionicons name="ban-outline" size={14} color={colors.danger ?? '#E05252'} />
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              );
+            }}
+          />
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+const mr = StyleSheet.create({
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingTop: 12,
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: colors.inkFaint,
+    alignSelf: 'center',
+    marginBottom: 8,
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.parchment,
+  },
+  title: { fontSize: 17, fontWeight: '700', color: colors.ink },
+  empty: { alignItems: 'center', paddingVertical: 48, gap: 12 },
+  emptyText: { fontSize: 15, color: colors.inkSoft },
+  row: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: colors.parchment,
+    gap: spacing.sm,
+  },
+  info: { flex: 1 },
+  name: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  sub: { fontSize: 12, color: colors.inkSoft, marginTop: 2 },
+  time: { fontSize: 11, color: colors.inkFaint, marginTop: 2 },
+  actions: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  btn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: radii.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 7,
+  },
+  btnAccept: { backgroundColor: colors.olive },
+  btnAcceptText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  btnDecline: { backgroundColor: colors.parchment, borderWidth: 1, borderColor: colors.parchmentDark },
+  btnDeclineText: { fontSize: 13, fontWeight: '600', color: colors.inkSoft },
+  btnBlock: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: colors.parchment, borderWidth: 1, borderColor: '#F0C0C0',
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 0,
+  },
+});
 
 const main = StyleSheet.create({
   header: { paddingBottom: 0 },

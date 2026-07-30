@@ -11,6 +11,7 @@ import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { consumePendingAlarm } from "../../lib/alarmState";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
+import NetworkErrorBanner from "../../components/NetworkErrorBanner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type PrayerEntry = {
@@ -176,6 +177,8 @@ export default function PrayerScreen() {
   const [loadingEntries, setLoadingEntries] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryingLoad, setRetryingLoad] = useState(false);
   const [arrivedFromNotif, setArrivedFromNotif] = useState(false);
   const autoGenerateAttempted = useRef(false);
 
@@ -200,17 +203,26 @@ export default function PrayerScreen() {
       if (replace) setEntries(rows);
       else setEntries(prev => [...prev, ...rows]);
       setHasMore(rows.length === PAGE_SIZE);
-    } catch {}
-    finally {
+    } catch (err: any) {
+      if (replace) setLoadError(err?.message ?? 'Could not load prayers. Check your connection.');
+    } finally {
       if (!replace) setLoadingMore(false);
       else setLoadingEntries(false);
     }
+  }
+
+  async function retryLoadEntries() {
+    setRetryingLoad(true);
+    setLoadError(null);
+    await loadEntries(true);
+    setRetryingLoad(false);
   }
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
       autoGenerateAttempted.current = false;
+      setLoadError(null);
       const alarm = consumePendingAlarm();
       if (alarm?.type === "prayer" && Date.now() - alarm.timestamp < 120_000) {
         setArrivedFromNotif(true);
@@ -497,6 +509,15 @@ export default function PrayerScreen() {
             </LinearGradient>
           </Pressable>
         </View>
+
+        {/* Network error banner */}
+        {loadError && (
+          <NetworkErrorBanner
+            message={loadError}
+            retrying={retryingLoad}
+            onRetry={retryLoadEntries}
+          />
+        )}
 
         {/* ── Entries ── */}
         {loadingEntries ? (
