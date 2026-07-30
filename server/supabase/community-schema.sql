@@ -1,7 +1,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Olive Chat — Community Schema
--- Run AFTER the main schema.sql.  Fully idempotent (create if not exists / add
--- column if not exists).  Copy-paste the whole file into Supabase SQL Editor.
+-- Olive Chat — Community Schema  (v2 — idempotent)
+-- Run AFTER the main schema.sql in the Supabase SQL Editor.
+-- Safe to run multiple times.
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ── User profiles ─────────────────────────────────────────────────────────────
@@ -17,17 +17,14 @@ create table if not exists public.user_profiles (
 );
 alter table public.user_profiles enable row level security;
 
--- Authenticated users can read any profile (for name/avatar in feeds/chat)
 drop policy if exists "profiles_read" on public.user_profiles;
 create policy "profiles_read" on public.user_profiles
   for select using (auth.role() = 'authenticated');
 
--- Each user can only write their own row
 drop policy if exists "profiles_owner_write" on public.user_profiles;
 create policy "profiles_owner_write" on public.user_profiles
   for all using (auth.uid() = id) with check (auth.uid() = id);
 
--- Auto-create a profile row when a new user is created in auth.users
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer as $$
 begin
@@ -47,14 +44,12 @@ create trigger on_auth_user_created
 create table if not exists public.chat_rooms (
   id          uuid        primary key default gen_random_uuid(),
   type        text        not null check (type in ('group', 'dm')),
-  name        text,                   -- null for DMs; set for group rooms
+  name        text,
   church_id   uuid        references public.churches(id) on delete cascade,
   created_at  timestamptz not null default now()
 );
 create index if not exists chat_rooms_church_idx on public.chat_rooms(church_id);
 alter table public.chat_rooms enable row level security;
-
--- NOTE: rooms_member_read policy is defined AFTER chat_room_members table below.
 
 -- ── Chat room members ─────────────────────────────────────────────────────────
 create table if not exists public.chat_room_members (
@@ -67,12 +62,10 @@ create table if not exists public.chat_room_members (
 create index if not exists crm_user_idx on public.chat_room_members(user_id);
 alter table public.chat_room_members enable row level security;
 
--- Users can see their own memberships; service role sees all (for room management)
 drop policy if exists "crm_owner_read" on public.chat_room_members;
 create policy "crm_owner_read" on public.chat_room_members
   for select using (auth.uid() = user_id);
 
--- Now that chat_room_members exists, create the rooms RLS policy that references it
 drop policy if exists "rooms_member_read" on public.chat_rooms;
 create policy "rooms_member_read" on public.chat_rooms
   for select using (
@@ -81,6 +74,43 @@ create policy "rooms_member_read" on public.chat_rooms
       where room_id = id and user_id = auth.uid()
     )
   );
+
+-- ── Message requests (first-time DM gate) ─────────────────────────────────────
+create table if not exists public.message_requests (
+  id            uuid        primary key default gen_random_uuid(),
+  from_user_id  uuid        not null references auth.users(id) on delete cascade,
+  to_user_id    uuid        not null references auth.users(id) on delete cascade,
+  room_id       uuid        references public.chat_rooms(id) on delete cascade,
+  status        text        not null default 'pending'
+                            check (status in ('pending', 'accepted', 'rejected')),
+  created_at    timestamptz not null default now(),
+  unique (from_user_id, to_user_id)
+);
+create index if not exists mr_to_idx   on public.message_requests(to_user_id, status);
+create index if not exists mr_from_idx on public.message_requests(from_user_id);
+alter table public.message_requests enable row level security;
+
+drop policy if exists "mr_owner_read" on public.message_requests;
+create policy "mr_owner_read" on public.message_requests
+  for select using (auth.uid() = from_user_id or auth.uid() = to_user_id);
+
+-- ── Blocked users ─────────────────────────────────────────────────────────────
+create table if not exists public.blocked_users (
+  blocker_id  uuid        not null references auth.users(id) on delete cascade,
+  blocked_id  uuid        not null references auth.users(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (blocker_id, blocked_id)
+);
+create index if not exists bu_blocker_idx on public.blocked_users(blocker_id);
+alter table public.blocked_users enable row level security;
+
+drop policy if exists "bu_owner_read" on public.blocked_users;
+create policy "bu_owner_read" on public.blocked_users
+  for select using (auth.uid() = blocker_id);
+
+drop policy if exists "bu_owner_write" on public.blocked_users;
+create policy "bu_owner_write" on public.blocked_users
+  for all using (auth.uid() = blocker_id) with check (auth.uid() = blocker_id);
 
 -- ── Chat messages ─────────────────────────────────────────────────────────────
 create table if not exists public.chat_messages (
@@ -92,14 +122,13 @@ create table if not exists public.chat_messages (
   body            text,
   media_url       text,
   duration_seconds numeric,
-  shared_post_id  uuid,       -- references community_posts when type = 'post_share'
+  shared_post_id  uuid,
   created_at      timestamptz not null default now()
 );
 create index if not exists chat_messages_room_idx on public.chat_messages(room_id, created_at desc);
 create index if not exists chat_messages_user_idx on public.chat_messages(user_id);
 alter table public.chat_messages enable row level security;
 
--- Members of the room can read and insert messages
 drop policy if exists "messages_member_read" on public.chat_messages;
 create policy "messages_member_read" on public.chat_messages
   for select using (
@@ -119,7 +148,7 @@ create policy "messages_member_insert" on public.chat_messages
     )
   );
 
--- ── Community posts (general timeline) ───────────────────────────────────────
+-- ── Community posts ───────────────────────────────────────────────────────────
 create table if not exists public.community_posts (
   id                  uuid        primary key default gen_random_uuid(),
   user_id             uuid        not null references auth.users(id) on delete cascade,
@@ -127,6 +156,7 @@ create table if not exists public.community_posts (
   image_url           text,
   video_url           text,
   video_thumbnail_url text,
+  tagged_user_ids     uuid[]      default '{}',
   like_count          int         not null default 0,
   comment_count       int         not null default 0,
   created_at          timestamptz not null default now(),
@@ -136,17 +166,14 @@ create index if not exists community_posts_created_idx on public.community_posts
 create index if not exists community_posts_user_idx    on public.community_posts(user_id);
 alter table public.community_posts enable row level security;
 
--- Any authenticated church member can read all posts
 drop policy if exists "posts_authenticated_read" on public.community_posts;
 create policy "posts_authenticated_read" on public.community_posts
   for select using (auth.role() = 'authenticated');
 
--- Users can insert their own posts
 drop policy if exists "posts_owner_insert" on public.community_posts;
 create policy "posts_owner_insert" on public.community_posts
   for insert with check (auth.uid() = user_id);
 
--- Users can update/delete their own posts
 drop policy if exists "posts_owner_modify" on public.community_posts;
 create policy "posts_owner_modify" on public.community_posts
   for update using (auth.uid() = user_id);
@@ -173,7 +200,7 @@ drop policy if exists "post_likes_owner" on public.post_likes;
 create policy "post_likes_owner" on public.post_likes
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- ── Post comments (threaded — parent_id null = top-level) ────────────────────
+-- ── Post comments ─────────────────────────────────────────────────────────────
 create table if not exists public.post_comments (
   id          uuid        primary key default gen_random_uuid(),
   post_id     uuid        not null references public.community_posts(id) on delete cascade,
@@ -224,7 +251,7 @@ create table if not exists public.community_notifications (
   recipient_id  uuid        not null references auth.users(id) on delete cascade,
   actor_id      uuid        not null references auth.users(id) on delete cascade,
   type          text        not null
-                            check (type in ('post_like','comment_like','comment','reply','dm_message','new_post')),
+                            check (type in ('post_like','comment_like','comment','reply','dm_message','new_post','message_request','tag')),
   post_id       uuid        references public.community_posts(id) on delete cascade,
   comment_id    uuid        references public.post_comments(id) on delete cascade,
   room_id       uuid        references public.chat_rooms(id) on delete cascade,
@@ -243,33 +270,26 @@ drop policy if exists "cn_owner_update" on public.community_notifications;
 create policy "cn_owner_update" on public.community_notifications
   for update using (auth.uid() = recipient_id);
 
--- ── Supabase Storage bucket: "community" ─────────────────────────────────────
--- Create a public bucket named "community" in Supabase Storage dashboard.
+-- ── Supabase Storage: create a public bucket named "community" ────────────────
 -- Objects:  profiles/<userId>/avatar_*.jpg
 --           profiles/<userId>/cover_*.jpg
 --           posts/<userId>/<timestamp>.<ext>
 --           messages/<roomId>/<userId>_<timestamp>.<ext>
 
 -- ── Helper: ensure a church has a General group room ─────────────────────────
--- Called by the server after a user joins a church.
--- Safe to call repeatedly — uses on conflict do nothing.
 create or replace function public.ensure_church_general_room(p_church_id uuid)
 returns uuid language plpgsql security definer as $$
-declare
-  v_room_id uuid;
+declare v_room_id uuid;
 begin
-  -- Check if a general group room already exists for this church
   select id into v_room_id
   from public.chat_rooms
   where church_id = p_church_id and type = 'group' and name = 'General'
   limit 1;
-
   if v_room_id is null then
     insert into public.chat_rooms (type, name, church_id)
     values ('group', 'General', p_church_id)
     returning id into v_room_id;
   end if;
-
   return v_room_id;
 end;
 $$;
@@ -277,8 +297,7 @@ $$;
 -- ── Helper: add a user to the church General room (idempotent) ───────────────
 create or replace function public.join_church_general_room(p_user_id uuid, p_church_id uuid)
 returns void language plpgsql security definer as $$
-declare
-  v_room_id uuid;
+declare v_room_id uuid;
 begin
   v_room_id := public.ensure_church_general_room(p_church_id);
   insert into public.chat_room_members (room_id, user_id)
@@ -286,3 +305,24 @@ begin
   on conflict (room_id, user_id) do nothing;
 end;
 $$;
+
+-- ── Backfill: add tagged_user_ids column to existing community_posts ──────────
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name   = 'community_posts'
+      and column_name  = 'tagged_user_ids'
+  ) then
+    alter table public.community_posts add column tagged_user_ids uuid[] default '{}';
+  end if;
+end $$;
+
+-- ── Realtime publication for broadcast ───────────────────────────────────────
+-- Enable realtime for chat_messages so clients receive new messages via
+-- postgres_changes (reliable delivery, works without presence).
+alter publication supabase_realtime add table public.chat_messages;
+alter publication supabase_realtime add table public.community_posts;
+alter publication supabase_realtime add table public.community_notifications;
+alter publication supabase_realtime add table public.message_requests;

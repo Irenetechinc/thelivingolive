@@ -331,6 +331,15 @@ router.post('/rooms/dm', async (req, res) => {
   const { targetUserId } = req.body;
   if (!targetUserId || targetUserId === req.user.id) return res.status(400).json({ error: 'Invalid target user' });
 
+  // Check if target has blocked the sender
+  const { data: block } = await supabase
+    .from('blocked_users')
+    .select('id')
+    .eq('user_id', targetUserId)
+    .eq('blocked_user_id', req.user.id)
+    .maybeSingle();
+  if (block) return res.status(403).json({ error: 'Unable to send message to this user.' });
+
   const { data: myMembership } = await supabase
     .from('church_members').select('church_id').eq('user_id', req.user.id).maybeSingle();
   if (!myMembership) return res.status(403).json({ error: 'You must belong to a church.' });
@@ -346,6 +355,7 @@ router.post('/rooms/dm', async (req, res) => {
     if (room) return res.json({ ok: true, roomId: room.id });
   }
 
+  // Create the DM room
   const { data: room, error } = await supabase.from('chat_rooms')
     .insert({ type: 'dm', name: null }).select('id').single();
   if (error) return res.status(500).json({ error: error.message });
@@ -353,7 +363,16 @@ router.post('/rooms/dm', async (req, res) => {
     { room_id: room.id, user_id: req.user.id },
     { room_id: room.id, user_id: targetUserId },
   ]);
-  res.json({ ok: true, roomId: room.id });
+
+  // Create a message request for the target so they can accept/reject before seeing messages
+  await supabase.from('message_requests').insert({
+    room_id: room.id,
+    sender_id: req.user.id,
+    receiver_id: targetUserId,
+    status: 'pending',
+  });
+
+  res.json({ ok: true, roomId: room.id, requestPending: true });
 });
 
 router.get('/rooms/:roomId/messages', async (req, res) => {
@@ -809,6 +828,115 @@ router.post('/posts/:postId/share-to-room', async (req, res) => {
   Promise.allSettled(pushPromises).catch(() => {});
 
   res.json({ ok: true, message: { ...msg, sender: { userId: req.user.id, ...nameMap[req.user.id] }, sharedPost: { id: post.id, body: post.body, thumbnailUrl: post.video_thumbnail_url ?? post.image_url } } });
+});
+
+// ── Message requests ──────────────────────────────────────────────────────────
+router.get('/message-requests', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data, error } = await supabase
+    .from('message_requests')
+    .select('id, room_id, sender_id, receiver_id, status, created_at')
+    .eq('receiver_id', req.user.id)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Enrich with sender display name
+  const senderIds = [...new Set((data ?? []).map(r => r.sender_id))];
+  const { data: profiles } = senderIds.length
+    ? await supabase.from('user_profiles').select('user_id, display_name, avatar_url').in('user_id', senderIds)
+    : { data: [] };
+  const profileMap = Object.fromEntries((profiles ?? []).map(p => [p.user_id, p]));
+
+  res.json({
+    requests: (data ?? []).map(r => ({
+      ...r,
+      senderName: profileMap[r.sender_id]?.display_name ?? 'Unknown',
+      senderAvatar: profileMap[r.sender_id]?.avatar_url ?? null,
+    })),
+  });
+});
+
+router.put('/message-requests/:requestId/respond', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { requestId } = req.params;
+  const { action } = req.body; // 'accept' | 'reject' | 'block'
+  if (!['accept', 'reject', 'block'].includes(action)) {
+    return res.status(400).json({ error: 'action must be accept, reject, or block' });
+  }
+
+  const { data: req_, error: findErr } = await supabase
+    .from('message_requests')
+    .select('id, sender_id, receiver_id, room_id')
+    .eq('id', requestId)
+    .eq('receiver_id', req.user.id)
+    .maybeSingle();
+  if (findErr || !req_) return res.status(404).json({ error: 'Request not found' });
+
+  const newStatus = action === 'accept' ? 'accepted' : action === 'reject' ? 'rejected' : 'blocked';
+  await supabase.from('message_requests').update({ status: newStatus }).eq('id', requestId);
+
+  if (action === 'block') {
+    await supabase.from('blocked_users').upsert(
+      { user_id: req.user.id, blocked_user_id: req_.sender_id },
+      { onConflict: 'user_id,blocked_user_id' }
+    );
+  }
+
+  res.json({ ok: true, status: newStatus });
+});
+
+// ── Block / unblock ──────────────────────────────────────────────────────────
+router.post('/block', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  await supabase.from('blocked_users').upsert(
+    { user_id: req.user.id, blocked_user_id: userId },
+    { onConflict: 'user_id,blocked_user_id' }
+  );
+  res.json({ ok: true });
+});
+
+router.post('/unblock', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  await supabase.from('blocked_users')
+    .delete()
+    .eq('user_id', req.user.id)
+    .eq('blocked_user_id', userId);
+  res.json({ ok: true });
+});
+
+router.get('/blocked', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data, error } = await supabase
+    .from('blocked_users')
+    .select('blocked_user_id, created_at')
+    .eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ blocked: data ?? [] });
+});
+
+// ── Partner read receipt ──────────────────────────────────────────────────────
+router.get('/rooms/:roomId/partner-read', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { roomId } = req.params;
+
+  // Verify requester is a member
+  const { data: myMembership } = await supabase
+    .from('chat_room_members').select('room_id').eq('room_id', roomId).eq('user_id', req.user.id).maybeSingle();
+  if (!myMembership) return res.status(403).json({ error: 'Not a member' });
+
+  // Get the OTHER member's last_read_at
+  const { data: partner } = await supabase
+    .from('chat_room_members')
+    .select('last_read_at')
+    .eq('room_id', roomId)
+    .neq('user_id', req.user.id)
+    .maybeSingle();
+
+  res.json({ lastReadAt: partner?.last_read_at ?? null });
 });
 
 export { router as communityRouter };

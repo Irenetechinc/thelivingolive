@@ -776,8 +776,8 @@ export default function BulletinScreen({ navigation }: Props) {
 
   function handleShare(bulletin: Bulletin) {
     Share.share({
-      title: bulletin.title,
-      message: `📋 ${bulletin.title}\n\n${bulletin.content_preview ?? ""}\n\nRead on The Living Olive app`,
+      title: `📋 ${bulletin.title} — The Living Olive`,
+      message: `📋 ${bulletin.title}\n\n${bulletin.content_preview ?? ""}\n\n✝️ Read this bulletin on The Living Olive — your church community app.\n\n🍎 iOS: https://apps.apple.com/app/the-living-olive/id6744735864\n🤖 Android: https://play.google.com/store/apps/details?id=com.adroomai.livingolive`,
     });
   }
 

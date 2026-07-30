@@ -72,15 +72,19 @@ function StarRating({ onRate }: { onRate: (r: number) => void }) {
   );
 }
 
-// ── Entry card ────────────────────────────────────────────────────────────────
+// ── Entry card (collapsible for past entries) ─────────────────────────────────
 function EntryCard({
-  entry, index, onMarkRead,
+  entry, index, onMarkRead, collapsible, defaultExpanded,
 }: {
   entry: DevotionEntry;
   index: number;
   onMarkRead?: (id: string) => void;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const [expanded, setExpanded] = useState(!collapsible || defaultExpanded);
+
   useEffect(() => {
     Animated.spring(anim, { toValue: 1, tension: 60, friction: 9, delay: index * 60, useNativeDriver: true }).start();
   }, []);
@@ -88,56 +92,66 @@ function EntryCard({
   return (
     <Animated.View style={{ opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>
       <View style={[s.card, !entry.is_read && s.cardUnread]}>
-        {/* Unread indicator strip */}
         {!entry.is_read && <View style={s.unreadStrip} />}
-
         <View style={{ flex: 1 }}>
-          {entry.scripture_reference ? (
-            <View style={s.scriptureTag}>
-              <Text style={s.scriptureTagText}>{entry.scripture_reference}</Text>
+          {/* Header — always visible; tap to expand when collapsible */}
+          <TouchableOpacity
+            activeOpacity={collapsible ? 0.75 : 1}
+            onPress={collapsible ? () => setExpanded(e => !e) : undefined}
+          >
+            <View style={s.cardHeaderRow}>
+              {entry.scripture_reference ? (
+                <View style={s.scriptureTag}>
+                  <Text style={s.scriptureTagText}>{entry.scripture_reference}</Text>
+                </View>
+              ) : null}
+              {collapsible && (
+                <Text style={s.collapseIcon}>{expanded ? '▲' : '▼'}</Text>
+              )}
             </View>
-          ) : null}
-
-          <Text style={s.cardTitle}>{entry.title}</Text>
-
-          {entry.scripture_text ? (
-            <View style={s.scriptureQuote}>
-              <View style={s.quoteBar} />
-              <Text style={s.scriptureText}>{entry.scripture_text}</Text>
-            </View>
-          ) : null}
-
-          <Text style={s.cardBody}>{entry.body}</Text>
-
-          {entry.closing_prayer ? (
-            <View style={s.prayerWrap}>
-              <Text style={s.prayerLabel}>CLOSING PRAYER</Text>
-              <Text style={s.prayerText}>{entry.closing_prayer}</Text>
-            </View>
-          ) : null}
-
-          {entry.category ? (
-            <StarRating
-              onRate={(rating) =>
-                submitGenerationFeedback({
-                  entryType: "devotion", category: entry.category!,
-                  verseRef: entry.scripture_reference ?? undefined,
-                  rating, sourceText: entry.sourceText,
-                }).catch(() => {})
-              }
-            />
-          ) : null}
-
-          <View style={s.cardFooter}>
+            <Text style={s.cardTitle}>{entry.title}</Text>
             <Text style={s.cardDate}>
               {new Date(entry.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
             </Text>
-            {!entry.is_read && onMarkRead && (
-              <TouchableOpacity style={s.markReadBtn} onPress={() => onMarkRead(entry.id)} activeOpacity={0.75}>
-                <Text style={s.markReadText}>✓ Mark as read</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          </TouchableOpacity>
+
+          {/* Expandable body */}
+          {expanded && (
+            <>
+              {entry.scripture_text ? (
+                <View style={s.scriptureQuote}>
+                  <View style={s.quoteBar} />
+                  <Text style={s.scriptureText}>{entry.scripture_text}</Text>
+                </View>
+              ) : null}
+              <Text style={s.cardBody}>{entry.body}</Text>
+              {entry.closing_prayer ? (
+                <View style={s.prayerWrap}>
+                  <Text style={s.prayerLabel}>CLOSING PRAYER</Text>
+                  <Text style={s.prayerText}>{entry.closing_prayer}</Text>
+                </View>
+              ) : null}
+              {entry.category ? (
+                <StarRating
+                  onRate={(rating) =>
+                    submitGenerationFeedback({
+                      entryType: "devotion", category: entry.category!,
+                      verseRef: entry.scripture_reference ?? undefined,
+                      rating, sourceText: entry.sourceText,
+                    }).catch(() => {})
+                  }
+                />
+              ) : null}
+              <View style={s.cardFooter}>
+                <View />
+                {!entry.is_read && onMarkRead && (
+                  <TouchableOpacity style={s.markReadBtn} onPress={() => onMarkRead(entry.id)} activeOpacity={0.75}>
+                    <Text style={s.markReadText}>✓ Mark as read</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
         </View>
       </View>
     </Animated.View>
@@ -183,35 +197,75 @@ export default function DevotionsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<DevotionEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [arrivedFromNotif, setArrivedFromNotif] = useState(false);
+  const autoGenerateAttempted = useRef(false);
+
+  const PAGE_SIZE = 20;
+
+  async function loadEntries(replace = true, before?: string) {
+    if (!replace && loadingMore) return;
+    if (!replace) setLoadingMore(true);
+    else setLoadingEntries(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      let q = supabase
+        .from("devotion_entries")
+        .select("id, title, scripture_reference, scripture_text, body, closing_prayer, created_at, is_read")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+      if (before) q = q.lt("created_at", before);
+      const { data } = await q;
+      const rows = data ?? [];
+      if (replace) setEntries(rows);
+      else setEntries(prev => [...prev, ...rows]);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch {}
+    finally {
+      if (!replace) setLoadingMore(false);
+      else setLoadingEntries(false);
+    }
+  }
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      autoGenerateAttempted.current = false;
       const alarm = consumePendingAlarm();
       if (alarm?.type === "devotion" && Date.now() - alarm.timestamp < 120_000) {
         setArrivedFromNotif(true);
-        // Scroll to entries after a brief delay so they're rendered
+        if (alarm.goal) {
+          // Store the alarm goal for auto-generate if no unread entries exist
+          setGoal(alarm.goal);
+          if (alarm.duration) setDuration(alarm.duration as Duration);
+        }
         setTimeout(() => scrollRef.current?.scrollTo({ y: 420, animated: true }), 600);
       } else {
         setArrivedFromNotif(false);
       }
 
-      (async () => {
-        setLoadingEntries(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { if (active) setLoadingEntries(false); return; }
-        const { data } = await supabase
-          .from("devotion_entries")
-          .select("id, title, scripture_reference, scripture_text, body, closing_prayer, created_at, is_read")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(30);
-        if (active) { setEntries(data ?? []); setLoadingEntries(false); }
-      })();
+      loadEntries(true);
       return () => { active = false; };
     }, [])
   );
+
+  // Auto-generate when arriving from notification and no unread entries exist
+  useEffect(() => {
+    if (
+      arrivedFromNotif &&
+      !loadingEntries &&
+      !busy &&
+      !autoGenerateAttempted.current &&
+      goal.trim() &&
+      entries.filter(e => !e.is_read).length === 0
+    ) {
+      autoGenerateAttempted.current = true;
+      handleGenerate();
+    }
+  }, [arrivedFromNotif, loadingEntries, entries.length]);
 
   async function markAsRead(entryId: string) {
     const { data: { user } } = await supabase.auth.getUser();
@@ -291,6 +345,12 @@ export default function DevotionsScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function loadMore() {
+    if (!hasMore || loadingMore || entries.length === 0) return;
+    const oldest = entries[entries.length - 1].created_at;
+    await loadEntries(false, oldest);
   }
 
   const unread = entries.filter((e) => !e.is_read);
@@ -441,7 +501,7 @@ export default function DevotionsScreen() {
           <ActivityIndicator color={colors.gold} style={{ marginTop: spacing.xl }} />
         ) : (
           <>
-            {/* UNREAD */}
+            {/* UNREAD — always expanded */}
             {unread.length > 0 && (
               <View style={s.historySection}>
                 <SectionDivider label="UNREAD" count={unread.length} />
@@ -451,13 +511,30 @@ export default function DevotionsScreen() {
               </View>
             )}
 
-            {/* READ */}
+            {/* PAST DEVOTIONS — collapsible, first one expanded by default */}
             {read.length > 0 && (
               <View style={s.historySection}>
                 <SectionDivider label="PAST DEVOTIONS" />
                 {read.map((e, i) => (
-                  <EntryCard key={e.id} entry={e} index={i} />
+                  <EntryCard
+                    key={e.id} entry={e} index={i}
+                    collapsible
+                    defaultExpanded={i === 0}
+                  />
                 ))}
+                {/* Load more */}
+                {hasMore && (
+                  <TouchableOpacity
+                    style={s.loadMoreBtn}
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                    activeOpacity={0.75}
+                  >
+                    {loadingMore
+                      ? <ActivityIndicator size="small" color={colors.olive} />
+                      : <Text style={s.loadMoreText}>Load more devotions</Text>}
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -580,13 +657,15 @@ const s = StyleSheet.create({
     width: 4, borderRadius: 2, backgroundColor: colors.gold,
     marginRight: spacing.sm, alignSelf: "stretch",
   },
+  cardHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs },
+  collapseIcon: { fontSize: 11, color: colors.inkFaint, paddingLeft: 8 },
   scriptureTag: {
     alignSelf: "flex-start", backgroundColor: colors.terracotta,
     borderRadius: radii.pill, paddingVertical: 3, paddingHorizontal: spacing.sm,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
   scriptureTagText: { ...typography.micro, color: colors.white, letterSpacing: 0.5 },
-  cardTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: spacing.sm },
+  cardTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: 4 },
   scriptureQuote: {
     flexDirection: "row", gap: spacing.sm, backgroundColor: colors.parchment,
     borderRadius: radii.sm, padding: spacing.sm, marginBottom: spacing.sm,
@@ -609,6 +688,13 @@ const s = StyleSheet.create({
   starPrompt: { ...typography.caption, color: colors.inkFaint },
   star: { fontSize: 16, color: colors.gold, marginLeft: 2 },
   feedbackThanks: { ...typography.caption, color: colors.olive, marginTop: spacing.sm, fontStyle: "italic" },
+
+  loadMoreBtn: {
+    alignItems: "center", paddingVertical: spacing.md,
+    backgroundColor: colors.parchment, borderRadius: radii.md,
+    borderWidth: 1, borderColor: colors.parchmentDark, marginTop: spacing.sm,
+  },
+  loadMoreText: { fontSize: 14, fontWeight: "600", color: colors.olive },
 
   emptyState: { alignItems: "center", paddingVertical: spacing.xxl },
   emptyIcon: { fontSize: 48, marginBottom: 16 },

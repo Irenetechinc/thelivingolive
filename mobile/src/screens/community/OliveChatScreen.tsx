@@ -19,6 +19,7 @@ import {
   Animated, ViewToken,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -33,11 +34,14 @@ import {
   getRooms, getTimeline, createPost, uploadPostMedia, deletePost,
   togglePostLike, getPostComments, addPostComment, toggleCommentLike,
   sharePostToRoom, getNotifications, markNotificationsRead,
-  subscribeToTimeline, subscribeToNotifications,
+  getMessageRequests, respondToRequest, blockUser, getChurchMembers,
+  subscribeToTimeline, subscribeToNotifications, subscribeToMessageRequests,
   type UserProfile, type CommunityPost, type PostComment,
-  type ChatRoom, type CommunityNotification,
+  type ChatRoom, type CommunityNotification, type MessageRequest, type Author,
 } from '../../lib/communityApi';
 import { supabase } from '../../lib/supabase';
+import OliveChatSplash from '../../components/OliveChatSplash';
+import { PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
@@ -127,7 +131,29 @@ const vs = StyleSheet.create({
   playIcon: { color: '#fff', fontSize: 20, marginLeft: 4 },
 });
 
-// ── Post card ─────────────────────────────────────────────────────────────────
+// ── Post body with @mention highlighting ──────────────────────────────────────
+function PostBody({ body, taggedUsers }: { body: string | null; taggedUsers: Author[] }) {
+  if (!body) return null;
+  if (!taggedUsers.length) return <Text style={ps.body}>{body}</Text>;
+
+  const tagNames = taggedUsers.map(u => u.name);
+  const parts: React.ReactNode[] = [];
+  let rest = body;
+
+  tagNames.forEach(name => {
+    const idx = rest.indexOf(`@${name}`);
+    if (idx !== -1) {
+      if (idx > 0) parts.push(rest.slice(0, idx));
+      parts.push(<Text key={name} style={ps.mention}>@{name}</Text>);
+      rest = rest.slice(idx + name.length + 1);
+    }
+  });
+  if (rest) parts.push(rest);
+
+  return <Text style={ps.body}>{parts}</Text>;
+}
+
+// ── Post card (Facebook-style) ────────────────────────────────────────────────
 function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onShareToRoom, onDelete }: {
   post: CommunityPost;
   myId: string | null;
@@ -143,47 +169,83 @@ function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onSha
 
   function animLike() {
     Animated.sequence([
-      Animated.spring(heartAnim, { toValue: 1.4, useNativeDriver: true, tension: 120 }),
+      Animated.spring(heartAnim, { toValue: 1.35, useNativeDriver: true, tension: 140 }),
       Animated.spring(heartAnim, { toValue: 1, useNativeDriver: true, tension: 80 }),
     ]).start();
     onLike();
   }
 
   const isOwner = myId === post.author.userId;
+  const hasTagged = (post.taggedUsers ?? []).length > 0;
+  const tagLine = hasTagged
+    ? `— with ${post.taggedUsers!.map(u => u.name).join(', ')}`
+    : null;
 
   return (
     <View style={ps.card}>
+      {/* Author row */}
       <View style={ps.header}>
-        <Avatar url={post.author.avatarUrl} name={post.author.name} size={40} />
+        <Avatar url={post.author.avatarUrl} name={post.author.name} size={42} />
         <View style={{ flex: 1, marginLeft: spacing.sm }}>
-          <Text style={ps.authorName}>{post.author.name}</Text>
-          <Text style={ps.time}>{relTime(post.createdAt)}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+            <Text style={ps.authorName}>{post.author.name}</Text>
+            {tagLine ? <Text style={ps.tagLine}>{tagLine}</Text> : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+            <Text style={ps.time}>{relTime(post.createdAt)}</Text>
+            <Text style={ps.timeDot}>·</Text>
+            <Ionicons name="earth-outline" size={11} color={colors.inkFaint} />
+          </View>
         </View>
         {isOwner && (
-          <Pressable style={ps.menuBtn} onPress={() => setMenuOpen(true)}>
-            <Text style={ps.menuDots}>•••</Text>
+          <Pressable style={ps.menuBtn} onPress={() => setMenuOpen(true)} hitSlop={8}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={colors.inkSoft} />
           </Pressable>
         )}
       </View>
-      {post.body ? <Text style={ps.body}>{post.body}</Text> : null}
+
+      {/* Body */}
+      <PostBody body={post.body} taggedUsers={post.taggedUsers ?? []} />
+
+      {/* Media */}
       {post.imageUrl ? <Image source={{ uri: post.imageUrl }} style={ps.image} resizeMode="cover" /> : null}
       {post.videoUrl ? <VideoPost videoUrl={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl} isNearVisible={isNearVisible} /> : null}
+
+      {/* Reaction counts */}
+      {(post.likeCount > 0 || post.commentCount > 0) && (
+        <View style={ps.countsRow}>
+          {post.likeCount > 0 && (
+            <View style={ps.countItem}>
+              <View style={ps.likeCircle}><Text style={{ fontSize: 9 }}>❤️</Text></View>
+              <Text style={ps.countText}>{post.likeCount}</Text>
+            </View>
+          )}
+          {post.commentCount > 0 && (
+            <Text style={[ps.countText, { marginLeft: 'auto' }]}>{post.commentCount} comment{post.commentCount !== 1 ? 's' : ''}</Text>
+          )}
+        </View>
+      )}
+
+      {/* Action buttons bar */}
+      <View style={ps.actionsDivider} />
       <View style={ps.actions}>
         <Pressable style={ps.actionBtn} onPress={animLike}>
-          <Animated.Text style={[ps.actionIcon, { transform: [{ scale: heartAnim }], color: post.liked ? '#E05252' : colors.inkFaint }]}>♥</Animated.Text>
-          <Text style={[ps.actionText, post.liked && { color: '#E05252' }]}>{post.likeCount > 0 ? post.likeCount : ''}</Text>
+          <Animated.View style={{ transform: [{ scale: heartAnim }] }}>
+            <Ionicons name={post.liked ? 'heart' : 'heart-outline'} size={19} color={post.liked ? '#E05252' : colors.inkSoft} />
+          </Animated.View>
+          <Text style={[ps.actionText, post.liked && { color: '#E05252' }]}>Like</Text>
         </Pressable>
         <Pressable style={ps.actionBtn} onPress={onComment}>
-          <Text style={ps.actionIcon}>💬</Text>
-          <Text style={ps.actionText}>{post.commentCount > 0 ? post.commentCount : ''}</Text>
+          <Ionicons name="chatbubble-outline" size={18} color={colors.inkSoft} />
+          <Text style={ps.actionText}>Comment</Text>
         </Pressable>
         <Pressable style={ps.actionBtn} onPress={onShareToRoom}>
-          <Text style={ps.actionIcon}>📤</Text>
-          <Text style={ps.actionText}>Share</Text>
+          <Ionicons name="paper-plane-outline" size={18} color={colors.inkSoft} />
+          <Text style={ps.actionText}>Send</Text>
         </Pressable>
         <Pressable style={ps.actionBtn} onPress={onShare}>
-          <Text style={ps.actionIcon}>↗</Text>
-          <Text style={ps.actionText}>External</Text>
+          <Ionicons name="share-outline" size={18} color={colors.inkSoft} />
+          <Text style={ps.actionText}>Share</Text>
         </Pressable>
       </View>
 
@@ -193,7 +255,7 @@ function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onSha
           <View style={ps.menuCard}>
             <Text style={ps.menuTitle}>Post Options</Text>
             <Pressable style={ps.menuItem} onPress={() => { setMenuOpen(false); onDelete(); }}>
-              <Text style={[ps.menuItemText, { color: colors.danger }]}>🗑 Delete Post</Text>
+              <Text style={[ps.menuItemText, { color: colors.danger }]}>Delete Post</Text>
             </Pressable>
             <Pressable style={ps.menuItem} onPress={() => setMenuOpen(false)}>
               <Text style={ps.menuItemText}>Cancel</Text>
@@ -205,18 +267,24 @@ function PostCard({ post, myId, isNearVisible, onLike, onComment, onShare, onSha
   );
 }
 const ps = StyleSheet.create({
-  card: { backgroundColor: colors.white, marginBottom: 1, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, ...shadows.subtle },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
-  authorName: { ...typography.subtitle, color: colors.ink, fontSize: 14 },
-  time: { ...typography.micro, color: colors.inkFaint, marginTop: 2 },
-  menuBtn: { padding: 6 },
-  menuDots: { fontSize: 14, color: colors.inkFaint, letterSpacing: 1 },
-  body: { ...typography.body, color: colors.ink, lineHeight: 22, marginBottom: spacing.sm },
-  image: { width: '100%', height: 220, borderRadius: radii.md, backgroundColor: colors.parchmentDark, marginBottom: spacing.sm },
-  actions: { flexDirection: 'row', gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.parchmentDark, paddingTop: spacing.sm, marginTop: spacing.xs },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  actionIcon: { fontSize: 16, color: colors.inkFaint },
-  actionText: { fontSize: 12, color: colors.inkFaint, fontWeight: '600' },
+  card: { backgroundColor: colors.white, marginBottom: 8, paddingTop: spacing.md, paddingBottom: 0, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+  header: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.sm, paddingHorizontal: spacing.lg },
+  authorName: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  tagLine: { fontSize: 13, color: colors.inkSoft, fontWeight: '400' },
+  timeDot: { fontSize: 10, color: colors.inkFaint },
+  time: { fontSize: 12, color: colors.inkFaint },
+  menuBtn: { padding: 4, marginTop: 2 },
+  body: { fontSize: 15, color: colors.ink, lineHeight: 22, marginBottom: spacing.sm, paddingHorizontal: spacing.lg },
+  mention: { color: colors.olive, fontWeight: '600' },
+  image: { width: '100%', height: 240, backgroundColor: colors.parchmentDark, marginBottom: 0 },
+  countsRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: 8 },
+  countItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  likeCircle: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#E05252', alignItems: 'center', justifyContent: 'center' },
+  countText: { fontSize: 13, color: colors.inkFaint },
+  actionsDivider: { height: 1, backgroundColor: colors.parchmentDark, marginHorizontal: spacing.lg },
+  actions: { flexDirection: 'row', paddingHorizontal: spacing.sm, paddingVertical: 4 },
+  actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8 },
+  actionText: { fontSize: 13, color: colors.inkSoft, fontWeight: '600' },
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'flex-end', padding: spacing.lg },
   menuCard: { backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg, width: '100%', ...shadows.cardLg },
   menuTitle: { ...typography.subtitle, color: colors.ink, marginBottom: spacing.md },
@@ -434,13 +502,50 @@ const cs = StyleSheet.create({
   empty: { textAlign: 'center', color: colors.inkFaint, paddingVertical: 24, fontSize: 14 },
 });
 
-// ── Create post modal ─────────────────────────────────────────────────────────
+// ── Create post modal (with @mention tagging) ─────────────────────────────────
 function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; onClose: () => void; onCreated: (p: CommunityPost) => void }) {
   const [text, setText] = useState('');
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
   const [thumbUri, setThumbUri] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Tagging
+  const [members, setMembers] = useState<Author[]>([]);
+  const [taggedUsers, setTaggedUsers] = useState<Author[]>([]);
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionFiltered, setMentionFiltered] = useState<Author[]>([]);
+
+  useEffect(() => {
+    if (visible) {
+      getChurchMembers().then(setMembers).catch(() => {});
+    } else {
+      setText(''); setMediaUri(null); setMediaType(null); setThumbUri(null); setTaggedUsers([]); setShowMentions(false);
+    }
+  }, [visible]);
+
+  function handleTextChange(v: string) {
+    setText(v);
+    const atIdx = v.lastIndexOf('@');
+    if (atIdx !== -1 && (atIdx === 0 || v[atIdx - 1] === ' ' || v[atIdx - 1] === '\n')) {
+      const query = v.slice(atIdx + 1).toLowerCase();
+      if (!query.includes(' ')) {
+        setMentionQuery(query);
+        setMentionFiltered(members.filter(m => m.name.toLowerCase().includes(query)).slice(0, 6));
+        setShowMentions(true);
+        return;
+      }
+    }
+    setShowMentions(false);
+  }
+
+  function selectMention(member: Author) {
+    const atIdx = text.lastIndexOf('@');
+    const newText = text.slice(0, atIdx) + `@${member.name} `;
+    setText(newText);
+    setTaggedUsers(prev => prev.find(u => u.userId === member.userId) ? prev : [...prev, member]);
+    setShowMentions(false);
+  }
 
   async function pickMedia() {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.85 });
@@ -449,14 +554,8 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
       setMediaUri(asset.uri);
       if (asset.type === 'video') {
         setMediaType('video');
-        try {
-          const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 });
-          setThumbUri(uri);
-        } catch {}
-      } else {
-        setMediaType('image');
-        setThumbUri(null);
-      }
+        try { const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 }); setThumbUri(uri); } catch {}
+      } else { setMediaType('image'); setThumbUri(null); }
     }
   }
 
@@ -465,18 +564,13 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
     setUploading(true);
     try {
       let imageUrl: string | undefined, videoUrl: string | undefined, videoThumbnailUrl: string | undefined;
-      if (mediaUri && mediaType === 'image') {
-        const result = await uploadPostMedia(mediaUri, 'image/jpeg');
-        imageUrl = result.url;
-      } else if (mediaUri && mediaType === 'video') {
-        // Server compresses the video and generates thumbnail — no separate thumbnail upload
-        const result = await uploadPostMedia(mediaUri, 'video/mp4');
-        videoUrl = result.url;
-        videoThumbnailUrl = result.thumbnailUrl;
-      }
-      const post = await createPost({ body: text.trim() || undefined, imageUrl, videoUrl, videoThumbnailUrl });
+      if (mediaUri && mediaType === 'image') { const r = await uploadPostMedia(mediaUri, 'image/jpeg'); imageUrl = r.url; }
+      else if (mediaUri && mediaType === 'video') { const r = await uploadPostMedia(mediaUri, 'video/mp4'); videoUrl = r.url; videoThumbnailUrl = r.thumbnailUrl; }
+      const post = await createPost({
+        body: text.trim() || undefined, imageUrl, videoUrl, videoThumbnailUrl,
+        taggedUserIds: taggedUsers.map(u => u.userId),
+      });
       onCreated(post);
-      setText(''); setMediaUri(null); setMediaType(null); setThumbUri(null);
       onClose();
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setUploading(false); }
@@ -493,7 +587,30 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
-          <TextInput style={cpm.textInput} value={text} onChangeText={setText} placeholder="What's on your heart today?" placeholderTextColor={colors.inkFaint} multiline autoFocus textAlignVertical="top" />
+          <TextInput style={cpm.textInput} value={text} onChangeText={handleTextChange}
+            placeholder="What's on your heart today? Use @name to tag someone." placeholderTextColor={colors.inkFaint}
+            multiline autoFocus textAlignVertical="top" />
+          {/* @mention suggestion list */}
+          {showMentions && mentionFiltered.length > 0 && (
+            <View style={cpm.mentionList}>
+              {mentionFiltered.map(m => (
+                <Pressable key={m.userId} style={cpm.mentionRow} onPress={() => selectMention(m)}>
+                  <Avatar url={m.avatarUrl} name={m.name} size={28} />
+                  <Text style={cpm.mentionName}>{m.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          {/* Tagged chips */}
+          {taggedUsers.length > 0 && (
+            <View style={cpm.taggedRow}>
+              {taggedUsers.map(u => (
+                <Pressable key={u.userId} style={cpm.tagChip} onPress={() => setTaggedUsers(prev => prev.filter(x => x.userId !== u.userId))}>
+                  <Text style={cpm.tagChipText}>@{u.name} ×</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           {mediaUri && mediaType === 'image' && <Image source={{ uri: mediaUri }} style={cpm.preview} resizeMode="cover" />}
           {mediaUri && mediaType === 'video' && (
             <View style={cpm.preview}>
@@ -503,12 +620,15 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
           )}
           <View style={cpm.toolbar}>
             <Pressable style={cpm.toolBtn} onPress={pickMedia}>
-              <Text style={cpm.toolIcon}>🖼</Text>
+              <Ionicons name="image-outline" size={20} color={colors.inkSoft} />
               <Text style={cpm.toolLabel}>Photo/Video</Text>
             </Pressable>
-            {mediaUri && <Pressable style={cpm.toolBtn} onPress={() => { setMediaUri(null); setMediaType(null); setThumbUri(null); }}>
-              <Text style={cpm.toolLabel}>Remove</Text>
-            </Pressable>}
+            {mediaUri && (
+              <Pressable style={cpm.toolBtn} onPress={() => { setMediaUri(null); setMediaType(null); setThumbUri(null); }}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                <Text style={[cpm.toolLabel, { color: colors.danger }]}>Remove</Text>
+              </Pressable>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -525,8 +645,13 @@ const cpm = StyleSheet.create({
   preview: { width: '100%', height: 200, borderRadius: radii.md, backgroundColor: colors.parchmentDark, marginBottom: spacing.md, position: 'relative' },
   toolbar: { flexDirection: 'row', gap: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.parchmentDark },
   toolBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: spacing.sm },
-  toolIcon: { fontSize: 18 },
   toolLabel: { fontSize: 13, color: colors.inkSoft, fontWeight: '600' },
+  mentionList: { backgroundColor: colors.white, borderRadius: radii.md, borderWidth: 1, borderColor: colors.parchmentDark, marginBottom: spacing.sm, overflow: 'hidden' },
+  mentionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark },
+  mentionName: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  taggedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.sm },
+  tagChip: { backgroundColor: colors.oliveFaint ?? colors.olive + '20', borderRadius: radii.pill, paddingVertical: 4, paddingHorizontal: spacing.sm },
+  tagChipText: { fontSize: 12, color: colors.olive, fontWeight: '600' },
 });
 
 // ── PIN gate ──────────────────────────────────────────────────────────────────
@@ -591,7 +716,7 @@ const pg = StyleSheet.create({
 });
 
 // ── Profile tab ───────────────────────────────────────────────────────────────
-function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onReload: () => void }) {
+function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile | null; profileError: boolean; onReload: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(profile?.displayName ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
@@ -635,6 +760,16 @@ function ProfileTab({ profile, onReload }: { profile: UserProfile | null; onRelo
     finally { setSettingPin(false); }
   }
 
+  if (profileError) return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl }}>
+      <Ionicons name="person-circle-outline" size={56} color={colors.inkFaint} />
+      <Text style={{ ...typography.subtitle, color: colors.ink, marginTop: 16, marginBottom: 8 }}>Couldn't load profile</Text>
+      <Text style={{ fontSize: 14, color: colors.inkSoft, textAlign: 'center', marginBottom: 24 }}>Check your connection and try again.</Text>
+      <Pressable style={{ backgroundColor: colors.olive, borderRadius: radii.pill, paddingHorizontal: spacing.lg, paddingVertical: spacing.md }} onPress={onReload}>
+        <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
+      </Pressable>
+    </View>
+  );
   if (!profile) return <ActivityIndicator color={colors.gold} style={{ marginTop: 60 }} />;
 
   const age = ageFromDob(profile.dateOfBirth);
@@ -869,7 +1004,9 @@ export default function OliveChatScreen() {
   const [tab, setTab] = useState<Tab>('feed');
   const [pinLocked, setPinLocked] = useState(false);
   const [pinChecked, setPinChecked] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileError, setProfileError] = useState(false);
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
@@ -879,6 +1016,7 @@ export default function OliveChatScreen() {
   const [notMember, setNotMember] = useState(false);
   const [commentPost, setCommentPost] = useState<CommunityPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [messageRequests, setMessageRequests] = useState<MessageRequest[]>([]);
   // Viewability — track which feed indices are currently on-screen
   const visibleIndicesRef = useRef<Set<number>>(new Set());
   const [visibleIndicesSnap, setVisibleIndicesSnap] = useState<Set<number>>(new Set());
@@ -894,6 +1032,7 @@ export default function OliveChatScreen() {
   // Real-time unsubscribe refs
   const timelineUnsubRef = useRef<(() => void) | null>(null);
   const notifUnsubRef = useRef<(() => void) | null>(null);
+  const reqUnsubRef = useRef<(() => void) | null>(null);
 
   useFocusEffect(useCallback(() => {
     let active = true;
@@ -907,9 +1046,17 @@ export default function OliveChatScreen() {
         const pinActive = await getPinStatus();
         if (active) { setPinLocked(pinActive); setPinChecked(true); }
 
-        // Load profile
-        const p = await getMyProfile();
-        if (active) setProfile(p);
+        // Load profile (with timeout protection)
+        let p: UserProfile | null = null;
+        try {
+          p = await Promise.race([
+            getMyProfile(),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Profile timeout')), 8000)),
+          ]) as UserProfile;
+          if (active) { setProfile(p); setProfileError(false); }
+        } catch {
+          if (active) setProfileError(true);
+        }
 
         // Load feed + rooms in parallel
         const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
@@ -940,6 +1087,19 @@ export default function OliveChatScreen() {
             setUnreadNotifCount(c => c + 1);
           });
         }
+
+        // Load message requests
+        try {
+          const reqs = await getMessageRequests();
+          if (active) setMessageRequests(reqs.filter(r => r.status === 'pending'));
+        } catch {}
+
+        // Subscribe to new message requests
+        if (active && user && !reqUnsubRef.current) {
+          reqUnsubRef.current = subscribeToMessageRequests(user.id, () => {
+            getMessageRequests().then(r => setMessageRequests(r.filter(x => x.status === 'pending'))).catch(() => {});
+          });
+        }
       } catch (e: any) {
         if (e.message?.includes('church')) {
           if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
@@ -959,6 +1119,7 @@ export default function OliveChatScreen() {
     return () => {
       timelineUnsubRef.current?.();
       notifUnsubRef.current?.();
+      reqUnsubRef.current?.();
     };
   }, []);
 
@@ -1018,123 +1179,149 @@ export default function OliveChatScreen() {
     </View>
   );
 
-  const TABS: { key: Tab; icon: string; label: string; badge?: number }[] = [
-    { key: 'feed', icon: '🌿', label: 'Feed' },
-    { key: 'chats', icon: '💬', label: 'Chats' },
-    { key: 'notifications', icon: '🔔', label: 'Alerts', badge: unreadNotifCount },
-    { key: 'profile', icon: '👤', label: 'Profile' },
+  const TABS: { key: Tab; ionIcon: string; activeIonIcon: string; badge?: number }[] = [
+    { key: 'feed',          ionIcon: 'leaf-outline',                 activeIonIcon: 'leaf' },
+    { key: 'chats',         ionIcon: 'chatbubble-ellipses-outline',  activeIonIcon: 'chatbubble-ellipses', badge: messageRequests.length },
+    { key: 'notifications', ionIcon: 'notifications-outline',        activeIonIcon: 'notifications',       badge: unreadNotifCount },
+    { key: 'profile',       ionIcon: 'person-outline',               activeIonIcon: 'person' },
   ];
+
+  const pendingRequestCount = messageRequests.length;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.parchment }}>
+      {/* Splash — shown once per session after PIN is cleared */}
+      {pinChecked && !pinLocked && showSplash && (
+        <OliveChatSplash onFinish={() => setShowSplash(false)} />
+      )}
+
       {/* Header */}
       <LinearGradient colors={['#2E3A1F','#3E4A2F','#5B6B45']} style={[main.header, { paddingTop: spacing.sm + insets.top }]}>
         <View style={main.headerInner}>
           <Text style={main.headerTitle}>🫒 Olive Chat</Text>
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+          <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
             {tab === 'chats' && (
-              <Pressable style={main.headerBtn} onPress={() => navigation.navigate('CommunityMembers' as any)}>
-                <Text style={main.headerBtnText}>✏️ New DM</Text>
+              <Pressable style={main.headerIconBtn} onPress={() => navigation.navigate('CommunityMembers' as any)} hitSlop={8}>
+                <Ionicons name="create-outline" size={22} color="#fff" />
               </Pressable>
             )}
             {tab === 'feed' && (
-              <Pressable style={main.headerBtn} onPress={() => setShowCreate(true)}>
-                <Text style={main.headerBtnText}>+ Post</Text>
+              <Pressable style={main.headerIconBtn} onPress={() => setShowCreate(true)} hitSlop={8}>
+                <Ionicons name="add-circle-outline" size={22} color="#fff" />
               </Pressable>
             )}
           </View>
         </View>
-        {/* Tab bar */}
+        {/* Tab bar — icons only, no text labels */}
         <View style={main.tabBar}>
-          {TABS.map(t => (
-            <Pressable
-              key={t.key}
-              style={[main.tabItem, tab === t.key && main.tabItemActive]}
-              onPress={() => {
-                setTab(t.key);
-                if (t.key === 'notifications') {
-                  setUnreadNotifCount(0);
-                  markNotificationsRead().catch(() => {});
-                }
-              }}
-            >
-              <View style={{ position: 'relative' }}>
-                <Text style={main.tabIcon}>{t.icon}</Text>
-                {(t.badge ?? 0) > 0 && (
-                  <View style={main.notifBadge}>
-                    <Text style={main.notifBadgeText}>{(t.badge ?? 0) > 9 ? '9+' : t.badge}</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={[main.tabLabel, tab === t.key && main.tabLabelActive]}>{t.label}</Text>
-            </Pressable>
-          ))}
+          {TABS.map(t => {
+            const isActive = tab === t.key;
+            const badge = t.badge ?? 0;
+            return (
+              <Pressable
+                key={t.key}
+                style={[main.tabItem, isActive && main.tabItemActive]}
+                onPress={() => {
+                  setTab(t.key);
+                  if (t.key === 'notifications') {
+                    setUnreadNotifCount(0);
+                    markNotificationsRead().catch(() => {});
+                  }
+                }}
+              >
+                <View style={{ position: 'relative' }}>
+                  <Ionicons
+                    name={isActive ? t.activeIonIcon as any : t.ionIcon as any}
+                    size={22}
+                    color={isActive ? '#fff' : 'rgba(255,255,255,0.55)'}
+                  />
+                  {badge > 0 && (
+                    <View style={main.notifBadge}>
+                      <Text style={main.notifBadgeText}>{badge > 9 ? '9+' : badge}</Text>
+                    </View>
+                  )}
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
       </LinearGradient>
 
       {/* Feed */}
       {tab === 'feed' && (
-        loadingFeed ? <ActivityIndicator color={colors.gold} style={{ marginTop: 40 }} /> : (
-          <FlatList
-            data={posts}
-            keyExtractor={p => p.id}
-            renderItem={({ item, index }) => {
-              // Pre-cache VideoView for items within ±2 of any visible index
-              const isNearVisible = [...visibleIndicesSnap].some(vi => Math.abs(vi - index) <= 2);
-              return (
-                <PostCard
-                  post={item}
-                  myId={myUserId}
-                  isNearVisible={isNearVisible}
-                  onLike={() => handleLike(item)}
-                  onComment={() => setCommentPost(item)}
-                  onShare={() => handleNativeShare(item)}
-                  onShareToRoom={() => setSharePost(item)}
-                  onDelete={() => handleDeletePost(item)}
-                />
-              );
-            }}
-            viewabilityConfig={viewabilityConfig.current}
-            onViewableItemsChanged={onViewableItemsChanged.current}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshFeed} tintColor={colors.gold} />}
-            ListEmptyComponent={
-              <View style={main.empty}>
-                <Text style={main.emptyIcon}>🌿</Text>
-                <Text style={main.emptyTitle}>Nothing here yet</Text>
-                <Text style={main.emptyDesc}>Be the first to post something in the community!</Text>
-              </View>
-            }
-            contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
-          />
-        )
+        loadingFeed
+          ? <FlatList data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
+          : (
+            <FlatList
+              data={posts}
+              keyExtractor={p => p.id}
+              renderItem={({ item, index }) => {
+                const isNearVisible = [...visibleIndicesSnap].some(vi => Math.abs(vi - index) <= 2);
+                return (
+                  <PostCard
+                    post={item}
+                    myId={myUserId}
+                    isNearVisible={isNearVisible}
+                    onLike={() => handleLike(item)}
+                    onComment={() => setCommentPost(item)}
+                    onShare={() => handleNativeShare(item)}
+                    onShareToRoom={() => setSharePost(item)}
+                    onDelete={() => handleDeletePost(item)}
+                  />
+                );
+              }}
+              viewabilityConfig={viewabilityConfig.current}
+              onViewableItemsChanged={onViewableItemsChanged.current}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshFeed} tintColor={colors.gold} />}
+              ListEmptyComponent={
+                <View style={main.empty}>
+                  <Ionicons name="leaf-outline" size={48} color={colors.inkFaint} style={{ marginBottom: 16 }} />
+                  <Text style={main.emptyTitle}>Nothing here yet</Text>
+                  <Text style={main.emptyDesc}>Be the first to post something in the community!</Text>
+                </View>
+              }
+              contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+            />
+          )
       )}
 
       {/* Chats */}
       {tab === 'chats' && (
-        loadingRooms ? <ActivityIndicator color={colors.gold} style={{ marginTop: 40 }} /> : (
-          <FlatList
-            data={rooms}
-            keyExtractor={r => r.id}
-            renderItem={({ item: room }) => (
-              <RoomRow room={room} onPress={() => {
-                navigation.navigate('ChatRoom' as any, {
-                  roomId: room.id,
-                  roomName: room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'Chat'),
-                });
-                refreshRooms();
-              }} />
-            )}
-            refreshControl={<RefreshControl refreshing={false} onRefresh={refreshRooms} tintColor={colors.gold} />}
-            ListEmptyComponent={
-              <View style={main.empty}>
-                <Text style={main.emptyIcon}>💬</Text>
-                <Text style={main.emptyTitle}>No chats yet</Text>
-                <Text style={main.emptyDesc}>When you join a church, the General group chat appears here. Tap "New DM" to message a member.</Text>
-              </View>
-            }
-            contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
-          />
-        )
+        loadingRooms
+          ? <FlatList data={[1,2,3,4,5]} keyExtractor={i => String(i)} renderItem={() => <ChatRoomSkeleton />} />
+          : (
+            <FlatList
+              data={rooms}
+              keyExtractor={r => r.id}
+              ListHeaderComponent={
+                pendingRequestCount > 0 ? (
+                  <Pressable style={main.requestsBanner} onPress={() => {/* TODO: open requests modal */}}>
+                    <Ionicons name="mail-outline" size={18} color={colors.olive} />
+                    <Text style={main.requestsBannerText}>{pendingRequestCount} pending message request{pendingRequestCount > 1 ? 's' : ''}</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.olive} />
+                  </Pressable>
+                ) : null
+              }
+              renderItem={({ item: room }) => (
+                <RoomRow room={room} onPress={() => {
+                  navigation.navigate('ChatRoom' as any, {
+                    roomId: room.id,
+                    roomName: room.type === 'group' ? (room.name ?? 'General') : (room.otherUser?.name ?? 'Chat'),
+                  });
+                  refreshRooms();
+                }} />
+              )}
+              refreshControl={<RefreshControl refreshing={false} onRefresh={refreshRooms} tintColor={colors.gold} />}
+              ListEmptyComponent={
+                <View style={main.empty}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.inkFaint} style={{ marginBottom: 16 }} />
+                  <Text style={main.emptyTitle}>No chats yet</Text>
+                  <Text style={main.emptyDesc}>When you join a church, the General group chat appears here. Tap the compose icon to message a member.</Text>
+                </View>
+              }
+              contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+            />
+          )
       )}
 
       {/* Notifications */}
@@ -1144,8 +1331,11 @@ export default function OliveChatScreen() {
       {tab === 'profile' && (
         <ProfileTab
           profile={profile}
+          profileError={profileError}
           onReload={async () => {
-            try { const p = await getMyProfile(); setProfile(p); } catch {}
+            setProfileError(false);
+            try { const p = await getMyProfile(); setProfile(p); setProfileError(false); }
+            catch { setProfileError(true); }
           }}
         />
       )}
@@ -1167,18 +1357,19 @@ const main = StyleSheet.create({
   header: { paddingBottom: 0 },
   headerInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   headerTitle: { fontSize: 20, fontWeight: '700', color: '#fff', letterSpacing: -0.3 },
-  headerBtn: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: radii.pill, paddingHorizontal: spacing.md, paddingVertical: 6 },
-  headerBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  headerIconBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
   tabBar: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.2)' },
-  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, flexDirection: 'row', justifyContent: 'center', gap: 5 },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 12, justifyContent: 'center' },
   tabItemActive: { borderBottomWidth: 2, borderBottomColor: colors.goldLight },
-  tabIcon: { fontSize: 15 },
-  tabLabel: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
-  tabLabelActive: { color: '#fff' },
   notifBadge: { position: 'absolute', top: -4, right: -6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#E05252', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 },
   notifBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  requestsBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: '#EDF7E8', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: '#C2D4A0',
+  },
+  requestsBannerText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.oliveDark },
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: spacing.xl },
-  emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 8 },
   emptyDesc: { ...typography.bodySmall, color: colors.inkSoft, textAlign: 'center', lineHeight: 22 },
 });

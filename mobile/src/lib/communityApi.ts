@@ -35,6 +35,7 @@ export type CommunityPost = {
   likeCount: number;
   commentCount: number;
   liked: boolean;
+  taggedUsers: Author[];
   createdAt: string;
 };
 
@@ -56,6 +57,8 @@ export type ChatRoom = {
   otherUser: Author | null;
   lastMessage: { body: string; createdAt: string; senderId: string } | null;
   unreadCount: number;
+  requestStatus?: 'pending' | 'accepted' | null;
+  partnerLastReadAt?: string | null;
 };
 
 export type ChatMessage = {
@@ -68,11 +71,12 @@ export type ChatMessage = {
   sharedPostId: string | null;
   sharedPost: { id: string; body: string | null; thumbnailUrl: string | null } | null;
   createdAt: string;
+  seenByPartner?: boolean;
 };
 
 export type CommunityNotification = {
   id: string;
-  type: 'post_like' | 'comment_like' | 'comment' | 'reply' | 'dm_message' | 'new_post';
+  type: 'post_like' | 'comment_like' | 'comment' | 'reply' | 'dm_message' | 'new_post' | 'message_request' | 'tag';
   isRead: boolean;
   createdAt: string;
   postId: string | null;
@@ -81,9 +85,16 @@ export type CommunityNotification = {
   actor: Author;
 };
 
+export type MessageRequest = {
+  id: string;
+  fromUser: Author;
+  toUserId: string;
+  roomId: string | null;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+};
+
 // ── Auth helper ───────────────────────────────────────────────────────────────
-// Throws if there is no active session so callers fail fast on the client
-// rather than making unauthenticated requests that the server will reject anyway.
 async function authHeader(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
@@ -196,6 +207,31 @@ export async function getChurchMembers(): Promise<Author[]> {
   return (r.members ?? []).map((m: any) => ({ userId: m.userId, name: m.name, avatarUrl: m.avatarUrl ?? null }));
 }
 
+// ── Message requests ──────────────────────────────────────────────────────────
+
+export async function getMessageRequests(): Promise<MessageRequest[]> {
+  const r = await apiCall<any>('/api/community/message-requests');
+  return r.requests ?? [];
+}
+
+export async function respondToRequest(requestId: string, action: 'accept' | 'reject'): Promise<{ roomId?: string }> {
+  const r = await apiCall<any>(`/api/community/message-requests/${requestId}/respond`, 'PUT', { action });
+  return { roomId: r.roomId };
+}
+
+export async function blockUser(userId: string): Promise<void> {
+  await apiCall('/api/community/block', 'POST', { userId });
+}
+
+export async function unblockUser(userId: string): Promise<void> {
+  await apiCall('/api/community/unblock', 'POST', { userId });
+}
+
+export async function getBlockedUsers(): Promise<string[]> {
+  const r = await apiCall<any>('/api/community/blocked');
+  return r.blockedIds ?? [];
+}
+
 // ── Chat rooms ────────────────────────────────────────────────────────────────
 
 export async function getRooms(): Promise<ChatRoom[]> {
@@ -203,9 +239,9 @@ export async function getRooms(): Promise<ChatRoom[]> {
   return r.rooms ?? [];
 }
 
-export async function getOrCreateDM(targetUserId: string): Promise<string> {
+export async function getOrCreateDM(targetUserId: string): Promise<{ roomId: string; isNewRequest: boolean }> {
   const r = await apiCall<any>('/api/community/rooms/dm', 'POST', { targetUserId });
-  return r.roomId as string;
+  return { roomId: r.roomId as string, isNewRequest: r.isNewRequest ?? false };
 }
 
 export async function getRoomMessages(roomId: string, before?: string): Promise<ChatMessage[]> {
@@ -222,6 +258,15 @@ export async function getRoomMessages(roomId: string, before?: string): Promise<
     sharedPost: m.sharedPost ?? null,
     createdAt: m.created_at,
   }));
+}
+
+export async function getRoomPartnerLastRead(roomId: string): Promise<string | null> {
+  try {
+    const r = await apiCall<any>(`/api/community/rooms/${roomId}/partner-read`);
+    return r.lastReadAt ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function sendMessage(roomId: string, payload: {
@@ -264,6 +309,7 @@ export async function getTimeline(before?: string): Promise<CommunityPost[]> {
 
 export async function createPost(payload: {
   body?: string; imageUrl?: string; videoUrl?: string; videoThumbnailUrl?: string;
+  taggedUserIds?: string[];
 }): Promise<CommunityPost> {
   const r = await apiCall<any>('/api/community/posts', 'POST', payload);
   return mapPost(r.post);
@@ -338,6 +384,34 @@ export function subscribeToRoom(
   return () => supabase.removeChannel(channel);
 }
 
+/** Subscription for partner read-receipt changes (last_read_at updates). */
+export function subscribeToRoomReadReceipts(
+  roomId: string,
+  myUserId: string,
+  onUpdate: (lastReadAt: string) => void
+) {
+  const channel = supabase
+    .channel(`read:${roomId}:${myUserId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'chat_room_members',
+        filter: `room_id=eq.${roomId}`,
+      },
+      (payload) => {
+        const updated = payload.new as any;
+        // Only emit when it's the OTHER user's last_read_at changing
+        if (updated.user_id !== myUserId && updated.last_read_at) {
+          onUpdate(updated.last_read_at);
+        }
+      }
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
 /** Real-time subscription for new posts in the timeline feed. */
 export function subscribeToTimeline(
   onPost: (post: CommunityPost) => void
@@ -359,9 +433,8 @@ export function subscribeToTimeline(
           imageUrl: raw.image_url ?? null,
           videoUrl: raw.video_url ?? null,
           videoThumbnailUrl: raw.video_thumbnail_url ?? null,
-          likeCount: 0,
-          commentCount: 0,
-          liked: false,
+          likeCount: 0, commentCount: 0, liked: false,
+          taggedUsers: [],
           createdAt: raw.created_at,
         });
       }
@@ -391,6 +464,27 @@ export function subscribeToNotifications(
   return () => supabase.removeChannel(channel);
 }
 
+/** Subscription for incoming message requests */
+export function subscribeToMessageRequests(
+  userId: string,
+  onRequest: () => void
+) {
+  const channel = supabase
+    .channel(`msg_requests:${userId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'message_requests',
+        filter: `to_user_id=eq.${userId}`,
+      },
+      () => onRequest()
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
 // ── Internal mapper ───────────────────────────────────────────────────────────
 function mapPost(p: any): CommunityPost {
   return {
@@ -398,6 +492,7 @@ function mapPost(p: any): CommunityPost {
     videoUrl: p.video_url ?? null, videoThumbnailUrl: p.video_thumbnail_url ?? null,
     likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
     liked: p.liked ?? false, createdAt: p.created_at,
+    taggedUsers: p.taggedUsers ?? [],
     author: { userId: p.author?.userId ?? p.user_id, name: p.author?.name ?? 'Member', avatarUrl: p.author?.avatarUrl ?? null },
   };
 }

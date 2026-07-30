@@ -67,11 +67,13 @@ function StarRating({ onRate }: { onRate: (r: number) => void }) {
   );
 }
 
-// ── Prayer card ───────────────────────────────────────────────────────────────
+// ── Prayer card (collapsible for past entries) ────────────────────────────────
 function PrayerCard({
-  entry, index, onMarkRead,
-}: { entry: PrayerEntry; index: number; onMarkRead?: (id: string) => void }) {
+  entry, index, onMarkRead, collapsible, defaultExpanded,
+}: { entry: PrayerEntry; index: number; onMarkRead?: (id: string) => void; collapsible?: boolean; defaultExpanded?: boolean }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const [expanded, setExpanded] = useState(!collapsible || defaultExpanded);
+
   useEffect(() => {
     Animated.spring(anim, { toValue: 1, tension: 60, friction: 9, delay: index * 60, useNativeDriver: true }).start();
   }, []);
@@ -81,35 +83,50 @@ function PrayerCard({
       <View style={[s.card, !entry.is_read && s.cardUnread]}>
         {!entry.is_read && <View style={s.unreadStrip} />}
         <View style={{ flex: 1 }}>
-          <Text style={s.cardTitle}>{entry.title}</Text>
-          <Text style={s.cardBody}>{entry.prayer_text}</Text>
-          {entry.scripture_reference ? (
-            <View style={s.scriptureRow}>
-              <Text style={s.scriptureIcon}>✦</Text>
-              <Text style={s.scriptureRef}>{entry.scripture_reference}</Text>
+          {/* Tap header to expand/collapse */}
+          <TouchableOpacity
+            activeOpacity={collapsible ? 0.75 : 1}
+            onPress={collapsible ? () => setExpanded(e => !e) : undefined}
+          >
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={[s.cardTitle, { flex: 1 }]}>{entry.title}</Text>
+              {collapsible && <Text style={{ fontSize: 11, color: colors.inkFaint, paddingLeft: 8 }}>{expanded ? "▲" : "▼"}</Text>}
             </View>
-          ) : null}
-          {entry.category ? (
-            <StarRating
-              onRate={(rating) =>
-                submitGenerationFeedback({
-                  entryType: "prayer", category: entry.category!,
-                  verseRef: entry.scripture_reference ?? undefined,
-                  rating, sourceText: entry.sourceText,
-                }).catch(() => {})
-              }
-            />
-          ) : null}
-          <View style={s.cardFooter}>
             <Text style={s.cardDate}>
               {new Date(entry.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
             </Text>
-            {!entry.is_read && onMarkRead && (
-              <TouchableOpacity style={s.markReadBtn} onPress={() => onMarkRead(entry.id)} activeOpacity={0.75}>
-                <Text style={s.markReadText}>✓ Mark as read</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          </TouchableOpacity>
+
+          {expanded && (
+            <>
+              <Text style={[s.cardBody, { marginTop: 6 }]}>{entry.prayer_text}</Text>
+              {entry.scripture_reference ? (
+                <View style={s.scriptureRow}>
+                  <Text style={s.scriptureIcon}>✦</Text>
+                  <Text style={s.scriptureRef}>{entry.scripture_reference}</Text>
+                </View>
+              ) : null}
+              {entry.category ? (
+                <StarRating
+                  onRate={(rating) =>
+                    submitGenerationFeedback({
+                      entryType: "prayer", category: entry.category!,
+                      verseRef: entry.scripture_reference ?? undefined,
+                      rating, sourceText: entry.sourceText,
+                    }).catch(() => {})
+                  }
+                />
+              ) : null}
+              <View style={s.cardFooter}>
+                <View />
+                {!entry.is_read && onMarkRead && (
+                  <TouchableOpacity style={s.markReadBtn} onPress={() => onMarkRead(entry.id)} activeOpacity={0.75}>
+                    <Text style={s.markReadText}>✓ Mark as read</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
         </View>
       </View>
     </Animated.View>
@@ -157,11 +174,43 @@ export default function PrayerScreen() {
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<PrayerEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [arrivedFromNotif, setArrivedFromNotif] = useState(false);
+  const autoGenerateAttempted = useRef(false);
+
+  const PAGE_SIZE = 20;
+
+  async function loadEntries(replace = true, before?: string) {
+    if (!replace && loadingMore) return;
+    if (!replace) setLoadingMore(true);
+    else setLoadingEntries(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      let q = supabase
+        .from("prayer_entries")
+        .select("id, title, prayer_text, scripture_reference, created_at, is_read")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+      if (before) q = q.lt("created_at", before);
+      const { data } = await q;
+      const rows = data ?? [];
+      if (replace) setEntries(rows);
+      else setEntries(prev => [...prev, ...rows]);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch {}
+    finally {
+      if (!replace) setLoadingMore(false);
+      else setLoadingEntries(false);
+    }
+  }
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      autoGenerateAttempted.current = false;
       const alarm = consumePendingAlarm();
       if (alarm?.type === "prayer" && Date.now() - alarm.timestamp < 120_000) {
         setArrivedFromNotif(true);
@@ -169,26 +218,31 @@ export default function PrayerScreen() {
           const match = PRAYER_TYPES.find((t) => t.id === alarm.prayerType);
           if (match) setType(match.id);
         }
+        if (alarm.desires) setDesires(alarm.desires);
         setTimeout(() => scrollRef.current?.scrollTo({ y: 420, animated: true }), 600);
       } else {
         setArrivedFromNotif(false);
       }
 
-      (async () => {
-        setLoadingEntries(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { if (active) setLoadingEntries(false); return; }
-        const { data } = await supabase
-          .from("prayer_entries")
-          .select("id, title, prayer_text, scripture_reference, created_at, is_read")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(40);
-        if (active) { setEntries(data ?? []); setLoadingEntries(false); }
-      })();
+      loadEntries(true);
       return () => { active = false; };
     }, [])
   );
+
+  // Auto-generate when arriving from notification and no unread entries exist
+  useEffect(() => {
+    if (
+      arrivedFromNotif &&
+      !loadingEntries &&
+      !busy &&
+      !autoGenerateAttempted.current &&
+      desires.trim() &&
+      entries.filter(e => !e.is_read).length === 0
+    ) {
+      autoGenerateAttempted.current = true;
+      handleGenerate();
+    }
+  }, [arrivedFromNotif, loadingEntries, entries.length]);
 
   async function markAsRead(entryId: string) {
     const { data: { user } } = await supabase.auth.getUser();
@@ -275,6 +329,12 @@ export default function PrayerScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function loadMore() {
+    if (!hasMore || loadingMore || entries.length === 0) return;
+    const oldest = entries[entries.length - 1].created_at;
+    await loadEntries(false, oldest);
   }
 
   const selectedType = PRAYER_TYPES.find((t) => t.id === type) ?? PRAYER_TYPES[0];
@@ -456,8 +516,20 @@ export default function PrayerScreen() {
               <View style={s.historySection}>
                 <SectionDivider label="PRAYER HISTORY" />
                 {read.map((e, i) => (
-                  <PrayerCard key={e.id} entry={e} index={i} />
+                  <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} />
                 ))}
+                {hasMore && (
+                  <TouchableOpacity
+                    style={s.loadMoreBtn}
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                    activeOpacity={0.75}
+                  >
+                    {loadingMore
+                      ? <ActivityIndicator size="small" color={colors.olive} />
+                      : <Text style={s.loadMoreText}>Load more prayers</Text>}
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -616,6 +688,13 @@ const s = StyleSheet.create({
   starPrompt: { ...typography.caption, color: colors.inkFaint },
   star: { fontSize: 16, color: colors.gold, marginLeft: 2 },
   feedbackThanks: { ...typography.caption, color: colors.olive, marginTop: spacing.sm, fontStyle: "italic" },
+
+  loadMoreBtn: {
+    alignItems: "center", paddingVertical: spacing.md,
+    backgroundColor: colors.parchment, borderRadius: radii.md,
+    borderWidth: 1, borderColor: colors.parchmentDark, marginTop: spacing.sm,
+  },
+  loadMoreText: { fontSize: 14, fontWeight: "600", color: colors.olive },
 
   emptyState: { alignItems: "center", paddingVertical: spacing.xxl },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
