@@ -954,10 +954,26 @@ export default function BulletinScreen({ navigation }: Props) {
                   style={({ pressed }) => [pressed && { opacity: 0.9 }]}
                   onPress={() => openBulletin(todayBulletin)}
                 >
-                  <LinearGradient colors={["#2E3A1F", "#3E4A2F", "#5B6B45"]} style={styles.todayGrad}>
-                    {/* Decorative circles */}
-                    <View style={styles.decor1} />
-                    <View style={styles.decor2} />
+                  {/* Hero featured image (absolute behind gradient) */}
+                  {todayBulletin.featured_image_url ? (
+                    <Image
+                      source={{ uri: todayBulletin.featured_image_url }}
+                      style={styles.todayHeroImage}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+                  <LinearGradient
+                    colors={todayBulletin.featured_image_url
+                      ? ["rgba(0,0,0,0.05)", "rgba(28,40,18,0.82)", "#1C2712"]
+                      : ["#2E3A1F", "#3E4A2F", "#5B6B45"]}
+                    style={[styles.todayGrad, todayBulletin.featured_image_url && { minHeight: 250 }]}
+                  >
+                    {!todayBulletin.featured_image_url && (
+                      <>
+                        <View style={styles.decor1} />
+                        <View style={styles.decor2} />
+                      </>
+                    )}
 
                     <View style={styles.todayRow}>
                       <View style={{ flex: 1 }}>
@@ -1039,22 +1055,43 @@ export default function BulletinScreen({ navigation }: Props) {
             (showArchive ? archive : archive.slice(0, 3)).map((b, idx) => (
               <FadeInView key={b.id} delay={300 + idx * 60}>
                 <View style={styles.archiveCardOuter}>
+                  {/* Featured image thumbnail with date chip overlay */}
                   {b.featured_image_url ? (
-                    <Image source={{ uri: b.featured_image_url }} style={styles.archiveThumb} resizeMode="cover" />
-                  ) : null}
+                    <View style={{ position: "relative" }}>
+                      <Image source={{ uri: b.featured_image_url }} style={styles.archiveThumb} resizeMode="cover" />
+                      <LinearGradient
+                        colors={["transparent", "rgba(0,0,0,0.55)"]}
+                        style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 60 }}
+                      />
+                      {b.publish_at && (
+                        <View style={styles.archiveDateChip}>
+                          <Text style={styles.archiveDateChipText}>
+                            {new Date(b.publish_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    /* No image: show a compact gradient colour bar instead */
+                    <LinearGradient colors={["#2E3A1F", "#4A5A36"]} style={styles.archiveColorBar}>
+                      <Text style={styles.archiveColorBarFreq}>{b.frequency?.toUpperCase() ?? "BULLETIN"}</Text>
+                      {b.publish_at && (
+                        <Text style={styles.archiveColorBarDate}>
+                          {new Date(b.publish_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                        </Text>
+                      )}
+                    </LinearGradient>
+                  )}
                   <Pressable
                     style={({ pressed }) => [styles.archiveCard, pressed && { opacity: 0.85 }]}
                     onPress={() => openBulletin(b)}
                   >
-                    <LinearGradient
-                      colors={["#3E4A2F15", "#00000000"]}
-                      style={styles.archiveGradAccent}
-                    />
+                    <LinearGradient colors={["#3E4A2F15", "#00000000"]} style={styles.archiveGradAccent} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.archiveTitle}>{b.title}</Text>
                       <Text style={styles.archiveMeta}>
                         {b.frequency?.charAt(0).toUpperCase() + (b.frequency?.slice(1) ?? "")}
-                        {b.publish_at ? ` · ${new Date(b.publish_at).toLocaleDateString()}` : ""}
+                        {!b.featured_image_url && b.publish_at ? ` · ${new Date(b.publish_at).toLocaleDateString()}` : ""}
                       </Text>
                     </View>
                     {b.is_paid && <Text style={styles.archivePaid}>₦{b.price_ngn?.toLocaleString()}</Text>}

@@ -25,7 +25,7 @@ type CardDef = {
   symbol: string;
   gradient: [string, string];
   accent: string;
-  unreadKey?: "devotion" | "prayer";
+  unreadKey?: "devotion" | "prayer" | "oliveChat";
 };
 
 const CARDS: CardDef[] = [
@@ -78,6 +78,7 @@ const CARDS: CardDef[] = [
     symbol: "🫒",
     gradient: ["#3B1F4A", "#6B3FA0"],
     accent: "#B07ADF",
+    unreadKey: "oliveChat",
   },
 ];
 
@@ -87,9 +88,10 @@ export default function HomeScreen({ navigation }: Props) {
   const headerAnim = useRef(new Animated.Value(0)).current;
   const cardAnims = useRef(CARDS.map(() => new Animated.Value(0))).current;
 
-  const [unreadCounts, setUnreadCounts] = useState<{ devotion: number; prayer: number }>({
+  const [unreadCounts, setUnreadCounts] = useState<{ devotion: number; prayer: number; oliveChat: number }>({
     devotion: 0,
     prayer: 0,
+    oliveChat: 0,
   });
 
   useEffect(() => {
@@ -112,7 +114,7 @@ export default function HomeScreen({ navigation }: Props) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const [devotionRes, prayerRes] = await Promise.allSettled([
+      const [devotionRes, prayerRes, oliveChatRes] = await Promise.allSettled([
         supabase
           .from("devotion_entries")
           .select("*", { count: "exact", head: true })
@@ -123,12 +125,36 @@ export default function HomeScreen({ navigation }: Props) {
           .select("*", { count: "exact", head: true })
           .eq("user_id", user.id)
           .eq("is_read", false),
+        supabase
+          .from("community_notifications")
+          .select("*", { count: "exact", head: true })
+          .eq("recipient_id", user.id)
+          .eq("is_read", false),
       ]);
 
       setUnreadCounts({
-        devotion: devotionRes.status === "fulfilled" ? (devotionRes.value.count ?? 0) : 0,
-        prayer:   prayerRes.status === "fulfilled"   ? (prayerRes.value.count ?? 0)   : 0,
+        devotion:  devotionRes.status  === "fulfilled" ? (devotionRes.value.count  ?? 0) : 0,
+        prayer:    prayerRes.status    === "fulfilled" ? (prayerRes.value.count    ?? 0) : 0,
+        oliveChat: oliveChatRes.status === "fulfilled" ? (oliveChatRes.value.count ?? 0) : 0,
       });
+
+      // Wire up realtime for Olive Chat badge — keep alive as long as the
+      // navigator is mounted (not just while HomeScreen is focused).
+      const channelName = `home:notifs:${user.id}`;
+      // Avoid duplicate subscriptions if loadUnreadCounts is called again
+      if (!supabase.getChannels().find(c => c.topic === `realtime:${channelName}`)) {
+        supabase
+          .channel(channelName)
+          .on("postgres_changes", {
+            event: "INSERT",
+            schema: "public",
+            table: "community_notifications",
+            filter: `recipient_id=eq.${user.id}`,
+          }, () => {
+            setUnreadCounts(prev => ({ ...prev, oliveChat: prev.oliveChat + 1 }));
+          })
+          .subscribe();
+      }
     } catch {
       // Non-fatal — counters stay at 0
     }
