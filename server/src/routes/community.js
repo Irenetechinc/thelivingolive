@@ -17,7 +17,7 @@ import { compressVideo } from '../lib/videoProcessor.js';
 const log = logger('community');
 const router = Router();
 // Allowed MIME type sets for each upload context
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
 const ALLOWED_MEDIA_TYPES = new Set([...ALLOWED_IMAGE_TYPES, 'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac', 'audio/ogg', 'video/mp4', 'video/quicktime', 'video/webm']);
 const ALLOWED_POST_TYPES  = new Set([...ALLOWED_IMAGE_TYPES, 'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v']);
 
