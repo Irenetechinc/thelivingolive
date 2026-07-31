@@ -1389,9 +1389,10 @@ export default function OliveChatScreen() {
       {/* Feed */}
       {tab === 'feed' && (
         (loadingFeed || (loadError != null && posts.length === 0))
-          ? <FlatList data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
+          ? <FlatList key="feed-skeleton" data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
           : (
             <FlatList
+              key="feed-real"
               data={posts}
               keyExtractor={p => p.id}
               renderItem={({ item, index }) => {
