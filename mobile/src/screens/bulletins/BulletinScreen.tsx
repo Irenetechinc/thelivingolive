@@ -568,6 +568,7 @@ export default function BulletinScreen({ navigation }: Props) {
   const [extrasLoading, setExtrasLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [payingFor, setPayingFor] = useState<string | null>(null);
+  const [bulletinFetchError, setBulletinFetchError] = useState(false);
 
   // Social state keyed by bulletinId
   const [socialMap, setSocialMap] = useState<Record<string, BulletinSocial>>({});
@@ -599,6 +600,7 @@ export default function BulletinScreen({ navigation }: Props) {
   }
 
   async function loadAll(churchId: string) {
+    setBulletinFetchError(false);
     const [todayRes, archiveRes] = await Promise.allSettled([
       fetchTodayBulletin(churchId),
       fetchBulletinArchive(churchId),
@@ -613,6 +615,10 @@ export default function BulletinScreen({ navigation }: Props) {
     if (archiveRes.status === "fulfilled") {
       setArchive(archiveRes.value.bulletins);
       newBulletins.push(...archiveRes.value.bulletins);
+    }
+    // If both fetches failed, surface a retry button instead of silent empty state
+    if (todayRes.status === "rejected" && archiveRes.status === "rejected") {
+      setBulletinFetchError(true);
     }
 
     // Load social data for bulletins in background
@@ -704,7 +710,7 @@ export default function BulletinScreen({ navigation }: Props) {
             finally { setPayingFor(null); }
           },
         },
-      ]);
+      ], { cancelable: false });
     } catch {
       Alert.alert("Payment unavailable", "Check your connection and try again.");
       setPayingFor(null);
@@ -948,7 +954,19 @@ export default function BulletinScreen({ navigation }: Props) {
           )}
 
           <FadeInView delay={50}>
-            {todayBulletin ? (
+            {bulletinFetchError ? (
+              <View style={styles.noBulletinCard}>
+                <Text style={{ fontSize: 36, marginBottom: 12 }}>⚠️</Text>
+                <Text style={styles.noBulletinTitle}>Couldn't load bulletin</Text>
+                <Text style={styles.noBulletinDesc}>Check your internet connection and try again.</Text>
+                <Pressable
+                  style={[styles.confirmBtn, styles.confirmBtnYes, { marginTop: spacing.md, width: "auto", paddingHorizontal: spacing.xl }]}
+                  onPress={() => selectedChurch && loadAll(selectedChurch.id)}
+                >
+                  <Text style={styles.confirmBtnTextYes}>↺ Try again</Text>
+                </Pressable>
+              </View>
+            ) : todayBulletin ? (
               <View style={styles.todayCardOuter}>
                 <Pressable
                   style={({ pressed }) => [pressed && { opacity: 0.9 }]}
@@ -1050,7 +1068,9 @@ export default function BulletinScreen({ navigation }: Props) {
           )}
 
           {archive.length === 0 ? (
-            <Text style={styles.noArchive}>No previous bulletins available.</Text>
+            <Text style={styles.noArchive}>
+              {bulletinFetchError ? "Archive unavailable — tap 'Try again' above." : "No previous bulletins available."}
+            </Text>
           ) : (
             (showArchive ? archive : archive.slice(0, 3)).map((b, idx) => (
               <FadeInView key={b.id} delay={300 + idx * 60}>

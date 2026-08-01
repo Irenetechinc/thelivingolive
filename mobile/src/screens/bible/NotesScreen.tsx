@@ -11,19 +11,20 @@ import {
   ScrollView,
   TextInput,
   Keyboard,
+  Alert,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from "expo-speech-recognition";
 import { supabase } from "../../lib/supabase";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import { useRecording } from "../../context/RecordingContext";
 import type { SermonRecording } from "../../lib/sermonRecorder";
 
-// Manual (typed, not tied to a specific verse) notes use these sentinel
-// values for the NOT NULL book_id/book_name/chapter columns — the notes
-// table was designed around chapter-scoped notes, so a general note is
-// stored the same way with an obvious, filterable marker instead of a
-// schema migration.
+// General (non-verse) notes use these sentinels for the NOT NULL schema columns.
 const GENERAL_NOTE_BOOK_ID = 0;
 const GENERAL_NOTE_BOOK_NAME = "General note";
 
@@ -34,8 +35,22 @@ type NoteRow = {
   chapter: number;
   verse: number | null;
   content: string;
+  title: string | null;
+  verse_ref: string | null;
   created_at: string;
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const day = 86_400_000;
+  if (diff < day && d.getDate() === now.getDate()) return "Today";
+  if (diff < 2 * day) return "Yesterday";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 function formatDuration(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -49,6 +64,8 @@ function statusLabel(rec: SermonRecording) {
   if (rec.status === "failed") return "Failed";
   return "Queued — waiting for connection";
 }
+
+// ── Sermon Recorder Card ──────────────────────────────────────────────────────
 
 function SermonRecorderCard() {
   const { recordings, isRecording, durationMillis, startRecording, stopRecording, retry, remove, editText } =
@@ -77,14 +94,10 @@ function SermonRecorderCard() {
   async function handlePress() {
     setBusy(true);
     try {
-      if (isRecording) {
-        await stopRecording();
-      } else {
-        await startRecording();
-      }
-    } catch (e) {
-      // Permission denied or device issue — silently ignored in UI here,
-      // button just doesn't start; icon states make it obvious nothing began.
+      if (isRecording) await stopRecording();
+      else await startRecording();
+    } catch {
+      // Permission denied or device issue — button resets visually
     } finally {
       setBusy(false);
     }
@@ -94,8 +107,8 @@ function SermonRecorderCard() {
     <View style={styles.recorderCard}>
       <Text style={styles.recorderTitle}>Sermon Recorder</Text>
       <Text style={styles.recorderSub}>
-        Record a sermon and it's turned into formatted notes automatically. Recording works fully
-        offline and keeps going if you minimize the app; transcription finishes once you're online.
+        Record a full sermon and it's transcribed into formatted notes. Works offline — transcription
+        finishes once you reconnect.
       </Text>
 
       <Pressable
@@ -138,11 +151,11 @@ function SermonRecorderCard() {
                   {statusLabel(rec)}
                 </Text>
               </View>
-              {rec.status === "failed" || rec.status === "queued" ? (
+              {(rec.status === "failed" || rec.status === "queued") && (
                 <Pressable onPress={() => retry(rec.id)} hitSlop={8}>
                   <Text style={styles.recordingAction}>Retry</Text>
                 </Pressable>
-              ) : null}
+              )}
               <Pressable onPress={() => remove(rec.id)} hitSlop={8}>
                 <Text style={[styles.recordingAction, { color: colors.danger }]}>Delete</Text>
               </Pressable>
@@ -151,6 +164,7 @@ function SermonRecorderCard() {
         </View>
       )}
 
+      {/* Transcript viewer / editor */}
       <Modal
         visible={!!viewing}
         animationType="slide"
@@ -241,16 +255,77 @@ function SermonRecorderCard() {
   );
 }
 
-function ManualNoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
+// ── Note Composer — type or speak ─────────────────────────────────────────────
+// Requires migration: see server/supabase/notes-migration.sql
+// Columns added: notes.title (text, nullable), notes.verse_ref (text, nullable)
+
+function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState("");
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteContent, setNoteContent] = useState("");
+  const [noteVerseRef, setNoteVerseRef] = useState("");
+  const [interimText, setInterimText] = useState("");
+  const [recognizing, setRecognizing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Speech recognition event handlers ─────────────────────────────────────
+  // useSpeechRecognitionEvent registers listeners as long as this component
+  // is mounted, so we check `open` inside the handlers to avoid side-effects
+  // when the composer is collapsed.
+
+  useSpeechRecognitionEvent("start", () => setRecognizing(true));
+
+  useSpeechRecognitionEvent("end", () => {
+    setRecognizing(false);
+    setInterimText("");
+  });
+
+  useSpeechRecognitionEvent("result", (event) => {
+    const transcript = event.results[0]?.transcript ?? "";
+    if (event.isFinal) {
+      setNoteContent((prev) => {
+        const needsSpace = prev.length > 0 && !prev.endsWith(" ") && !prev.endsWith("\n");
+        return prev + (needsSpace ? " " : "") + transcript;
+      });
+      setInterimText("");
+    } else {
+      setInterimText(transcript);
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (_event) => {
+    setRecognizing(false);
+    setInterimText("");
+  });
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  async function toggleVoice() {
+    if (recognizing) {
+      ExpoSpeechRecognitionModule.stop();
+    } else {
+      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!granted) {
+        Alert.alert(
+          "Microphone access needed",
+          "Go to Settings → The Living Olive and enable the microphone to use voice notes."
+        );
+        return;
+      }
+      ExpoSpeechRecognitionModule.start({
+        lang: "en-US",
+        interimResults: true,
+        continuous: true,
+      });
+    }
+  }
+
   async function save() {
-    if (!text.trim()) return;
+    if (!noteContent.trim()) return;
     setSaving(true);
     setError(null);
+    if (recognizing) ExpoSpeechRecognitionModule.stop();
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not signed in");
@@ -263,21 +338,39 @@ function ManualNoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
           book_name: GENERAL_NOTE_BOOK_NAME,
           chapter: 0,
           verse: null,
-          content: text.trim(),
+          content: noteContent.trim(),
+          title: noteTitle.trim() || null,
+          verse_ref: noteVerseRef.trim() || null,
         })
         .select()
         .single();
       if (insertError) throw insertError;
       onSaved(data as NoteRow);
-      setText("");
+      setNoteTitle("");
+      setNoteContent("");
+      setNoteVerseRef("");
+      setInterimText("");
       setOpen(false);
       Keyboard.dismiss();
-    } catch (e: any) {
-      setError("Couldn't save the note. Try again.");
+    } catch {
+      setError("Couldn't save note. Please try again.");
     } finally {
       setSaving(false);
     }
   }
+
+  function discard() {
+    if (recognizing) ExpoSpeechRecognitionModule.stop();
+    setOpen(false);
+    setNoteTitle("");
+    setNoteContent("");
+    setNoteVerseRef("");
+    setInterimText("");
+    setError(null);
+    Keyboard.dismiss();
+  }
+
+  // ── Collapsed state ───────────────────────────────────────────────────────
 
   if (!open) {
     return (
@@ -287,46 +380,106 @@ function ManualNoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
     );
   }
 
+  // ── Expanded composer ─────────────────────────────────────────────────────
+
   return (
     <View style={styles.composerCard}>
+      {/* Title */}
+      <TextInput
+        style={styles.composerTitle}
+        placeholder="Title (optional)"
+        placeholderTextColor={colors.inkFaint}
+        value={noteTitle}
+        onChangeText={setNoteTitle}
+        returnKeyType="next"
+      />
+
+      {/* Verse tag */}
+      <View style={styles.composerVerseRow}>
+        <Text style={styles.composerVerseIcon}>📖</Text>
+        <TextInput
+          style={styles.composerVerseInput}
+          placeholder="Tag a verse, e.g. John 3:16 (optional)"
+          placeholderTextColor={colors.inkFaint}
+          value={noteVerseRef}
+          onChangeText={setNoteVerseRef}
+          returnKeyType="next"
+          autoCapitalize="words"
+        />
+      </View>
+
+      {/* Content — disabled while recognizing so speech fills it */}
       <TextInput
         style={styles.composerInput}
-        placeholder="Write down a thought, prayer request, or anything you want to remember…"
+        placeholder={
+          recognizing
+            ? "Listening… speak your note"
+            : "Write your note, or tap 🎤 to speak"
+        }
         placeholderTextColor={colors.inkFaint}
-        value={text}
-        onChangeText={setText}
+        value={noteContent}
+        onChangeText={recognizing ? undefined : setNoteContent}
+        editable={!recognizing}
         multiline
-        autoFocus
         textAlignVertical="top"
       />
+
+      {/* Live interim speech preview */}
+      {interimText !== "" && (
+        <View style={styles.interimRow}>
+          <Text style={styles.interimDot}>🎤</Text>
+          <Text style={styles.interimText} numberOfLines={3}>
+            {interimText}
+          </Text>
+        </View>
+      )}
+
+      {recognizing && interimText === "" && (
+        <View style={styles.interimRow}>
+          <ActivityIndicator color={colors.olive} size="small" style={{ marginRight: 6 }} />
+          <Text style={styles.interimListening}>Listening…</Text>
+        </View>
+      )}
+
       {error && <Text style={styles.composerError}>{error}</Text>}
-      <View style={styles.viewerActionsRow}>
-        <Pressable
-          style={[styles.viewerClose, styles.viewerCancel]}
-          onPress={() => {
-            setOpen(false);
-            setText("");
-            setError(null);
-            Keyboard.dismiss();
-          }}
-        >
-          <Text style={[styles.viewerCloseText, { color: colors.inkSoft }]}>Cancel</Text>
+
+      {/* Action bar */}
+      <View style={styles.composerActions}>
+        <Pressable style={styles.composerCancelBtn} onPress={discard}>
+          <Text style={styles.composerCancelText}>Cancel</Text>
         </Pressable>
         <Pressable
-          style={[styles.viewerClose, { flex: 1 }, (!text.trim() || saving) && { opacity: 0.6 }]}
-          onPress={save}
-          disabled={!text.trim() || saving}
+          style={[styles.composerMicBtn, recognizing && styles.composerMicBtnActive]}
+          onPress={toggleVoice}
+          hitSlop={6}
         >
-          {saving ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.viewerCloseText}>Save note</Text>}
+          <Text style={styles.composerMicIcon}>{recognizing ? "⏹" : "🎤"}</Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.composerSaveBtn,
+            (!noteContent.trim() || saving) && { opacity: 0.5 },
+          ]}
+          onPress={save}
+          disabled={!noteContent.trim() || saving}
+        >
+          {saving ? (
+            <ActivityIndicator color={colors.white} size="small" />
+          ) : (
+            <Text style={styles.composerSaveText}>Save note</Text>
+          )}
         </Pressable>
       </View>
     </View>
   );
 }
 
+// ── Main Screen ───────────────────────────────────────────────────────────────
+
 export default function NotesScreen() {
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewingNote, setViewingNote] = useState<NoteRow | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -335,20 +488,28 @@ export default function NotesScreen() {
         setLoading(true);
         const { data } = await supabase
           .from("notes")
-          .select("id, book_id, book_name, chapter, verse, content, created_at")
+          .select("id, book_id, book_name, chapter, verse, content, title, verse_ref, created_at")
           .order("created_at", { ascending: false });
         if (active) {
-          setNotes(data ?? []);
+          setNotes((data as NoteRow[]) ?? []);
           setLoading(false);
         }
       })();
-      return () => { active = false; };
+      return () => {
+        active = false;
+      };
     }, [])
   );
 
+  function getDisplayRef(note: NoteRow): string {
+    if (note.verse_ref) return note.verse_ref;
+    if (note.book_id === GENERAL_NOTE_BOOK_ID) return "General note";
+    return `${note.book_name} ${note.chapter}${note.verse ? `:${note.verse}` : ""}`;
+  }
+
   return (
     <View style={styles.container}>
-      {/* Header strip */}
+      {/* Header */}
       <LinearGradient
         colors={["#2E3A1F", "#3E4A2F", "#4A5A36"]}
         style={styles.header}
@@ -367,47 +528,86 @@ export default function NotesScreen() {
           keyExtractor={(n) => n.id}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           ListHeaderComponent={
             <>
               <SermonRecorderCard />
-              <ManualNoteComposer onSaved={(note) => setNotes((prev) => [note, ...prev])} />
+              <NoteComposer onSaved={(note) => setNotes((prev) => [note, ...prev])} />
             </>
           }
           ListEmptyComponent={
-            <View style={styles.center}>
+            <View style={styles.emptyWrap}>
               <Text style={styles.emptySymbol}>✦</Text>
               <Text style={styles.emptyTitle}>No notes yet</Text>
               <Text style={styles.emptyText}>
-                Tap any verse while reading to highlight it or add a note, write one above, or open
-                the floating notes widget on any chapter.
+                Tap any verse while reading to add a note, write one above, or tap 🎤 to speak your
+                thoughts.
               </Text>
             </View>
           }
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <Pressable
+              style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
+              onPress={() => setViewingNote(item)}
+            >
               <View style={styles.cardHeader}>
                 <View style={styles.refBadge}>
-                  <Text style={styles.refText}>
-                    {item.book_id === GENERAL_NOTE_BOOK_ID
-                      ? "General note"
-                      : `${item.book_name} ${item.chapter}${item.verse ? `:${item.verse}` : ""}`}
-                  </Text>
+                  <Text style={styles.refText}>{getDisplayRef(item)}</Text>
                 </View>
-                <Text style={styles.dateText}>
-                  {new Date(item.created_at).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </Text>
+                <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
               </View>
-              <Text style={styles.content}>{item.content}</Text>
-            </View>
+              {item.title ? (
+                <Text style={styles.cardTitle} numberOfLines={1}>
+                  {item.title}
+                </Text>
+              ) : null}
+              <Text style={styles.content} numberOfLines={3}>
+                {item.content}
+              </Text>
+            </Pressable>
           )}
         />
       )}
+
+      {/* Note detail viewer */}
+      <Modal
+        visible={!!viewingNote}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setViewingNote(null)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setViewingNote(null)} />
+        <View style={styles.viewerSheet}>
+          <View style={styles.viewerHeaderRow}>
+            <View style={{ flex: 1 }}>
+              {viewingNote?.title ? (
+                <Text style={styles.viewerTitle}>{viewingNote.title}</Text>
+              ) : null}
+              <View style={styles.viewerMeta}>
+                <View style={styles.refBadge}>
+                  <Text style={styles.refText}>
+                    {viewingNote ? getDisplayRef(viewingNote) : ""}
+                  </Text>
+                </View>
+                {viewingNote && (
+                  <Text style={styles.viewerDate}>{formatDate(viewingNote.created_at)}</Text>
+                )}
+              </View>
+            </View>
+          </View>
+          <ScrollView style={{ maxHeight: 400 }}>
+            <Text style={styles.viewerText}>{viewingNote?.content}</Text>
+          </ScrollView>
+          <Pressable style={styles.viewerClose} onPress={() => setViewingNote(null)}>
+            <Text style={styles.viewerCloseText}>Close</Text>
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.parchment },
@@ -422,27 +622,17 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: spacing.xs,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: colors.white,
-    letterSpacing: -0.4,
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
+  headerTitle: { fontSize: 24, fontWeight: "700", color: colors.white, letterSpacing: -0.4 },
+
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  emptyWrap: { alignItems: "center", padding: spacing.xl },
   emptySymbol: { fontSize: 36, color: colors.oliveFaint, marginBottom: spacing.md },
   emptyTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: spacing.sm },
-  emptyText: {
-    ...typography.bodySmall,
-    color: colors.inkSoft,
-    textAlign: "center",
-    lineHeight: 22,
-  },
+  emptyText: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22 },
+
   listContent: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.md },
+
+  // ── Note card ─────────────────────────────────────────────────────────────
   card: {
     backgroundColor: colors.white,
     borderRadius: radii.lg,
@@ -453,8 +643,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: colors.ink, marginBottom: spacing.xs },
   refBadge: {
     backgroundColor: colors.parchment,
     borderRadius: radii.pill,
@@ -467,6 +658,115 @@ const styles = StyleSheet.create({
   dateText: { ...typography.micro, color: colors.inkFaint },
   content: { ...typography.bodySmall, color: colors.ink, lineHeight: 22 },
 
+  // ── Composer ──────────────────────────────────────────────────────────────
+  newNoteBtn: {
+    borderRadius: radii.lg,
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+    borderStyle: "dashed",
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    marginBottom: spacing.lg,
+    backgroundColor: colors.white,
+  },
+  newNoteBtnText: { color: colors.olive, fontWeight: "700", fontSize: 14 },
+
+  composerCard: {
+    backgroundColor: colors.white,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    ...shadows.subtle,
+    gap: spacing.sm,
+  },
+  composerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.parchment,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+  },
+  composerVerseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F0F4E8",
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: "#C2D4A0",
+    paddingHorizontal: spacing.md,
+  },
+  composerVerseIcon: { fontSize: 14, marginRight: spacing.sm },
+  composerVerseInput: { flex: 1, fontSize: 13, color: colors.ink, paddingVertical: spacing.sm },
+  composerInput: {
+    ...typography.bodySmall,
+    color: colors.ink,
+    backgroundColor: colors.parchment,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+    padding: spacing.md,
+    minHeight: 100,
+    textAlignVertical: "top",
+  },
+  interimRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#F5F5F0",
+    borderRadius: radii.sm,
+    padding: spacing.sm,
+    gap: 6,
+  },
+  interimDot: { fontSize: 12, marginTop: 1 },
+  interimText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.inkSoft,
+    fontStyle: "italic",
+    lineHeight: 19,
+  },
+  interimListening: { fontSize: 13, color: colors.inkSoft, fontStyle: "italic" },
+  composerError: { ...typography.caption, color: colors.danger },
+  composerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  composerCancelBtn: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    backgroundColor: colors.parchmentMid,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+  },
+  composerCancelText: { fontSize: 13, color: colors.inkSoft, fontWeight: "600" },
+  composerMicBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.parchmentMid,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: colors.parchmentDark,
+  },
+  composerMicBtnActive: { backgroundColor: "#FDECEA", borderColor: colors.danger },
+  composerMicIcon: { fontSize: 18 },
+  composerSaveBtn: {
+    flex: 1,
+    backgroundColor: colors.olive,
+    borderRadius: radii.pill,
+    paddingVertical: spacing.sm,
+    alignItems: "center",
+  },
+  composerSaveText: { color: colors.white, fontWeight: "700", fontSize: 14 },
+
+  // ── Sermon recorder card ──────────────────────────────────────────────────
   recorderCard: {
     backgroundColor: colors.white,
     borderRadius: radii.lg,
@@ -475,7 +775,13 @@ const styles = StyleSheet.create({
     ...shadows.subtle,
   },
   recorderTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: 4 },
-  recorderSub: { ...typography.bodySmall, fontSize: 13, color: colors.inkSoft, lineHeight: 19, marginBottom: spacing.md },
+  recorderSub: {
+    ...typography.bodySmall,
+    fontSize: 13,
+    color: colors.inkSoft,
+    lineHeight: 19,
+    marginBottom: spacing.md,
+  },
   recordBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -501,6 +807,7 @@ const styles = StyleSheet.create({
   recordingStatus: { ...typography.micro, color: colors.inkFaint, marginTop: 2 },
   recordingAction: { ...typography.caption, color: colors.olive, fontWeight: "700" },
 
+  // ── Modal / viewer ────────────────────────────────────────────────────────
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
   viewerSheet: {
     backgroundColor: colors.white,
@@ -511,12 +818,19 @@ const styles = StyleSheet.create({
   viewerHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     marginBottom: spacing.md,
   },
-  viewerTitle: { ...typography.title, fontSize: 18, color: colors.oliveDark },
+  viewerTitle: { ...typography.title, fontSize: 18, color: colors.oliveDark, marginBottom: 4 },
+  viewerMeta: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
+  viewerDate: { ...typography.micro, color: colors.inkFaint },
   viewerEditLink: { ...typography.caption, color: colors.olive, fontWeight: "700" },
-  viewerText: { ...typography.body, color: colors.ink, marginBottom: spacing.md },
+  viewerText: {
+    ...typography.body,
+    color: colors.ink,
+    marginBottom: spacing.md,
+    lineHeight: 26,
+  },
   editInput: {
     ...typography.body,
     color: colors.ink,
@@ -530,7 +844,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   viewerActionsRow: { flexDirection: "row", gap: spacing.sm },
-  viewerCancel: { flex: 0, paddingHorizontal: spacing.lg, backgroundColor: colors.parchmentMid },
+  viewerCancel: {
+    flex: 0,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.parchmentMid,
+  },
   viewerClose: {
     backgroundColor: colors.olive,
     borderRadius: radii.sm,
@@ -538,35 +856,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   viewerCloseText: { color: colors.white, fontWeight: "700" },
-
-  newNoteBtn: {
-    borderRadius: radii.lg,
-    borderWidth: 1.5,
-    borderColor: colors.parchmentDark,
-    borderStyle: "dashed",
-    paddingVertical: spacing.md,
-    alignItems: "center",
-    marginBottom: spacing.lg,
-    backgroundColor: colors.white,
-  },
-  newNoteBtnText: { color: colors.olive, fontWeight: "700", fontSize: 14 },
-  composerCard: {
-    backgroundColor: colors.white,
-    borderRadius: radii.lg,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    ...shadows.subtle,
-  },
-  composerInput: {
-    ...typography.bodySmall,
-    color: colors.ink,
-    backgroundColor: colors.parchment,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.parchmentDark,
-    padding: spacing.md,
-    minHeight: 100,
-    marginBottom: spacing.sm,
-  },
-  composerError: { ...typography.caption, color: colors.danger, marginBottom: spacing.sm },
 });

@@ -61,6 +61,13 @@
           "microphonePermission": "Allow The Living Olive to record so you can capture sermon notes to be transcribed."
         }
       ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow The Living Olive to record your voice for real-time note transcription.",
+          "speechRecognitionPermission": "Allow The Living Olive to transcribe your speech into notes."
+        }
+      ],
       "expo-asset",
       "expo-status-bar",
       "expo-font"

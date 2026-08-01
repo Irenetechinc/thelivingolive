@@ -73,6 +73,17 @@ export default function ChapterReaderScreen({ route }: Props) {
     return () => clearTimeout(timer);
   }, [initialVerse, verses]);
 
+  // ── Background preloading: adjacent chapters ─────────────────────────────────
+  // After the current chapter loads, warm the AsyncStorage cache for the
+  // previous and next chapters so navigation is instant.
+  useEffect(() => {
+    if (verses.length === 0) return;
+    if (chapter > 1) {
+      loadChapterVerses(bookId, chapter - 1, activeVersion).catch(() => {});
+    }
+    loadChapterVerses(bookId, chapter + 1, activeVersion).catch(() => {});
+  }, [bookId, chapter, activeVersion, verses.length]);
+
   // ── Highlights ───────────────────────────────────────────────────────────────
   const [highlighted, setHighlighted] = useState<Record<number, string>>({});
   useEffect(() => {
@@ -87,6 +98,35 @@ export default function ChapterReaderScreen({ route }: Props) {
         const map: Record<number, string> = {};
         for (const r of rows) map[r.verse] = r.color;
         setHighlighted(map);
+      }
+    })();
+  }, [bookId, chapter]);
+
+  // ── Verse-level notes (for indicators) ───────────────────────────────────────
+  const [noteVerses, setNoteVerses] = useState<Record<number, { content: string; title: string | null }>>({});
+  const [viewingVerseNote, setViewingVerseNote] = useState<{
+    verseNum: number;
+    content: string;
+    title: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return;
+      const { data: rows } = await supabase
+        .from("notes")
+        .select("verse, content, title")
+        .eq("user_id", userData.user.id)
+        .eq("book_id", bookId)
+        .eq("chapter", chapter)
+        .not("verse", "is", null);
+      if (rows) {
+        const map: Record<number, { content: string; title: string | null }> = {};
+        for (const r of rows) {
+          if (r.verse != null) map[r.verse] = { content: r.content, title: r.title ?? null };
+        }
+        setNoteVerses(map);
       }
     })();
   }, [bookId, chapter]);
@@ -261,6 +301,11 @@ export default function ChapterReaderScreen({ route }: Props) {
         verse: selectedVerse,
         content: noteText.trim(),
       });
+      // Show indicator on the saved verse immediately without needing a reload
+      setNoteVerses((prev) => ({
+        ...prev,
+        [selectedVerse]: { content: noteText.trim(), title: null },
+      }));
       setModalMode(null);
     } finally {
       setSavingNote(false);
@@ -376,30 +421,51 @@ export default function ChapterReaderScreen({ route }: Props) {
                 verseOffsets.current[verseNum] = e.nativeEvent.layout.y;
               }}
             >
-              <Pressable
-                onPress={() => openVerse(verseNum)}
-                style={({ pressed }) => [
-                  styles.versePressable,
-                  studyMode && styles.versePressableStudy,
-                  isStudyExpanded && styles.versePressableExpanded,
-                  pressed && styles.versePressablePressed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.verse,
-                    highlighted[verseNum] ? { backgroundColor: highlighted[verseNum] } : null,
-                    isLocatorTarget && !highlighted[verseNum] && styles.verseLocatorTarget,
-                    studyMode && styles.verseStudy,
-                    isStudyExpanded && styles.verseExpanded,
+              {/* Verse text row — flex row so note indicator sits to the right */}
+              <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+                <Pressable
+                  onPress={() => openVerse(verseNum)}
+                  style={({ pressed }) => [
+                    styles.versePressable,
+                    { flex: 1 },
+                    studyMode && styles.versePressableStudy,
+                    isStudyExpanded && styles.versePressableExpanded,
+                    pressed && styles.versePressablePressed,
                   ]}
                 >
-                  <Text style={[styles.verseNumber, isStudyExpanded && styles.verseNumberExpanded]}>
-                    {verseNum}{" "}
+                  <Text
+                    style={[
+                      styles.verse,
+                      highlighted[verseNum] ? { backgroundColor: highlighted[verseNum] } : null,
+                      isLocatorTarget && !highlighted[verseNum] && styles.verseLocatorTarget,
+                      studyMode && styles.verseStudy,
+                      isStudyExpanded && styles.verseExpanded,
+                    ]}
+                  >
+                    <Text style={[styles.verseNumber, isStudyExpanded && styles.verseNumberExpanded]}>
+                      {verseNum}{" "}
+                    </Text>
+                    {text}
                   </Text>
-                  {text}
-                </Text>
-              </Pressable>
+                </Pressable>
+
+                {/* Note indicator dot — shown when this verse has an attached note */}
+                {noteVerses[verseNum] && (
+                  <Pressable
+                    style={styles.noteIndicatorBtn}
+                    onPress={() =>
+                      setViewingVerseNote({
+                        verseNum,
+                        content: noteVerses[verseNum].content,
+                        title: noteVerses[verseNum].title,
+                      })
+                    }
+                    hitSlop={10}
+                  >
+                    <View style={styles.noteIndicatorDot} />
+                  </Pressable>
+                )}
+              </View>
 
               {/* Inline study panel */}
               {isStudyExpanded && (
@@ -638,6 +704,41 @@ export default function ChapterReaderScreen({ route }: Props) {
         </View>
       </Modal>
 
+      {/* ── Verse note popup ─────────────────────────────────────────────── */}
+      <Modal
+        visible={!!viewingVerseNote}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setViewingVerseNote(null)}
+      >
+        <Pressable
+          style={styles.backdrop}
+          onPress={() => setViewingVerseNote(null)}
+        />
+        <View style={styles.sheet}>
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+            <View style={styles.noteIndicatorDot} />
+            <Text style={[styles.sheetTitle, { marginBottom: 0, marginLeft: spacing.sm }]}>
+              {bookName} {chapter}:{viewingVerseNote?.verseNum}
+            </Text>
+          </View>
+          {viewingVerseNote?.title ? (
+            <Text style={{ fontWeight: "700", fontSize: 15, color: colors.ink, marginBottom: spacing.sm }}>
+              {viewingVerseNote.title}
+            </Text>
+          ) : null}
+          <ScrollView style={{ maxHeight: 240 }}>
+            <Text style={styles.explanationText}>{viewingVerseNote?.content}</Text>
+          </ScrollView>
+          <Pressable
+            style={[styles.primaryButton, { marginTop: spacing.md }]}
+            onPress={() => setViewingVerseNote(null)}
+          >
+            <Text style={styles.primaryButtonText}>Close</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       <FloatingNotesWidget
         bookId={bookId}
         bookName={bookName}
@@ -749,6 +850,22 @@ const styles = StyleSheet.create({
 
   // ── Verse list ───────────────────────────────────────────
   content: { padding: spacing.lg, paddingBottom: spacing.xl * 3 },
+
+  // ── Verse note indicator ──────────────────────────────────────────────────
+  noteIndicatorBtn: {
+    paddingTop: 10,
+    paddingHorizontal: spacing.xs,
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  noteIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.olive,
+    borderWidth: 1.5,
+    borderColor: colors.oliveDark,
+  },
 
   versePressable: { borderRadius: 6, marginBottom: spacing.sm },
   versePressableStudy: {

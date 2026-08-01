@@ -87,12 +87,14 @@ export async function updateRecordingText(id: string, formattedText: string) {
   return queue;
 }
 
-// A device can report `isConnected: true` while still having no real route
-// to the internet (captive wifi portals, airplane-mode edge cases, etc).
-// `isInternetReachable` is the more accurate signal when available; only
-// fall back to `isConnected` if the platform hasn't determined it yet.
+// On Android, isInternetReachable is almost always null or false even on a
+// healthy Wi-Fi or mobile data connection — the OS does not perform a live
+// reachability probe the way iOS does. Using it as a gate here would keep
+// every recording permanently stuck in "Queued — waiting for connection".
+// isConnected: true is the reliable signal; if the server turns out to be
+// genuinely unreachable the upload fails, the error handler detects it as a
+// network error, and the item is reset to "queued" and retried automatically.
 function hasRealConnection(state: { isConnected: boolean | null; isInternetReachable: boolean | null }) {
-  if (state.isInternetReachable !== null) return !!state.isInternetReachable;
   return !!state.isConnected;
 }
 
