@@ -75,7 +75,10 @@ export default function OliveChatSplash({ onFinish }: Props) {
   };
 
   return (
-    <Animated.View style={[StyleSheet.absoluteFill, { opacity: screenOpacity, zIndex: 999 }]}>
+    // pointerEvents="none" is critical: an opacity-0 Animated.View with absoluteFill still
+    // intercepts all touches in React Native (opacity does NOT disable hit-testing the way
+    // CSS does). Since this splash is purely decorative, we never need to receive touches.
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: screenOpacity, zIndex: 999 }]}>
       <LinearGradient colors={['#1A2410', '#2E3A1F', '#3E4A2F', '#5B6B45']} style={styles.bg}>
         {/* Background decorative circles */}
         <View style={styles.bgDecor1} />

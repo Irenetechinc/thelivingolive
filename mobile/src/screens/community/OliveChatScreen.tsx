@@ -1306,7 +1306,7 @@ export default function OliveChatScreen() {
       <OliveChatSplash onFinish={() => {}} />
     </View>
   );
-  if (pinLocked) return <PinGate onVerified={() => setPinLocked(false)} />;
+  if (pinLocked) return <PinGate onVerified={() => { setPinLocked(false); setShowSplash(false); }} />;
 
   if (notMember) return (
     <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center', padding: spacing.xl }}>
