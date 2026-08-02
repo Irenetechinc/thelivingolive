@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, TextInput, Pressable, ScrollView,
-  ActivityIndicator, Animated, TouchableOpacity,
+  ActivityIndicator, Animated, TouchableOpacity, Switch, Alert,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -23,6 +24,7 @@ type PrayerEntry = {
   is_read: boolean;
   category?: string;
   sourceText?: string;
+  source?: string;
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -70,8 +72,8 @@ function StarRating({ onRate }: { onRate: (r: number) => void }) {
 
 // ── Prayer card (collapsible for past entries) ────────────────────────────────
 function PrayerCard({
-  entry, index, onMarkRead, collapsible, defaultExpanded,
-}: { entry: PrayerEntry; index: number; onMarkRead?: (id: string) => void; collapsible?: boolean; defaultExpanded?: boolean }) {
+  entry, index, onMarkRead, collapsible, defaultExpanded, onEdit,
+}: { entry: PrayerEntry; index: number; onMarkRead?: (id: string) => void; collapsible?: boolean; defaultExpanded?: boolean; onEdit?: (entry: PrayerEntry) => void }) {
   const anim = useRef(new Animated.Value(0)).current;
   const [expanded, setExpanded] = useState(!collapsible || defaultExpanded);
 
@@ -91,7 +93,14 @@ function PrayerCard({
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Text style={[s.cardTitle, { flex: 1 }]}>{entry.title}</Text>
-              {collapsible && <Text style={{ fontSize: 11, color: colors.inkFaint, paddingLeft: 8 }}>{expanded ? "▲" : "▼"}</Text>}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 8 }}>
+                {entry.source === "manual" && onEdit && (
+                  <TouchableOpacity onPress={() => onEdit(entry)} hitSlop={6} activeOpacity={0.7}>
+                    <Ionicons name="pencil-outline" size={14} color={colors.olive} />
+                  </TouchableOpacity>
+                )}
+                {collapsible && <Text style={{ fontSize: 11, color: colors.inkFaint }}>{expanded ? "▲" : "▼"}</Text>}
+              </View>
             </View>
             <Text style={s.cardDate}>
               {new Date(entry.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
@@ -198,6 +207,17 @@ export default function PrayerScreen() {
   const [excludedDays, setExcludedDays] = useState<number[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Manual prayer state
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualText, setManualText] = useState("");
+  const [manualRef, setManualRef] = useState("");
+  const [manualHour, setManualHour] = useState("06");
+  const [manualMinute, setManualMinute] = useState("00");
+  const [manualAmPm, setManualAmPm] = useState<"AM" | "PM">("AM");
+  const [manualReminder, setManualReminder] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+
   // Screen state
   const [categoryOverride, setCategoryOverride] = useState<{ from: string; to: string; summary?: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -265,7 +285,22 @@ export default function PrayerScreen() {
         setArrivedFromNotif(false);
       }
 
-      loadEntries(true);
+      // Load entries then auto-mark all as read so the HomeScreen badge clears
+    // the moment the user opens this screen (they've seen the prayers by viewing
+    // the list — explicit "Mark as read" taps are still supported for individual
+    // entries but the count shouldn't stay permanently non-zero).
+    (async () => {
+      await loadEntries(true);
+      if (!active) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("prayer_entries")
+          .update({ is_read: true })
+          .eq("user_id", user.id)
+          .eq("is_read", false);
+        if (active) setEntries(prev => prev.map(e => ({ ...e, is_read: true })));
+      }
+    })();
       return () => { active = false; };
     }, [])
   );
@@ -376,6 +411,87 @@ export default function PrayerScreen() {
     if (!hasMore || loadingMore || entries.length === 0) return;
     const oldest = entries[entries.length - 1].created_at;
     await loadEntries(false, oldest);
+  }
+
+  async function handleSaveManual() {
+    if (!manualTitle.trim()) { Alert.alert("Required", "Please enter a prayer point title."); return; }
+    if (!manualText.trim()) { Alert.alert("Required", "Please write your prayer."); return; }
+    setSavingManual(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in");
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from("prayer_entries")
+        .insert({
+          title: manualTitle.trim(),
+          prayer_text: manualText.trim(),
+          scripture_reference: manualRef.trim() || null,
+          is_read: true,
+          source: "manual",
+          user_id: user.id,
+        })
+        .select()
+        .single();
+      if (insertErr) throw insertErr;
+
+      if (manualReminder) {
+        const hNum = parseInt(manualHour, 10);
+        const mNum = parseInt(manualMinute, 10);
+        const hValid = !isNaN(hNum) && hNum >= 1 && hNum <= 12;
+        const mValid = !isNaN(mNum) && mNum >= 0 && mNum <= 59;
+        if (hValid && mValid) {
+          const h = manualAmPm === "AM" ? (hNum === 12 ? 0 : hNum) : (hNum === 12 ? 12 : hNum + 12);
+          await scheduleRecurringReminder({
+            identifier: `manual-prayer-${inserted.id}`,
+            title: "Prayer reminder 🙏",
+            body: manualTitle.trim(),
+            hour: h, minute: mNum, frequency: "daily",
+            sound: "default",
+            data: { type: "prayer" },
+          });
+        }
+      }
+
+      setEntries((prev) => [{ ...inserted, source: "manual" }, ...prev]);
+
+      // Reset form
+      setManualTitle("");
+      setManualText("");
+      setManualRef("");
+      setManualHour("06");
+      setManualMinute("00");
+      setManualAmPm("AM");
+      setManualReminder(false);
+      setShowManualForm(false);
+    } catch (e: any) {
+      Alert.alert("Error", "Could not save prayer point. Please try again.");
+    } finally {
+      setSavingManual(false);
+    }
+  }
+
+  function handleEditManual(entry: PrayerEntry) {
+    Alert.alert(
+      entry.title,
+      entry.prayer_text + (entry.scripture_reference ? `\n\n✦ ${entry.scripture_reference}` : ""),
+      [
+        {
+          text: "Edit",
+          onPress: () => {
+            setManualTitle(entry.title);
+            setManualText(entry.prayer_text);
+            setManualRef(entry.scripture_reference ?? "");
+            setShowManualForm(true);
+            // Remove old entry so the saved one replaces it
+            setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+            supabase.from("prayer_entries").delete().eq("id", entry.id).then(() => {});
+            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+          },
+        },
+        { text: "Cancel", style: "cancel" },
+      ]
+    );
   }
 
   const selectedType = PRAYER_TYPES.find((t) => t.id === type) ?? PRAYER_TYPES[0];
@@ -561,7 +677,7 @@ export default function PrayerScreen() {
               <View style={s.historySection}>
                 <SectionDivider label="UNREAD" count={unread.length} />
                 {unread.map((e, i) => (
-                  <PrayerCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} />
+                  <PrayerCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} onEdit={handleEditManual} />
                 ))}
               </View>
             )}
@@ -570,7 +686,7 @@ export default function PrayerScreen() {
               <View style={s.historySection}>
                 <SectionDivider label="PRAYER HISTORY" />
                 {read.map((e, i) => (
-                  <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} />
+                  <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} onEdit={handleEditManual} />
                 ))}
                 {hasMore && (
                   <TouchableOpacity
@@ -596,6 +712,134 @@ export default function PrayerScreen() {
             )}
           </>
         )}
+
+        {/* ── MY PRAYER POINTS ── */}
+        <View style={s.manualSection}>
+          {/* Section header */}
+          <LinearGradient
+            colors={[colors.oliveDark, "#5A6B47"] as [string, string]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={s.manualSectionHeader}
+          >
+            <Text style={s.manualSectionLabel}>MY PRAYER POINTS</Text>
+            <TouchableOpacity onPress={() => setShowManualForm((v) => !v)} hitSlop={8} activeOpacity={0.75}>
+              <Ionicons name="add-circle-outline" size={20} color={colors.white} />
+            </TouchableOpacity>
+          </LinearGradient>
+
+          {/* Composer card */}
+          {showManualForm && (
+            <View style={s.manualCard}>
+              <Text style={s.fieldLabel}>TITLE</Text>
+              <TextInput
+                style={s.manualInput}
+                placeholder="Prayer point title…"
+                placeholderTextColor={colors.inkFaint}
+                value={manualTitle}
+                onChangeText={setManualTitle}
+              />
+
+              <Text style={s.fieldLabel}>PRAYER</Text>
+              <TextInput
+                style={[s.manualInput, { minHeight: 80, textAlignVertical: "top" }]}
+                placeholder="Write your prayer…"
+                placeholderTextColor={colors.inkFaint}
+                value={manualText}
+                onChangeText={setManualText}
+                multiline
+              />
+
+              <Text style={s.fieldLabel}>SCRIPTURE REFERENCE</Text>
+              <TextInput
+                style={s.manualInput}
+                placeholder="Scripture reference, e.g. Psalm 23:1 (optional)"
+                placeholderTextColor={colors.inkFaint}
+                value={manualRef}
+                onChangeText={setManualRef}
+              />
+
+              {/* Reminder row */}
+              <View style={s.manualReminderRow}>
+                <Text style={[s.fieldLabel, { marginBottom: 0, flex: 1 }]}>SET DAILY REMINDER</Text>
+                <Switch
+                  value={manualReminder}
+                  onValueChange={setManualReminder}
+                  trackColor={{ false: colors.parchmentDark, true: colors.olive }}
+                  thumbColor={manualReminder ? colors.white : colors.inkFaint}
+                />
+              </View>
+
+              {manualReminder && (
+                <View style={[s.timeRow, { marginTop: spacing.sm, marginBottom: spacing.md }]}>
+                  <TextInput
+                    style={s.timeInput}
+                    value={manualHour}
+                    onChangeText={(v) => setManualHour(v.replace(/\D/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    placeholder="06"
+                    placeholderTextColor={colors.inkFaint}
+                  />
+                  <Text style={s.timeSep}>:</Text>
+                  <TextInput
+                    style={s.timeInput}
+                    value={manualMinute}
+                    onChangeText={(v) => setManualMinute(v.replace(/\D/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    placeholder="00"
+                    placeholderTextColor={colors.inkFaint}
+                  />
+                  <View style={s.amPmRow}>
+                    {(["AM", "PM"] as const).map((p) => (
+                      <Pressable key={p} style={[s.amPmBtn, manualAmPm === p && s.amPmBtnActive]} onPress={() => setManualAmPm(p)}>
+                        <Text style={[s.amPmText, manualAmPm === p && s.amPmTextActive]}>{p}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Action buttons */}
+              <View style={s.manualBtnRow}>
+                <Pressable
+                  style={s.manualCancelBtn}
+                  onPress={() => {
+                    setShowManualForm(false);
+                    setManualTitle("");
+                    setManualText("");
+                    setManualRef("");
+                    setManualHour("06");
+                    setManualMinute("00");
+                    setManualAmPm("AM");
+                    setManualReminder(false);
+                  }}
+                >
+                  <Text style={s.manualCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[s.manualSaveBtn, savingManual && { opacity: 0.7 }]}
+                  onPress={handleSaveManual}
+                  disabled={savingManual}
+                >
+                  {savingManual
+                    ? <ActivityIndicator size="small" color={colors.white} />
+                    : <Text style={s.manualSaveText}>Save Prayer Point</Text>}
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {/* Manual entries list */}
+          {entries.filter((e) => e.source === "manual").length === 0 && !showManualForm && (
+            <View style={s.manualEmpty}>
+              <Text style={s.manualEmptyText}>Tap + to add your own prayer points</Text>
+            </View>
+          )}
+          {entries.filter((e) => e.source === "manual").map((e, i) => (
+            <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} onEdit={handleEditManual} />
+          ))}
+        </View>
       </View>
     </ScrollView>
   );
@@ -754,4 +998,40 @@ const s = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 8 },
   emptyDesc: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22 },
+
+  // Manual prayer points section
+  manualSection: { marginTop: spacing.xl },
+  manualSectionHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2,
+    borderRadius: radii.md, marginBottom: spacing.md,
+  },
+  manualSectionLabel: { ...typography.micro, color: colors.white, letterSpacing: 2 },
+  manualCard: {
+    backgroundColor: colors.white, borderRadius: radii.xl,
+    padding: spacing.lg, ...shadows.card, marginBottom: spacing.md,
+  },
+  manualInput: {
+    borderWidth: 1.5, borderColor: colors.parchmentDark, borderRadius: radii.md,
+    padding: spacing.md, fontSize: 15, color: colors.ink, backgroundColor: colors.parchment,
+    marginBottom: spacing.md, lineHeight: 22,
+  },
+  manualReminderRow: {
+    flexDirection: "row", alignItems: "center",
+    marginBottom: spacing.sm, gap: spacing.sm,
+  },
+  manualBtnRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  manualCancelBtn: {
+    flex: 1, alignItems: "center", paddingVertical: spacing.sm + 2,
+    borderRadius: radii.md, borderWidth: 1.5, borderColor: colors.parchmentDark,
+    backgroundColor: colors.parchment,
+  },
+  manualCancelText: { fontSize: 14, fontWeight: "600", color: colors.inkSoft },
+  manualSaveBtn: {
+    flex: 2, alignItems: "center", paddingVertical: spacing.sm + 2,
+    borderRadius: radii.md, backgroundColor: colors.oliveDark,
+  },
+  manualSaveText: { fontSize: 14, fontWeight: "700", color: colors.white },
+  manualEmpty: { alignItems: "center", paddingVertical: spacing.lg },
+  manualEmptyText: { ...typography.caption, color: colors.inkFaint, fontStyle: "italic" },
 });

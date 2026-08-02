@@ -13,6 +13,7 @@ import {
   Keyboard,
   Alert,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -375,7 +376,10 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
   if (!open) {
     return (
       <Pressable style={styles.newNoteBtn} onPress={() => setOpen(true)}>
-        <Text style={styles.newNoteBtnText}>+ Write a note</Text>
+        <View style={styles.newNoteBtnRow}>
+          <Ionicons name="add-circle-outline" size={16} color={colors.olive} />
+          <Text style={styles.newNoteBtnText}>Write a note</Text>
+        </View>
       </Pressable>
     );
   }
@@ -396,7 +400,7 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
 
       {/* Verse tag */}
       <View style={styles.composerVerseRow}>
-        <Text style={styles.composerVerseIcon}>📖</Text>
+        <Ionicons name="book-outline" size={14} color={colors.olive} style={{ marginRight: spacing.sm }} />
         <TextInput
           style={styles.composerVerseInput}
           placeholder="Tag a verse, e.g. John 3:16 (optional)"
@@ -414,7 +418,7 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
         placeholder={
           recognizing
             ? "Listening… speak your note"
-            : "Write your note, or tap 🎤 to speak"
+            : "Write your note, or tap the mic to speak"
         }
         placeholderTextColor={colors.inkFaint}
         value={noteContent}
@@ -453,7 +457,11 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
           onPress={toggleVoice}
           hitSlop={6}
         >
-          <Text style={styles.composerMicIcon}>{recognizing ? "⏹" : "🎤"}</Text>
+          {recognizing ? (
+            <Ionicons name="stop-circle-outline" size={20} color={colors.danger} />
+          ) : (
+            <Ionicons name="mic-outline" size={20} color={colors.olive} />
+          )}
         </Pressable>
         <Pressable
           style={[
@@ -480,6 +488,15 @@ export default function NotesScreen() {
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewingNote, setViewingNote] = useState<NoteRow | null>(null);
+  const [editingNote, setEditingNote] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  // Reset edit state whenever the viewer modal opens or closes
+  useEffect(() => {
+    setEditingNote(false);
+  }, [viewingNote]);
 
   useFocusEffect(
     useCallback(() => {
@@ -537,10 +554,10 @@ export default function NotesScreen() {
           }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
-              <Text style={styles.emptySymbol}>✦</Text>
+              <Ionicons name="leaf-outline" size={36} color={colors.oliveFaint} style={{ marginBottom: spacing.md }} />
               <Text style={styles.emptyTitle}>No notes yet</Text>
               <Text style={styles.emptyText}>
-                Tap any verse while reading to add a note, write one above, or tap 🎤 to speak your
+                Tap any verse while reading to add a note, write one above, or tap the mic to speak your
                 thoughts.
               </Text>
             </View>
@@ -580,27 +597,116 @@ export default function NotesScreen() {
         <View style={styles.viewerSheet}>
           <View style={styles.viewerHeaderRow}>
             <View style={{ flex: 1 }}>
-              {viewingNote?.title ? (
+              {viewingNote?.title && !editingNote ? (
                 <Text style={styles.viewerTitle}>{viewingNote.title}</Text>
               ) : null}
-              <View style={styles.viewerMeta}>
-                <View style={styles.refBadge}>
-                  <Text style={styles.refText}>
-                    {viewingNote ? getDisplayRef(viewingNote) : ""}
-                  </Text>
+              {!editingNote && (
+                <View style={styles.viewerMeta}>
+                  <View style={styles.refBadge}>
+                    <Text style={styles.refText}>
+                      {viewingNote ? getDisplayRef(viewingNote) : ""}
+                    </Text>
+                  </View>
+                  {viewingNote && (
+                    <Text style={styles.viewerDate}>{formatDate(viewingNote.created_at)}</Text>
+                  )}
                 </View>
-                {viewingNote && (
-                  <Text style={styles.viewerDate}>{formatDate(viewingNote.created_at)}</Text>
-                )}
-              </View>
+              )}
             </View>
+            {!editingNote && (
+              <Pressable
+                onPress={() => {
+                  setEditDraft(viewingNote?.content ?? "");
+                  setEditTitle(viewingNote?.title ?? "");
+                  setEditingNote(true);
+                }}
+                hitSlop={8}
+                style={{ paddingLeft: spacing.sm }}
+              >
+                <Ionicons name="pencil-outline" size={18} color={colors.olive} />
+              </Pressable>
+            )}
           </View>
-          <ScrollView style={{ maxHeight: 400 }}>
-            <Text style={styles.viewerText}>{viewingNote?.content}</Text>
-          </ScrollView>
-          <Pressable style={styles.viewerClose} onPress={() => setViewingNote(null)}>
-            <Text style={styles.viewerCloseText}>Close</Text>
-          </Pressable>
+
+          {editingNote ? (
+            <>
+              <TextInput
+                style={styles.editTitleInput}
+                placeholder="Title (optional)"
+                placeholderTextColor={colors.inkFaint}
+                value={editTitle}
+                onChangeText={setEditTitle}
+                returnKeyType="next"
+              />
+              <TextInput
+                style={styles.editInput}
+                value={editDraft}
+                onChangeText={setEditDraft}
+                multiline
+                textAlignVertical="top"
+                autoFocus
+              />
+              <View style={styles.viewerActionsRow}>
+                <Pressable
+                  style={[styles.viewerClose, styles.viewerCancel]}
+                  onPress={() => {
+                    setEditingNote(false);
+                    Keyboard.dismiss();
+                  }}
+                >
+                  <Text style={[styles.viewerCloseText, { color: colors.inkSoft }]}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.viewerClose, { flex: 1 }, savingNote && { opacity: 0.6 }]}
+                  disabled={savingNote}
+                  onPress={async () => {
+                    if (!viewingNote) return;
+                    setSavingNote(true);
+                    try {
+                      const { error: updateError } = await supabase
+                        .from("notes")
+                        .update({
+                          content: editDraft.trim(),
+                          title: editTitle.trim() || null,
+                        })
+                        .eq("id", viewingNote.id);
+                      if (updateError) throw updateError;
+                      const updatedNote: NoteRow = {
+                        ...viewingNote,
+                        content: editDraft.trim(),
+                        title: editTitle.trim() || null,
+                      };
+                      setNotes((prev) =>
+                        prev.map((n) => (n.id === viewingNote.id ? updatedNote : n))
+                      );
+                      setViewingNote(updatedNote);
+                      setEditingNote(false);
+                      Keyboard.dismiss();
+                    } catch {
+                      Alert.alert("Error", "Couldn't save changes. Please try again.");
+                    } finally {
+                      setSavingNote(false);
+                    }
+                  }}
+                >
+                  {savingNote ? (
+                    <ActivityIndicator color={colors.white} size="small" />
+                  ) : (
+                    <Text style={styles.viewerCloseText}>Save changes</Text>
+                  )}
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              <ScrollView style={{ maxHeight: 400 }}>
+                <Text style={styles.viewerText}>{viewingNote?.content}</Text>
+              </ScrollView>
+              <Pressable style={styles.viewerClose} onPress={() => setViewingNote(null)}>
+                <Text style={styles.viewerCloseText}>Close</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </Modal>
     </View>
@@ -626,7 +732,6 @@ const styles = StyleSheet.create({
 
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
   emptyWrap: { alignItems: "center", padding: spacing.xl },
-  emptySymbol: { fontSize: 36, color: colors.oliveFaint, marginBottom: spacing.md },
   emptyTitle: { ...typography.subtitle, color: colors.oliveDark, marginBottom: spacing.sm },
   emptyText: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22 },
 
@@ -669,6 +774,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     backgroundColor: colors.white,
   },
+  newNoteBtnRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   newNoteBtnText: { color: colors.olive, fontWeight: "700", fontSize: 14 },
 
   composerCard: {
@@ -699,7 +809,6 @@ const styles = StyleSheet.create({
     borderColor: "#C2D4A0",
     paddingHorizontal: spacing.md,
   },
-  composerVerseIcon: { fontSize: 14, marginRight: spacing.sm },
   composerVerseInput: { flex: 1, fontSize: 13, color: colors.ink, paddingVertical: spacing.sm },
   composerInput: {
     ...typography.bodySmall,
@@ -756,7 +865,6 @@ const styles = StyleSheet.create({
     borderColor: colors.parchmentDark,
   },
   composerMicBtnActive: { backgroundColor: "#FDECEA", borderColor: colors.danger },
-  composerMicIcon: { fontSize: 18 },
   composerSaveBtn: {
     flex: 1,
     backgroundColor: colors.olive,
@@ -831,6 +939,18 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     lineHeight: 26,
   },
+  editTitleInput: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.parchment,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+    marginBottom: spacing.sm,
+  },
   editInput: {
     ...typography.body,
     color: colors.ink,
@@ -839,7 +959,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.parchmentDark,
     padding: spacing.md,
-    minHeight: 220,
+    minHeight: 100,
+    textAlignVertical: "top",
     maxHeight: 320,
     marginBottom: spacing.md,
   },

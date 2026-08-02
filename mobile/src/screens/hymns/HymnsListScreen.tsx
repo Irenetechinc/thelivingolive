@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import { searchHymns } from "../../data/hymns";
@@ -60,7 +61,7 @@ export default function HymnsListScreen({ navigation }: Props) {
           >
             <View style={styles.rowLeft}>
               <View style={styles.noteTag}>
-                <Text style={styles.noteTagText}>♩</Text>
+                <Ionicons name="musical-note-outline" size={16} color="#fff" />
               </View>
             </View>
             <View style={styles.rowBody}>
@@ -74,7 +75,7 @@ export default function HymnsListScreen({ navigation }: Props) {
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptySymbol}>♪</Text>
+            <Ionicons name="musical-notes-outline" size={40} color={colors.inkFaint} style={{ marginBottom: spacing.sm }} />
             <Text style={styles.emptyText}>No hymns match "{query}"</Text>
           </View>
         }

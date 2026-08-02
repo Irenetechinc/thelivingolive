@@ -1,0 +1,22 @@
+# Replit / workspace cache — must be excluded so EAS CLI's shallow clone
+# never copies the DotSlash React Native DevTools cache (XDG_CACHE_HOME is
+# set to /home/runner/workspace/.cache by Replit, so it lands here instead
+# of ~/.cache and gets picked up by EAS's git-root clone).
+.cache/
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS
+.DS_Store
+*.pem
+
+# Local env
+.env
+.env*.local

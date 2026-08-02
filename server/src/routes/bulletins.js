@@ -58,7 +58,8 @@ router.get('/churches', async (req, res) => {
   const { data: published } = await supabase
     .from('bulletins')
     .select('church_id')
-    .eq('is_published', true);
+    // Treat NULL is_published as published (opt-out model) — same as today/archive endpoints.
+    .or('is_published.is.null,is_published.eq.true');
 
   const activeIds = new Set((published ?? []).map((r) => r.church_id));
   const churches = (data ?? []).filter((c) => activeIds.has(c.id));
@@ -126,7 +127,10 @@ router.get('/:churchId/today', async (req, res) => {
     .from('bulletins')
     .select('id, title, content_preview, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, featured_image_url')
     .eq('church_id', churchId)
-    .eq('is_published', true)
+    // Treat NULL is_published as published (opt-out model). Admins who upload
+    // via the Supabase dashboard may leave the flag unset; we show those bulletins
+    // unless is_published is explicitly FALSE.
+    .or('is_published.is.null,is_published.eq.true')
     // Include bulletins where publish_at is NULL (published without a scheduled time)
     // OR where publish_at is in the past/now. NULL never satisfies lte(), so we must
     // explicitly allow it — otherwise bulletins published via the Supabase dashboard
@@ -172,7 +176,8 @@ router.get('/:churchId/archive', async (req, res) => {
     .from('bulletins')
     .select('id, title, content_preview, frequency, publish_at, is_paid, price_ngn, is_published, featured_image_url', { count: 'exact' })
     .eq('church_id', churchId)
-    .eq('is_published', true)
+    // Treat NULL is_published as published (opt-out model) — same as today endpoint.
+    .or('is_published.is.null,is_published.eq.true')
     // Primary: newest publish_at first (NULLs sort first in DESC — still visible).
     // Secondary: created_at so bulletins with NULL publish_at have a stable order.
     .order('publish_at', { ascending: false, nullsFirst: true })

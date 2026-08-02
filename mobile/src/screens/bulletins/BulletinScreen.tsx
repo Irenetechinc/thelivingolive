@@ -1311,6 +1311,22 @@ const styles = StyleSheet.create({
   },
   archiveThumb: { width: "100%", height: 130 },
   archiveDivider: { height: 1, backgroundColor: colors.parchmentDark, marginHorizontal: spacing.md },
+  // Featured image behind today's bulletin card (absolute behind the gradient)
+  todayHeroImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%" },
+  // Date chip overlaid on archive image thumbnails
+  archiveDateChip: {
+    position: "absolute", bottom: spacing.sm, left: spacing.sm,
+    backgroundColor: "rgba(0,0,0,0.55)", borderRadius: radii.pill,
+    paddingVertical: 3, paddingHorizontal: spacing.sm,
+  },
+  archiveDateChipText: { fontSize: 11, fontWeight: "600", color: "#fff" },
+  // Compact gradient colour bar shown when archive bulletin has no featured image
+  archiveColorBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+  },
+  archiveColorBarFreq: { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.7)", letterSpacing: 1 },
+  archiveColorBarDate: { fontSize: 11, color: "rgba(255,255,255,0.55)" },
   archiveCard: {
     flexDirection: "row", alignItems: "center", padding: spacing.md, overflow: "hidden",
   },

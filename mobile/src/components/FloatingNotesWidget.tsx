@@ -14,6 +14,11 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from "expo-speech-recognition";
 import { supabase } from "../lib/supabase";
 import { colors, radii, spacing, typography, shadows } from "../theme/theme";
 
@@ -56,6 +61,14 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Voice input state
+  const [recognizing, setRecognizing] = useState(false);
+  const [interimText, setInterimText] = useState("");
+
+  // Edit state
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
   // Bubble is draggable when collapsed. When expanded the panel snaps to the
   // right edge of the screen so all note content is visible.
   const pos = useRef(
@@ -65,6 +78,37 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
   const [, forceSize] = useState(0);
   const dragStart = useRef({ x: 0, y: 0 });
   const dragged = useRef(false);
+
+  // Voice recognition event handlers (registered at component top level)
+  useSpeechRecognitionEvent("start", () => setRecognizing(true));
+  useSpeechRecognitionEvent("end", () => {
+    setRecognizing(false);
+    setInterimText("");
+  });
+  useSpeechRecognitionEvent("result", (event) => {
+    if (event.isFinal) {
+      setDraft((prev) =>
+        prev + (prev.length && !prev.endsWith(" ") ? " " : "") + event.results[0].transcript
+      );
+      setInterimText("");
+    } else {
+      setInterimText(event.results[0]?.transcript ?? "");
+    }
+  });
+  useSpeechRecognitionEvent("error", () => {
+    setRecognizing(false);
+    setInterimText("");
+  });
+
+  async function toggleVoice() {
+    if (recognizing) {
+      ExpoSpeechRecognitionModule.stop();
+    } else {
+      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!granted) return;
+      ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true });
+    }
+  }
 
   // Restore the last-created note immediately (fast, offline-friendly cache)
   // so the bubble reflects it even before the network fetch below resolves.
@@ -152,6 +196,10 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
 
   async function handleAddNote() {
     if (!draft.trim()) return;
+    // Stop any active recognition before saving
+    if (recognizing) {
+      ExpoSpeechRecognitionModule.stop();
+    }
     setSaving(true);
     try {
       const { data } = await supabase.auth.getUser();
@@ -179,6 +227,24 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
       // Swallow — widget stays open, user can retry
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveEdit(noteId: string) {
+    if (!editDraft.trim()) return;
+    try {
+      const { error } = await supabase
+        .from("notes")
+        .update({ content: editDraft.trim() })
+        .eq("id", noteId);
+      if (error) throw error;
+      setNotes((prev) =>
+        prev.map((n) => (n.id === noteId ? { ...n, content: editDraft.trim() } : n))
+      );
+      setEditingNoteId(null);
+      setEditDraft("");
+    } catch {
+      // Swallow — user can retry
     }
   }
 
@@ -210,7 +276,7 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
               Notes — {bookName} {chapter}
             </Text>
             <Pressable onPress={() => setExpanded(false)} hitSlop={8}>
-              <Text style={styles.closeBtn}>✕</Text>
+              <Ionicons name="close-outline" size={18} color="rgba(255,255,255,0.7)" />
             </Pressable>
           </View>
 
@@ -224,6 +290,17 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
               multiline
             />
             <Pressable
+              style={styles.micBtn}
+              onPress={toggleVoice}
+              hitSlop={6}
+            >
+              <Ionicons
+                name={recognizing ? "stop-circle-outline" : "mic-outline"}
+                size={22}
+                color={recognizing ? "#e53e3e" : colors.olive}
+              />
+            </Pressable>
+            <Pressable
               style={[styles.addBtn, (!draft.trim() || saving) && { opacity: 0.5 }]}
               onPress={handleAddNote}
               disabled={!draft.trim() || saving}
@@ -231,6 +308,9 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
               {saving ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.addBtnText}>Save</Text>}
             </Pressable>
           </View>
+          {interimText.length > 0 && (
+            <Text style={styles.interimText}>{interimText}</Text>
+          )}
 
           {loading ? (
             <ActivityIndicator color={colors.olive} style={{ marginTop: spacing.md }} />
@@ -241,11 +321,54 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
               ) : (
                 notes.map((n) => (
                   <View key={n.id} style={styles.noteCard}>
-                    <Text style={styles.noteRef}>
-                      {n.verse ? `verse ${n.verse}` : "chapter note"} ·{" "}
-                      {new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                    </Text>
-                    <Text style={styles.noteContent}>{n.content}</Text>
+                    <View style={styles.noteCardHeader}>
+                      <Text style={styles.noteRef}>
+                        {n.verse ? `verse ${n.verse}` : "chapter note"} ·{" "}
+                        {new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </Text>
+                      {editingNoteId !== n.id && (
+                        <Pressable
+                          hitSlop={6}
+                          onPress={() => {
+                            setEditingNoteId(n.id);
+                            setEditDraft(n.content);
+                          }}
+                        >
+                          <Ionicons name="pencil-outline" size={13} color={colors.inkFaint} />
+                        </Pressable>
+                      )}
+                    </View>
+                    {editingNoteId === n.id ? (
+                      <View>
+                        <TextInput
+                          style={styles.editInput}
+                          value={editDraft}
+                          onChangeText={setEditDraft}
+                          multiline
+                          autoFocus
+                        />
+                        <View style={styles.editActions}>
+                          <Pressable
+                            style={styles.editCancelBtn}
+                            onPress={() => {
+                              setEditingNoteId(null);
+                              setEditDraft("");
+                            }}
+                          >
+                            <Text style={styles.editCancelText}>Cancel</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.editSaveBtn, !editDraft.trim() && { opacity: 0.5 }]}
+                            onPress={() => handleSaveEdit(n.id)}
+                            disabled={!editDraft.trim()}
+                          >
+                            <Text style={styles.editSaveText}>Save</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <Text style={styles.noteContent}>{n.content}</Text>
+                    )}
                   </View>
                 ))
               )}
@@ -259,7 +382,7 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
         </View>
       ) : (
         <View {...bubblePanResponder.panHandlers} style={styles.bubble}>
-          <Text style={styles.bubbleIcon}>✎</Text>
+          <Ionicons name="create-outline" size={22} color={colors.parchment} />
           {lastNote ? <View style={styles.bubbleDot} /> : null}
         </View>
       )}
@@ -283,7 +406,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...shadows.cardLg,
   },
-  bubbleIcon: { fontSize: 22, color: colors.parchment },
   bubbleDot: {
     position: "absolute",
     top: 4,
@@ -312,7 +434,6 @@ const styles = StyleSheet.create({
   dragDots: { flexDirection: "row", gap: 3 },
   dragDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.4)" },
   panelTitle: { ...typography.caption, color: colors.parchment, flex: 1, fontWeight: "700" },
-  closeBtn: { color: "rgba(255,255,255,0.7)", fontSize: 15, paddingHorizontal: 4 },
   composerRow: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -331,6 +452,12 @@ const styles = StyleSheet.create({
     color: colors.ink,
     maxHeight: 60,
   },
+  micBtn: {
+    paddingBottom: 6,
+    paddingHorizontal: 2,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   addBtn: {
     backgroundColor: colors.olive,
     borderRadius: radii.sm,
@@ -338,6 +465,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   addBtnText: { color: colors.white, fontSize: 12, fontWeight: "700" },
+  interimText: {
+    fontSize: 11,
+    color: colors.inkFaint,
+    fontStyle: "italic",
+    paddingHorizontal: spacing.sm,
+    paddingBottom: 4,
+  },
   list: { flex: 1, padding: spacing.sm },
   emptyText: { ...typography.caption, color: colors.inkFaint, padding: spacing.sm },
   noteCard: {
@@ -346,8 +480,47 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     marginBottom: spacing.sm,
   },
-  noteRef: { ...typography.micro, color: colors.oliveDark, marginBottom: 3, letterSpacing: 0.4 },
+  noteCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 3,
+  },
+  noteRef: { ...typography.micro, color: colors.oliveDark, letterSpacing: 0.4 },
   noteContent: { ...typography.bodySmall, fontSize: 13, color: colors.ink, lineHeight: 19 },
+  editInput: {
+    backgroundColor: colors.white,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    fontSize: 13,
+    color: colors.ink,
+    lineHeight: 19,
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+    marginBottom: 6,
+  },
+  editActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "flex-end",
+  },
+  editCancelBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.inkFaint,
+  },
+  editCancelText: { fontSize: 11, color: colors.inkFaint },
+  editSaveBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: radii.sm,
+    backgroundColor: colors.olive,
+  },
+  editSaveText: { fontSize: 11, color: colors.white, fontWeight: "700" },
   resizeHandle: {
     position: "absolute",
     right: 0,

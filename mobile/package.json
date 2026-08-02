@@ -49,14 +49,14 @@
     "postinstall": "node scripts/stub-devtools-shell.js && node scripts/fix-lockfile-urls.js && node ../scripts/install-hooks.cjs",
     "fix-lockfile": "node scripts/fix-lockfile-urls.js",
     "check-lockfiles": "node ../scripts/check-lockfiles.cjs",
-    "prebuild:preview": "node scripts/stub-devtools-shell.js; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
-    "build:preview": "NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile preview --non-interactive",
-    "prebuild:dev": "node scripts/stub-devtools-shell.js; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
-    "build:dev": "NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile development --non-interactive",
-    "prebuild:prod": "node scripts/stub-devtools-shell.js; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
-    "build:prod": "NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile production --non-interactive",
-    "prebuild:ios": "node scripts/stub-devtools-shell.js; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs .cache",
-    "build:ios": "NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform ios --profile production --non-interactive"
+    "prebuild:preview": "node scripts/stub-devtools-shell.js; export XDG_CACHE_HOME=/tmp/xdg-cache; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs; chmod -R 777 /home/runner/workspace/.cache/dotslash 2>/dev/null; rm -rf /home/runner/workspace/.cache/dotslash",
+    "build:preview": "export XDG_CACHE_HOME=/tmp/xdg-cache && NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile preview --non-interactive",
+    "prebuild:dev": "node scripts/stub-devtools-shell.js; export XDG_CACHE_HOME=/tmp/xdg-cache; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs; chmod -R 777 /home/runner/workspace/.cache/dotslash 2>/dev/null; rm -rf /home/runner/workspace/.cache/dotslash",
+    "build:dev": "export XDG_CACHE_HOME=/tmp/xdg-cache && NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile development --non-interactive",
+    "prebuild:prod": "node scripts/stub-devtools-shell.js; export XDG_CACHE_HOME=/tmp/xdg-cache; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs; chmod -R 777 /home/runner/workspace/.cache/dotslash 2>/dev/null; rm -rf /home/runner/workspace/.cache/dotslash",
+    "build:prod": "export XDG_CACHE_HOME=/tmp/xdg-cache && NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform android --profile production --non-interactive",
+    "prebuild:ios": "node scripts/stub-devtools-shell.js; export XDG_CACHE_HOME=/tmp/xdg-cache; chmod -R 777 /tmp/runner/eas-cli-nodejs 2>/dev/null; rm -rf /tmp/runner/eas-cli-nodejs; chmod -R 777 /home/runner/workspace/.cache/dotslash 2>/dev/null; rm -rf /home/runner/workspace/.cache/dotslash",
+    "build:ios": "export XDG_CACHE_HOME=/tmp/xdg-cache && NODE_OPTIONS=\"--require $PWD/scripts/patch-fs-permissions.cjs\" eas build --platform ios --profile production --non-interactive"
   },
   "private": true,
   "overrides": {

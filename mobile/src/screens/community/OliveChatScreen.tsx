@@ -1395,6 +1395,32 @@ export default function OliveChatScreen() {
               key="feed-real"
               data={posts}
               keyExtractor={p => p.id}
+              ListHeaderComponent={
+                <Pressable
+                  style={comp.composerRow}
+                  onPress={() => setShowCreate(true)}
+                  android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+                >
+                  {/* User avatar */}
+                  <Avatar
+                    url={profile?.avatarUrl ?? null}
+                    name={profile?.displayName ?? profile?.email ?? '?'}
+                    size={38}
+                  />
+                  {/* Placeholder text — tapping anywhere opens CreatePostModal */}
+                  <View style={comp.composerInputFake}>
+                    <Text style={comp.composerPlaceholder}>Share what's on your heart…</Text>
+                  </View>
+                  {/* Camera/image picker shortcut */}
+                  <Pressable
+                    style={comp.composerCameraBtn}
+                    onPress={() => setShowCreate(true)}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="image-outline" size={22} color={colors.olive} />
+                  </Pressable>
+                </Pressable>
+              }
               renderItem={({ item, index }) => {
                 const isNearVisible = [...visibleIndicesSnap].some(vi => Math.abs(vi - index) <= 2);
                 return (
@@ -1635,6 +1661,26 @@ const mr = StyleSheet.create({
     backgroundColor: colors.parchment, borderWidth: 1, borderColor: '#F0C0C0',
     alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 0,
+  },
+});
+
+// ── Post composer row (feed header) ──────────────────────────────────────────
+const comp = StyleSheet.create({
+  composerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.white, marginHorizontal: spacing.md, marginTop: spacing.md,
+    marginBottom: spacing.sm, borderRadius: radii.xl, paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm, ...shadows.subtle,
+    borderWidth: 1, borderColor: colors.parchmentDark,
+  },
+  composerInputFake: {
+    flex: 1, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm,
+    backgroundColor: colors.parchment, borderRadius: radii.pill,
+  },
+  composerPlaceholder: { fontSize: 14, color: colors.inkFaint, fontStyle: 'italic' },
+  composerCameraBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: '#EDF7E8', alignItems: 'center', justifyContent: 'center',
   },
 });
 
