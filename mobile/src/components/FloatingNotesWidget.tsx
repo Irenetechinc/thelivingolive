@@ -69,6 +69,10 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
 
+  // Formatting toolbar — track cursor/selection so we can insert markers precisely
+  const draftInputRef = useRef<TextInput>(null);
+  const [draftSelection, setDraftSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+
   // Bubble is draggable when collapsed. When expanded the panel snaps to the
   // right edge of the screen so all note content is visible.
   const pos = useRef(
@@ -194,6 +198,29 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
     })
   ).current;
 
+  /** Insert inline format markers (**bold**, *italic*) around any selection, or around the word "text" at cursor. */
+  function insertInlineFormat(marker: string) {
+    const s = draftSelection.start;
+    const e = draftSelection.end;
+    const selected = draft.slice(s, e);
+    const wrapped = marker + (selected || "text") + marker;
+    const next = draft.slice(0, s) + wrapped + draft.slice(e);
+    setDraft(next);
+    // Move cursor to inside the closing marker after a short tick
+    const cursorPos = s + marker.length + (selected || "text").length + marker.length;
+    setTimeout(() => {
+      draftInputRef.current?.setNativeProps({ selection: { start: cursorPos, end: cursorPos } });
+    }, 50);
+  }
+
+  /** Insert a line prefix (# heading, • bullet) at the start of the current line. */
+  function insertLineFormat(prefix: string) {
+    // Find start of current line
+    const lineStart = draft.lastIndexOf("\n", draftSelection.start - 1) + 1;
+    const next = draft.slice(0, lineStart) + prefix + draft.slice(lineStart);
+    setDraft(next);
+  }
+
   async function handleAddNote() {
     if (!draft.trim()) return;
     // Stop any active recognition before saving
@@ -280,15 +307,19 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
             </Pressable>
           </View>
 
-          <View style={styles.composerRow}>
-            <TextInput
-              style={styles.composerInput}
-              placeholder="Jot a thought about this chapter…"
-              placeholderTextColor={colors.inkFaint}
-              value={draft}
-              onChangeText={setDraft}
-              multiline
-            />
+          {/* Formatting toolbar */}
+          <View style={styles.formatBar}>
+            {[
+              { icon: "bold" as const,   label: "B",  action: () => insertInlineFormat("**") },
+              { icon: "italic" as const, label: "I",  action: () => insertInlineFormat("*") },
+              { icon: "hash" as const,   label: "#",  action: () => insertLineFormat("# ") },
+              { icon: "list" as const,   label: "•",  action: () => insertLineFormat("• ") },
+            ].map((btn) => (
+              <Pressable key={btn.label} style={styles.formatBtn} onPress={btn.action} hitSlop={4}>
+                <Text style={styles.formatBtnText}>{btn.label}</Text>
+              </Pressable>
+            ))}
+            <View style={{ flex: 1 }} />
             <Pressable
               style={styles.micBtn}
               onPress={toggleVoice}
@@ -296,10 +327,23 @@ export default function FloatingNotesWidget({ bookId, bookName, chapter, version
             >
               <Ionicons
                 name={recognizing ? "stop-circle-outline" : "mic-outline"}
-                size={22}
-                color={recognizing ? "#e53e3e" : colors.olive}
+                size={18}
+                color={recognizing ? "#e53e3e" : "rgba(255,255,255,0.7)"}
               />
             </Pressable>
+          </View>
+
+          <View style={styles.composerRow}>
+            <TextInput
+              ref={draftInputRef}
+              style={styles.composerInput}
+              placeholder="Jot a thought about this chapter…"
+              placeholderTextColor={colors.inkFaint}
+              value={draft}
+              onChangeText={setDraft}
+              onSelectionChange={(e) => setDraftSelection(e.nativeEvent.selection)}
+              multiline
+            />
             <Pressable
               style={[styles.addBtn, (!draft.trim() || saving) && { opacity: 0.5 }]}
               onPress={handleAddNote}
@@ -434,6 +478,28 @@ const styles = StyleSheet.create({
   dragDots: { flexDirection: "row", gap: 3 },
   dragDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.4)" },
   panelTitle: { ...typography.caption, color: colors.parchment, flex: 1, fontWeight: "700" },
+  formatBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.oliveDark,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    gap: 2,
+  },
+  formatBtn: {
+    width: 28,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 4,
+  },
+  formatBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.7)",
+  },
   composerRow: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -453,7 +519,7 @@ const styles = StyleSheet.create({
     maxHeight: 60,
   },
   micBtn: {
-    paddingBottom: 6,
+    paddingBottom: 4,
     paddingHorizontal: 2,
     justifyContent: "center",
     alignItems: "center",

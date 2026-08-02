@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Switch, LayoutChangeEvent } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -178,13 +179,25 @@ export default function HymnDetailScreen({ route }: Props) {
               style={({ pressed }) => [styles.controlBtn, pressed && { opacity: 0.8 }]}
               onPress={handlePlayPause}
             >
-              <Text style={styles.controlBtnText}>{playing ? "⏸ Pause" : "▶ Play"}</Text>
+              <Ionicons
+                name={playing ? "pause" : "play"}
+                size={14}
+                color={colors.white}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={styles.controlBtnText}>{playing ? "Pause" : "Play"}</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.controlBtn, styles.controlBtnGhost, pressed && { opacity: 0.8 }]}
               onPress={handleRestart}
             >
-              <Text style={[styles.controlBtnText, styles.controlBtnGhostText]}>↺ Restart</Text>
+              <Ionicons
+                name="refresh-outline"
+                size={14}
+                color={colors.oliveDark}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.controlBtnText, styles.controlBtnGhostText]}>Restart</Text>
             </Pressable>
           </View>
         )}
@@ -325,7 +338,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.olive,
     borderRadius: radii.md,
     paddingVertical: spacing.sm,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
   },
   controlBtnGhost: {
     backgroundColor: colors.parchment,

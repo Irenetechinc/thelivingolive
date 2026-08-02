@@ -161,6 +161,53 @@ export async function cancelReminder(identifier: string) {
   await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
 }
 
+/**
+ * Schedule a one-time "snooze" alarm notification N minutes from now.
+ * Used by NotificationAlarmScreen's Snooze button to reschedule 5 min later.
+ */
+export async function scheduleSnoozeAlarm(params: {
+  snoozeMinutes?: number;
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+}) {
+  const granted = await ensureNotificationPermission();
+  if (!granted) return;
+
+  const snoozeMs = (params.snoozeMinutes ?? 5) * 60 * 1000;
+  const fireAt = new Date(Date.now() + snoozeMs);
+
+  // Android: ensure an alarm-priority channel exists
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("olive-alarm", {
+      name: "Alarm",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 500, 200, 500],
+      lightColor: "#C9A227",
+      bypassDnd: true,
+      sound: "default",
+    });
+  }
+
+  const identifier = `snooze-${Date.now()}`;
+  await Notifications.scheduleNotificationAsync({
+    identifier,
+    content: {
+      title: params.title,
+      body: params.body,
+      sound: true,
+      data: params.data ?? {},
+      ...(Platform.OS === "android" ? { channelId: "olive-alarm" } : {}),
+      ...(Platform.OS === "ios" ? ({ "critical": true } as any) : {}),
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: fireAt,
+    },
+  });
+  return identifier;
+}
+
 export const isPhysicalDeviceHint =
   Platform.OS === "ios" || Platform.OS === "android"
     ? "Push scheduling requires a physical device — notifications are unreliable in simulators."

@@ -358,7 +358,7 @@ export default function DevotionsScreen() {
           scripture_text: result.scriptureText,
           body: result.body,
           closing_prayer: result.closingPrayer,
-          is_read: false,          // starts unread — user must mark read
+          is_read: true,            // user is on screen viewing this immediately
         })
         .select().single();
       if (entryErr) throw entryErr;

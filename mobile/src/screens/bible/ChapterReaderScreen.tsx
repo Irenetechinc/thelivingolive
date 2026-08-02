@@ -13,6 +13,7 @@ import {
   Platform,
   Animated,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../navigation/AppNavigator";
 import type { BibleVersion } from "./BibleHomeScreen";
@@ -594,17 +595,26 @@ export default function ChapterReaderScreen({ route }: Props) {
                 {verses[selectedVerse - 1]}
               </Text>
               <Pressable style={styles.sheetAction} onPress={toggleHighlight}>
+                <Ionicons
+                  name={highlighted[selectedVerse] ? "close-circle-outline" : "color-fill-outline"}
+                  size={18}
+                  color={highlighted[selectedVerse] ? colors.terracotta : colors.gold}
+                  style={styles.sheetActionIcon}
+                />
                 <Text style={styles.sheetActionText}>
                   {highlighted[selectedVerse] ? "Remove highlight" : "Highlight verse"}
                 </Text>
               </Pressable>
               <Pressable style={styles.sheetAction} onPress={() => setModalMode("note")}>
+                <Ionicons name="create-outline" size={18} color={colors.olive} style={styles.sheetActionIcon} />
                 <Text style={styles.sheetActionText}>Add a note</Text>
               </Pressable>
               <Pressable style={styles.sheetAction} onPress={runExplain}>
-                <Text style={styles.sheetActionText}>Explain this verse ✨</Text>
+                <Ionicons name="bulb-outline" size={18} color={colors.gold} style={styles.sheetActionIcon} />
+                <Text style={styles.sheetActionText}>Explain this verse</Text>
               </Pressable>
               <Pressable style={styles.sheetAction} onPress={() => setModalMode(null)}>
+                <Ionicons name="close-outline" size={18} color={colors.inkFaint} style={styles.sheetActionIcon} />
                 <Text style={[styles.sheetActionText, { color: colors.inkSoft }]}>Cancel</Text>
               </Pressable>
             </>
@@ -1029,11 +1039,14 @@ const styles = StyleSheet.create({
   sheetTitle: { ...typography.title, color: colors.oliveDark, marginBottom: spacing.md, fontSize: 18 },
   sheetSubtitle: { ...typography.body, color: colors.inkSoft, marginBottom: spacing.md, fontSize: 14 },
   sheetAction: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.parchmentDark,
   },
-  sheetActionText: { ...typography.body, color: colors.ink },
+  sheetActionIcon: { marginRight: spacing.sm },
+  sheetActionText: { ...typography.body, color: colors.ink, flex: 1 },
   noteInput: {
     borderWidth: 1,
     borderColor: colors.parchmentDark,

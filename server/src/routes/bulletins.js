@@ -119,7 +119,9 @@ router.get('/:churchId/today', async (req, res) => {
 
   // Verify church exists
   const { data: church } = await supabase.from('churches').select('id, name, active').eq('id', churchId).maybeSingle();
-  if (!church || !church.active) return res.status(404).json({ error: 'Church not found' });
+  // Treat NULL active as active (opt-out model — admins who create a church
+  // via the dashboard may not explicitly set active: true).
+  if (!church || church.active === false) return res.status(404).json({ error: 'Church not found' });
 
   const todayStr = today();
   const nowIso = new Date().toISOString();

@@ -375,7 +375,8 @@ export default function PrayerScreen() {
         plan_id: plan.id, user_id: user!.id,
         title: p.title, prayer_text: p.prayerText,
         scripture_reference: p.scriptureReference,
-        is_read: false,
+        // Mark read immediately — the user is on this screen viewing them.
+        is_read: true,
       }));
       const { data: inserted, error: insertErr } = await supabase.from("prayer_entries").insert(rows).select();
       if (insertErr) throw insertErr;

@@ -20,11 +20,14 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  Alert,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { supabase } from "../lib/supabase";
+import { scheduleSnoozeAlarm } from "../lib/notifications";
 import { colors, radii, spacing, typography, shadows } from "../theme/theme";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 
@@ -182,11 +185,34 @@ export default function NotificationAlarmScreen() {
   const route = useRoute<AlarmRoute>();
   const { type, entryId, goal, desires, prayerType, previewText } = route.params;
 
+  const [snoozing, setSnoozing] = useState(false);
+
   function dismiss() {
     if (type === "devotion") {
       navigation.replace("Devotions");
     } else {
       navigation.replace("Prayer");
+    }
+  }
+
+  async function handleSnooze() {
+    setSnoozing(true);
+    try {
+      await scheduleSnoozeAlarm({
+        snoozeMinutes: 5,
+        title: isPrayer ? "🙏 Snoozed Prayer Reminder" : "🌿 Snoozed Devotion Reminder",
+        body: isPrayer
+          ? "Your prayer points are still waiting — time to pray!"
+          : `Your devotion on "${goal ?? "your goal"}" is waiting`,
+        data: { type, entryId: entryId ?? "", prayerType: prayerType ?? "", goal: goal ?? "" },
+      });
+      Alert.alert("Snoozed", "We'll remind you again in 5 minutes.", [
+        { text: "OK", onPress: () => navigation.goBack() },
+      ]);
+    } catch {
+      Alert.alert("Couldn't snooze", "Please try again.");
+    } finally {
+      setSnoozing(false);
     }
   }
 
@@ -235,6 +261,23 @@ export default function NotificationAlarmScreen() {
               <Text style={styles.ctaBtnText}>{ctaText}</Text>
             </LinearGradient>
           </Pressable>
+
+          {/* Snooze — reschedule a one-time alarm 5 min from now */}
+          <Pressable
+            style={({ pressed }) => [styles.snoozeBtn, pressed && { opacity: 0.75 }, snoozing && { opacity: 0.5 }]}
+            onPress={handleSnooze}
+            disabled={snoozing}
+          >
+            {snoozing ? (
+              <ActivityIndicator color={colors.inkSoft} size="small" />
+            ) : (
+              <>
+                <Ionicons name="alarm-outline" size={16} color={colors.inkSoft} />
+                <Text style={styles.snoozeBtnText}>Snooze 5 min</Text>
+              </>
+            )}
+          </Pressable>
+
           <Text style={styles.ctaHint}>Tap to go to {isPrayer ? "Prayer" : "Devotions"} screen</Text>
         </View>
       </ScrollView>
@@ -344,6 +387,19 @@ const styles = StyleSheet.create({
   emptyText: { ...typography.bodySmall, color: colors.inkFaint, textAlign: "center", padding: spacing.xl },
   ctaSection: { marginTop: spacing.lg, alignItems: "center" },
   ctaBtn: { width: "100%", borderRadius: radii.md, overflow: "hidden", ...shadows.card },
+  snoozeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
+    backgroundColor: colors.white,
+  },
+  snoozeBtnText: { ...typography.bodySmall, color: colors.inkSoft, fontWeight: "600" },
   ctaBtnGrad: {
     paddingVertical: spacing.md + 2,
     alignItems: "center",
