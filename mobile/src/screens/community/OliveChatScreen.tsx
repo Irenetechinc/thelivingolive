@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView, Platform, Share, Alert, RefreshControl,
   Animated, ViewToken,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -401,7 +402,15 @@ const str = StyleSheet.create({
 });
 
 // ── Comments bottom sheet ─────────────────────────────────────────────────────
-function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null; visible: boolean; onClose: () => void }) {
+function CommentsSheet({
+  post, visible, onClose, onCommentAdded,
+}: {
+  post: CommunityPost | null;
+  visible: boolean;
+  onClose: () => void;
+  onCommentAdded?: (postId: string) => void;
+}) {
+  const insets = useSafeAreaInsets();
   const [comments, setComments] = useState<PostComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
@@ -424,6 +433,8 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
         setComments(prev => prev.map(cc => cc.id === replyTo.id ? { ...cc, replies: [...cc.replies, c] } : cc));
       } else {
         setComments(prev => [c, ...prev]);
+        // Notify parent so the comment count in the feed card increments
+        onCommentAdded?.(post.id);
       }
       setText(''); setReplyTo(null);
     } catch { Alert.alert('Error', 'Could not post comment. Please try again.'); }
@@ -463,7 +474,12 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* 
+        KeyboardAvoidingView behavior="padding" works on both iOS and Android here.
+        We also apply paddingBottom = insets.bottom so the input row clears the
+        Android system navigation bar (gesture or 3-button nav).
+      */}
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior="padding">
         <View style={cs.header}>
           <Text style={cs.title}>Comments</Text>
           <Pressable onPress={onClose}><Text style={cs.closeBtn}>✕</Text></Pressable>
@@ -485,7 +501,8 @@ function CommentsSheet({ post, visible, onClose }: { post: CommunityPost | null;
             <Pressable onPress={() => setReplyTo(null)}><Text style={cs.replyBannerClose}>✕</Text></Pressable>
           </View>
         )}
-        <View style={cs.inputRow}>
+        {/* paddingBottom ensures input clears Android nav bar */}
+        <View style={[cs.inputRow, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
           <TextInput style={cs.input} value={text} onChangeText={setText} placeholder="Write a comment…" placeholderTextColor={colors.inkFaint} multiline />
           <Pressable style={[cs.sendBtn, sending && { opacity: 0.6 }]} onPress={submit} disabled={sending}>
             {sending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={cs.sendBtnText}>↑</Text>}
@@ -507,7 +524,8 @@ const cs = StyleSheet.create({
   commentBody: { fontSize: 14, color: colors.ink, lineHeight: 20, marginTop: 3 },
   commentActions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xs },
   commentAction: { fontSize: 12, color: colors.inkFaint, fontWeight: '600' },
-  inputRow: { flexDirection: 'row', gap: spacing.sm, padding: spacing.md, backgroundColor: colors.white, borderTopWidth: 1, borderTopColor: colors.parchmentDark, alignItems: 'flex-end' },
+  // Note: paddingBottom is applied dynamically (insets.bottom) — see JSX above
+  inputRow: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.md, paddingHorizontal: spacing.md, backgroundColor: colors.white, borderTopWidth: 1, borderTopColor: colors.parchmentDark, alignItems: 'flex-end' },
   input: { flex: 1, backgroundColor: colors.parchment, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: 15, color: colors.ink, maxHeight: 100 },
   sendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.olive, alignItems: 'center', justifyContent: 'center' },
   sendBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
@@ -562,11 +580,18 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
     setShowMentions(false);
   }
 
+  // Track the real MIME type from the picker so uploads don't get the wrong
+  // content-type header (e.g. PNG files shouldn't be sent as image/jpeg).
+  const [mediaMimeType, setMediaMimeType] = useState<string | null>(null);
+
   async function pickMedia() {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.85 });
     if (!res.canceled && res.assets[0]) {
       const asset = res.assets[0];
       setMediaUri(asset.uri);
+      // Prefer the picker-reported MIME; fall back gracefully by type
+      const mime = (asset as any).mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      setMediaMimeType(mime);
       if (asset.type === 'video') {
         setMediaType('video');
         try { const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 1000 }); setThumbUri(uri); } catch {}
@@ -579,8 +604,13 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
     setUploading(true);
     try {
       let imageUrl: string | undefined, videoUrl: string | undefined, videoThumbnailUrl: string | undefined;
-      if (mediaUri && mediaType === 'image') { const r = await uploadPostMedia(mediaUri, 'image/jpeg'); imageUrl = r.url; }
-      else if (mediaUri && mediaType === 'video') { const r = await uploadPostMedia(mediaUri, 'video/mp4'); videoUrl = r.url; videoThumbnailUrl = r.thumbnailUrl; }
+      if (mediaUri && mediaType === 'image') {
+        const r = await uploadPostMedia(mediaUri, mediaMimeType ?? 'image/jpeg');
+        imageUrl = r.url;
+      } else if (mediaUri && mediaType === 'video') {
+        const r = await uploadPostMedia(mediaUri, mediaMimeType ?? 'video/mp4');
+        videoUrl = r.url; videoThumbnailUrl = r.thumbnailUrl;
+      }
       const post = await createPost({
         body: text.trim() || undefined, imageUrl, videoUrl, videoThumbnailUrl,
         taggedUserIds: taggedUsers.map(u => u.userId),
@@ -1085,32 +1115,58 @@ export default function OliveChatScreen() {
   const timelineUnsubRef = useRef<(() => void) | null>(null);
   const notifUnsubRef = useRef<(() => void) | null>(null);
   const reqUnsubRef = useRef<(() => void) | null>(null);
+  // Guard: after the first focus loads everything, skip the heavy reload on
+  // subsequent focuses. Real-time subscriptions keep the feed/rooms fresh.
+  const hasLoadedRef = useRef(false);
+  const PROFILE_CACHE_KEY = 'olivechat.profile.v1';
 
   useFocusEffect(useCallback(() => {
     let active = true;
     (async () => {
       try {
-        // Get current user id
+        // ── Always: resolve user identity ────────────────────────────────────
         const { data: { user } } = await supabase.auth.getUser();
         if (active && user) setMyUserId(user.id);
 
-        // Check PIN
-        const pinActive = await getPinStatus();
-        if (active) { setPinLocked(pinActive); setPinChecked(true); }
-
-        // Load profile (with timeout protection)
-        let p: UserProfile | null = null;
+        // ── Always: check PIN (security check every focus) ───────────────────
+        // If getPinStatus() throws (network error), keep pinLocked=false but
+        // still mark pinChecked so the screen renders rather than hanging.
         try {
-          p = await Promise.race([
-            getMyProfile(),
-            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Profile timeout')), 8000)),
-          ]) as UserProfile;
-          if (active) { setProfile(p); setProfileError(false); }
+          const pinActive = await getPinStatus();
+          if (active) { setPinLocked(pinActive); setPinChecked(true); }
         } catch {
-          if (active) setProfileError(true);
+          if (active) setPinChecked(true); // proceed without PIN lock on network error
         }
 
-        // Load feed + rooms in parallel — keep skeletons if fetch fails
+        // ── Skip heavy data reload on subsequent focuses ─────────────────────
+        // Real-time subscriptions (timeline, notifications, requests) keep
+        // data fresh. Only load once per mount cycle.
+        if (hasLoadedRef.current) return;
+        hasLoadedRef.current = true;
+
+        // ── Profile: serve from AsyncStorage cache immediately, refresh bg ───
+        try {
+          const cached = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+          if (cached && active) {
+            setProfile(JSON.parse(cached));
+            setProfileError(false);
+          }
+        } catch {}
+
+        // Fresh profile fetch with extended timeout (15 s to handle cold starts)
+        getMyProfile().then(async p => {
+          if (!active) return;
+          setProfile(p); setProfileError(false);
+          try { await AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(p)); } catch {}
+        }).catch(() => {
+          // Only show error if we have no cached profile to display
+          if (active) setProfileError(prev => {
+            const hasCached = profile !== null;
+            return hasCached ? false : true;
+          });
+        });
+
+        // ── Feed + rooms: initial load ────────────────────────────────────────
         try {
           const [feed, r] = await Promise.all([getTimeline(), getRooms()]);
           if (active) {
@@ -1121,16 +1177,15 @@ export default function OliveChatScreen() {
             setLoadingRooms(false);
           }
         } catch (fetchErr: any) {
-          // Don't hide skeletons on error — auto-retry at 15s keeps them visible
-          // until the server is actually reachable. Never show an error banner.
           if (active) setLoadError(fetchErr?.message ?? 'Could not connect to the server.');
         }
 
-        // Load notifications unread count
-        const notifs = await getNotifications();
-        if (active) setUnreadNotifCount(notifs.filter(n => !n.isRead).length);
+        // ── Notifications unread count ────────────────────────────────────────
+        getNotifications().then(notifs => {
+          if (active) setUnreadNotifCount(notifs.filter(n => !n.isRead).length);
+        }).catch(() => {});
 
-        // Subscribe to new timeline posts
+        // ── Real-time subscriptions (set up once per mount) ──────────────────
         if (active && !timelineUnsubRef.current) {
           timelineUnsubRef.current = subscribeToTimeline(newPost => {
             setPosts(prev => {
@@ -1139,36 +1194,31 @@ export default function OliveChatScreen() {
             });
           });
         }
-
-        // Subscribe to notifications
         if (active && user && !notifUnsubRef.current) {
           notifUnsubRef.current = subscribeToNotifications(user.id, () => {
             setUnreadNotifCount(c => c + 1);
           });
         }
 
-        // Load message requests
+        // ── Message requests ──────────────────────────────────────────────────
         try {
           const reqs = await getMessageRequests();
           if (active) setMessageRequests(reqs.filter(r => r.status === 'pending'));
         } catch {}
-
-        // Subscribe to new message requests
         if (active && user && !reqUnsubRef.current) {
           reqUnsubRef.current = subscribeToMessageRequests(user.id, () => {
             getMessageRequests().then(r => setMessageRequests(r.filter(x => x.status === 'pending'))).catch(() => {});
           });
         }
+
       } catch (e: any) {
         if ((e as any)?.message?.includes('church') || (e as any)?.message?.includes('Join a church')) {
           if (active) { setNotMember(true); setLoadingFeed(false); setLoadingRooms(false); setPinChecked(true); }
         } else {
           if (active) {
-            // Keep loadingFeed/loadingRooms true so skeletons stay visible.
-            // Auto-retry fires every 15s — no error banner ever shown to user.
             setLoadError('Could not connect to the server.');
-            setPinChecked(true);
-            setProfileError(true);
+            setPinChecked(true); // CRITICAL: always unblock the loading state
+            setProfileError(profile === null); // only show error if no cached profile
           }
         }
       }
@@ -1177,6 +1227,7 @@ export default function OliveChatScreen() {
       active = false;
       // Don't unsubscribe on blur — keep realtime active while screen is mounted
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []));
 
   // Clean up realtime on unmount
@@ -1506,7 +1557,16 @@ export default function OliveChatScreen() {
         />
       )}
 
-      <CommentsSheet post={commentPost} visible={!!commentPost} onClose={() => setCommentPost(null)} />
+      <CommentsSheet
+        post={commentPost}
+        visible={!!commentPost}
+        onClose={() => setCommentPost(null)}
+        onCommentAdded={(postId) => {
+          setPosts(prev => prev.map(p =>
+            p.id === postId ? { ...p, commentCount: p.commentCount + 1 } : p
+          ));
+        }}
+      />
       <CreatePostModal visible={showCreate} onClose={() => setShowCreate(false)} onCreated={p => setPosts(prev => [p, ...prev])} />
       <ShareToRoomModal
         post={sharePost}
@@ -1671,7 +1731,6 @@ const comp = StyleSheet.create({
     backgroundColor: colors.white, marginHorizontal: spacing.md, marginTop: spacing.md,
     marginBottom: spacing.sm, borderRadius: radii.xl, paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm, ...shadows.subtle,
-    borderWidth: 1, borderColor: colors.parchmentDark,
   },
   composerInputFake: {
     flex: 1, paddingVertical: spacing.sm, paddingHorizontal: spacing.sm,

@@ -117,12 +117,16 @@ router.post('/profile/set-pin', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { pin } = req.body;
   if (pin === null || pin === undefined || pin === '') {
-    await supabase.from('user_profiles').upsert({ id: req.user.id, chat_pin_hash: null }, { onConflict: 'id' });
+    const { error } = await supabase.from('user_profiles')
+      .upsert({ id: req.user.id, chat_pin_hash: null }, { onConflict: 'id' });
+    if (error) { log.error('set-pin clear error:', error.message); return res.status(500).json({ error: 'Could not clear PIN. Please try again.' }); }
     return res.json({ ok: true, pinSet: false });
   }
   if (!/^\d{4,8}$/.test(String(pin))) return res.status(400).json({ error: 'PIN must be 4–8 digits' });
   const hash = hashPin(String(pin), req.user.id);
-  await supabase.from('user_profiles').upsert({ id: req.user.id, chat_pin_hash: hash }, { onConflict: 'id' });
+  const { error } = await supabase.from('user_profiles')
+    .upsert({ id: req.user.id, chat_pin_hash: hash }, { onConflict: 'id' });
+  if (error) { log.error('set-pin upsert error:', error.message); return res.status(500).json({ error: 'Could not save PIN. Please try again.' }); }
   res.json({ ok: true, pinSet: true });
 });
 
@@ -150,6 +154,7 @@ router.post('/profile/upload/:type', avatarUpload.single('file'), async (req, re
   const { type } = req.params;
   if (!['avatar', 'cover'].includes(type)) return res.status(400).json({ error: 'type must be avatar or cover' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  await ensureStorageBucket(supabase); // profile uploads use the same community bucket
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `profiles/${req.user.id}/${type}_${Date.now()}.${ext}`;
   const { error } = await supabase.storage
@@ -565,7 +570,9 @@ router.post('/posts', async (req, res) => {
   res.json({ ok: true, post: { ...data, author: { userId: req.user.id, ...nameMap[req.user.id] }, liked: false } });
 });
 
-// Ensure the community storage bucket exists (created once per process lifetime).
+// Ensure the community storage bucket exists.
+// _bucketReady is only set true when creation succeeds or bucket already exists.
+// It is NOT set on a real error — that allows the next request to retry.
 let _bucketReady = false;
 async function ensureStorageBucket(supabase) {
   if (_bucketReady) return;
@@ -573,18 +580,25 @@ async function ensureStorageBucket(supabase) {
     const { error } = await supabase.storage.createBucket('community', {
       public: true,
       fileSizeLimit: 100 * 1024 * 1024, // 100MB
-      allowedMimeTypes: ['image/*', 'video/*'],
+      allowedMimeTypes: ['image/*', 'video/*', 'audio/*'],
     });
-    // "already exists" is fine — we just need to know it's there
-    if (!error || error.message?.toLowerCase().includes('already exists') || error.message?.toLowerCase().includes('duplicate')) {
+    if (!error) {
+      log.info('storage: community bucket created');
+      _bucketReady = true;
+    } else if (
+      error.message?.toLowerCase().includes('already exists') ||
+      error.message?.toLowerCase().includes('duplicate') ||
+      error.message?.toLowerCase().includes('violates')
+    ) {
+      // Bucket exists — that's fine
       _bucketReady = true;
     } else {
-      log.warn('storage bucket check:', error.message);
-      _bucketReady = true; // try anyway — might already exist with different settings
+      // Real error — log it and do NOT set _bucketReady so the next call retries
+      log.error('storage: bucket creation error:', error.message);
     }
   } catch (e) {
-    log.warn('storage bucket ensure failed (non-fatal):', e.message);
-    _bucketReady = true; // proceed regardless
+    log.error('storage: bucket ensure threw:', e.message);
+    // Do not set _bucketReady — allow retry on next request
   }
 }
 

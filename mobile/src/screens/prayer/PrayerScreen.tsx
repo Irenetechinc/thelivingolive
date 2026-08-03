@@ -232,6 +232,8 @@ export default function PrayerScreen() {
   const autoGenerateAttempted = useRef(false);
 
   const PAGE_SIZE = 20;
+  const INITIAL_HISTORY_SIZE = 5;
+  const [showAllRead, setShowAllRead] = useState(false);
 
   async function loadEntries(replace = true, before?: string) {
     if (!replace && loadingMore) return;
@@ -656,65 +658,7 @@ export default function PrayerScreen() {
           </Pressable>
         </View>
 
-        {/* Network error banner */}
-        {loadError && (
-          <NetworkErrorBanner
-            message={loadError}
-            retrying={retryingLoad}
-            onRetry={retryLoadEntries}
-          />
-        )}
-
-        {/* ── Entries ── */}
-        {loadingEntries ? (
-          <View style={{ marginTop: spacing.lg }}>
-            {[0,1,2].map(i => (
-              <PrayerSkeletonCard key={i} />
-            ))}
-          </View>
-        ) : (
-          <>
-            {unread.length > 0 && (
-              <View style={s.historySection}>
-                <SectionDivider label="UNREAD" count={unread.length} />
-                {unread.map((e, i) => (
-                  <PrayerCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} onEdit={handleEditManual} />
-                ))}
-              </View>
-            )}
-
-            {read.length > 0 && (
-              <View style={s.historySection}>
-                <SectionDivider label="PRAYER HISTORY" />
-                {read.map((e, i) => (
-                  <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} onEdit={handleEditManual} />
-                ))}
-                {hasMore && (
-                  <TouchableOpacity
-                    style={s.loadMoreBtn}
-                    onPress={loadMore}
-                    disabled={loadingMore}
-                    activeOpacity={0.75}
-                  >
-                    {loadingMore
-                      ? <ActivityIndicator size="small" color={colors.olive} />
-                      : <Text style={s.loadMoreText}>Load more prayers</Text>}
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-
-            {entries.length === 0 && (
-              <View style={s.emptyState}>
-                <Text style={s.emptyIcon}>🙏</Text>
-                <Text style={s.emptyTitle}>No prayers yet</Text>
-                <Text style={s.emptyDesc}>Share the desire of your heart above and generate your first prayer points.</Text>
-              </View>
-            )}
-          </>
-        )}
-
-        {/* ── MY PRAYER POINTS ── */}
+        {/* ── MY PRAYER POINTS ── (shown directly below the generator) */}
         <View style={s.manualSection}>
           {/* Section header */}
           <LinearGradient
@@ -841,6 +785,71 @@ export default function PrayerScreen() {
             <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} onEdit={handleEditManual} />
           ))}
         </View>
+
+        {/* Network error banner */}
+        {loadError && (
+          <NetworkErrorBanner
+            message={loadError}
+            retrying={retryingLoad}
+            onRetry={retryLoadEntries}
+          />
+        )}
+
+        {/* ── Entries (AI-generated prayer points) ── */}
+        {loadingEntries ? (
+          <View style={{ marginTop: spacing.lg }}>
+            {[0,1,2].map(i => (
+              <PrayerSkeletonCard key={i} />
+            ))}
+          </View>
+        ) : (
+          <>
+            {unread.length > 0 && (
+              <View style={s.historySection}>
+                <SectionDivider label="UNREAD" count={unread.length} />
+                {unread.map((e, i) => (
+                  <PrayerCard key={e.id} entry={e} index={i} onMarkRead={markAsRead} onEdit={handleEditManual} />
+                ))}
+              </View>
+            )}
+
+            {read.length > 0 && (
+              <View style={s.historySection}>
+                <SectionDivider label="PRAYER HISTORY" />
+                {(showAllRead ? read : read.slice(0, INITIAL_HISTORY_SIZE)).map((e, i) => (
+                  <PrayerCard key={e.id} entry={e} index={i} collapsible defaultExpanded={i === 0} onEdit={handleEditManual} />
+                ))}
+                {/* Show-more button: reveals remaining in-memory entries */}
+                {!showAllRead && read.length > INITIAL_HISTORY_SIZE && (
+                  <TouchableOpacity style={s.loadMoreBtn} onPress={() => setShowAllRead(true)} activeOpacity={0.75}>
+                    <Text style={s.loadMoreText}>Show {read.length - INITIAL_HISTORY_SIZE} more</Text>
+                  </TouchableOpacity>
+                )}
+                {/* Load-from-server button: only visible once all in-memory entries are shown */}
+                {showAllRead && hasMore && (
+                  <TouchableOpacity
+                    style={s.loadMoreBtn}
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                    activeOpacity={0.75}
+                  >
+                    {loadingMore
+                      ? <ActivityIndicator size="small" color={colors.olive} />
+                      : <Text style={s.loadMoreText}>Load more prayers</Text>}
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            {entries.filter(e => e.source !== "manual").length === 0 && (
+              <View style={s.emptyState}>
+                <Text style={s.emptyIcon}>🙏</Text>
+                <Text style={s.emptyTitle}>No prayers yet</Text>
+                <Text style={s.emptyDesc}>Share the desire of your heart above and generate your first prayer points.</Text>
+              </View>
+            )}
+          </>
+        )}
       </View>
     </ScrollView>
   );
