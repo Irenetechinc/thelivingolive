@@ -1,6 +1,7 @@
 import React, {
   useEffect, useState, useCallback, useRef, useMemo,
 } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Modal,
   ActivityIndicator, FlatList, RefreshControl, Linking, Alert,
@@ -575,6 +576,19 @@ export default function BulletinScreen({ navigation }: Props) {
   const [commentModal, setCommentModal] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => { bootstrap(); }, []);
+
+  // Reload social counts every time the bulletin screen comes back into focus
+  // so like/comment numbers are fresh without a full page reload.
+  const hasBootstrappedRef = useRef(false);
+  useFocusEffect(useCallback(() => {
+    if (!hasBootstrappedRef.current) {
+      hasBootstrappedRef.current = true;
+      return; // Skip first focus — bootstrap() handles the initial load
+    }
+    // Reload social for whatever bulletins are currently displayed
+    const bulletins = [todayBulletin, ...archive].filter(Boolean) as typeof archive;
+    if (bulletins.length > 0) loadSocialData(bulletins);
+  }, [todayBulletin, archive]));
 
   async function bootstrap() {
     setLoading(true);

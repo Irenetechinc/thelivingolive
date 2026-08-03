@@ -1111,6 +1111,12 @@ export default function OliveChatScreen() {
   const [sharePost, setSharePost] = useState<CommunityPost | null>(null);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
+  // Pending realtime posts — queued here instead of auto-prepended so the
+  // user sees a "N new posts" banner they can tap rather than having the feed
+  // jump while they're reading.
+  const [pendingPosts, setPendingPosts] = useState<CommunityPost[]>([]);
+  const feedListRef = useRef<import('react-native').FlatList<CommunityPost> | null>(null);
+
   // Real-time unsubscribe refs
   const timelineUnsubRef = useRef<(() => void) | null>(null);
   const notifUnsubRef = useRef<(() => void) | null>(null);
@@ -1119,6 +1125,7 @@ export default function OliveChatScreen() {
   // subsequent focuses. Real-time subscriptions keep the feed/rooms fresh.
   const hasLoadedRef = useRef(false);
   const PROFILE_CACHE_KEY = 'olivechat.profile.v1';
+  const PIN_CACHE_KEY = 'olivechat.pinActive.v1';
 
   useFocusEffect(useCallback(() => {
     let active = true;
@@ -1129,13 +1136,23 @@ export default function OliveChatScreen() {
         if (active && user) setMyUserId(user.id);
 
         // ── Always: check PIN (security check every focus) ───────────────────
-        // If getPinStatus() throws (network error), keep pinLocked=false but
-        // still mark pinChecked so the screen renders rather than hanging.
+        // If getPinStatus() throws (network error), fall back to the cached
+        // value from AsyncStorage so a brief offline period doesn't unlock the
+        // app for users who have set a PIN.
         try {
           const pinActive = await getPinStatus();
           if (active) { setPinLocked(pinActive); setPinChecked(true); }
+          // Persist so we can restore on error
+          AsyncStorage.setItem(PIN_CACHE_KEY, JSON.stringify(pinActive)).catch(() => {});
         } catch {
-          if (active) setPinChecked(true); // proceed without PIN lock on network error
+          // Network error — restore from cache so PIN is not silently cleared
+          try {
+            const cached = await AsyncStorage.getItem(PIN_CACHE_KEY);
+            const pinActive = cached ? JSON.parse(cached) : false;
+            if (active) { setPinLocked(pinActive); setPinChecked(true); }
+          } catch {
+            if (active) setPinChecked(true);
+          }
         }
 
         // ── Skip heavy data reload on subsequent focuses ─────────────────────
@@ -1188,7 +1205,14 @@ export default function OliveChatScreen() {
         // ── Real-time subscriptions (set up once per mount) ──────────────────
         if (active && !timelineUnsubRef.current) {
           timelineUnsubRef.current = subscribeToTimeline(newPost => {
-            setPosts(prev => {
+            // Queue into pending rather than auto-prepending so the user sees a
+            // "N new posts" banner and the feed doesn't jump while they scroll.
+            // Own posts are added directly via onCreated, skip them here.
+            setPosts(current => {
+              if (current.find(p => p.id === newPost.id)) return current; // dedupe
+              return current; // don't auto-insert
+            });
+            setPendingPosts(prev => {
               if (prev.find(p => p.id === newPost.id)) return prev;
               return [newPost, ...prev];
             });
@@ -1442,8 +1466,29 @@ export default function OliveChatScreen() {
         (loadingFeed || (loadError != null && posts.length === 0))
           ? <FlatList key="feed-skeleton" data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
           : (
+            <>
+            {/* "N new posts" banner — tapping merges pending into feed & scrolls to top */}
+            {pendingPosts.length > 0 && (
+              <Pressable
+                style={comp.newPostsBanner}
+                onPress={() => {
+                  setPosts(prev => {
+                    const merged = [...pendingPosts.filter(p => !prev.find(pp => pp.id === p.id)), ...prev];
+                    return merged;
+                  });
+                  setPendingPosts([]);
+                  setTimeout(() => feedListRef.current?.scrollToOffset({ offset: 0, animated: true }), 80);
+                }}
+              >
+                <Ionicons name="arrow-up-circle-outline" size={18} color="#fff" />
+                <Text style={comp.newPostsBannerText}>
+                  {pendingPosts.length > 15 ? '15+ new posts' : `${pendingPosts.length} new post${pendingPosts.length > 1 ? 's' : ''}`}
+                </Text>
+              </Pressable>
+            )}
             <FlatList
               key="feed-real"
+              ref={feedListRef}
               data={posts}
               keyExtractor={p => p.id}
               ListHeaderComponent={
@@ -1499,6 +1544,7 @@ export default function OliveChatScreen() {
               }
               contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
             />
+            </>
           )
       )}
 
@@ -1567,7 +1613,12 @@ export default function OliveChatScreen() {
           ));
         }}
       />
-      <CreatePostModal visible={showCreate} onClose={() => setShowCreate(false)} onCreated={p => setPosts(prev => [p, ...prev])} />
+      <CreatePostModal visible={showCreate} onClose={() => setShowCreate(false)} onCreated={p => {
+        // Immediately prepend own new post and remove it from pendingPosts if
+        // the realtime subscription happened to queue it before onCreated fired.
+        setPosts(prev => prev.find(x => x.id === p.id) ? prev : [p, ...prev]);
+        setPendingPosts(prev => prev.filter(x => x.id !== p.id));
+      }} />
       <ShareToRoomModal
         post={sharePost}
         rooms={rooms}
@@ -1741,6 +1792,14 @@ const comp = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: '#EDF7E8', alignItems: 'center', justifyContent: 'center',
   },
+  newPostsBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    backgroundColor: colors.oliveDark, marginHorizontal: spacing.lg,
+    marginTop: spacing.sm, borderRadius: radii.pill,
+    paddingVertical: 9, paddingHorizontal: spacing.lg,
+    ...shadows.card,
+  },
+  newPostsBannerText: { fontSize: 13, fontWeight: '700', color: '#fff' },
 });
 
 const main = StyleSheet.create({

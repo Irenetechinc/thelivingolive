@@ -17,14 +17,49 @@ import { compressVideo } from '../lib/videoProcessor.js';
 const log = logger('community');
 const router = Router();
 // Allowed MIME type sets for each upload context
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
-const ALLOWED_MEDIA_TYPES = new Set([...ALLOWED_IMAGE_TYPES, 'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac', 'audio/ogg', 'video/mp4', 'video/quicktime', 'video/webm']);
-const ALLOWED_POST_TYPES  = new Set([...ALLOWED_IMAGE_TYPES, 'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v']);
+const ALLOWED_IMAGE_TYPES = new Set([
+  'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+  'image/heic', 'image/heif',
+  // Android content-provider fallbacks — React Native sometimes reports these
+  // for valid images when the URI comes from a content:// provider.
+  'application/octet-stream',
+]);
+const ALLOWED_MEDIA_TYPES = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac', 'audio/ogg',
+  'video/mp4', 'video/quicktime', 'video/webm',
+]);
+// Post uploads: images + all common mobile video MIME types
+const ALLOWED_POST_TYPES  = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v',
+  // Additional Android MIME types for videos
+  'video/mpeg', 'video/3gpp', 'video/3gpp2', 'video/x-matroska',
+]);
 
 function mimeFilter(allowed) {
   return (_req, file, cb) => {
     if (allowed.has(file.mimetype)) return cb(null, true);
     cb(Object.assign(new Error(`File type not allowed: ${file.mimetype}`), { status: 400 }), false);
+  };
+}
+
+/**
+ * Wraps a multer middleware so errors are always returned as JSON.
+ * Without this wrapper, multer errors propagate as HTML (the Express default),
+ * which the mobile client cannot parse and turns into a generic "Upload failed".
+ */
+function withJsonError(multerMiddleware) {
+  return (req, res, next) => {
+    multerMiddleware(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE')
+        return res.status(413).json({ error: 'File too large. Maximum size is 100 MB.' });
+      if (err.message?.startsWith('File type not allowed'))
+        return res.status(400).json({ error: 'Unsupported file type. Please upload a JPG, PNG, GIF, or video file.' });
+      log.error('multer error:', err.message);
+      return res.status(400).json({ error: 'Upload error. Please try again.' });
+    });
   };
 }
 
@@ -149,7 +184,7 @@ router.get('/profile/pin-status', async (req, res) => {
 });
 
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_IMAGE_TYPES) });
-router.post('/profile/upload/:type', avatarUpload.single('file'), async (req, res) => {
+router.post('/profile/upload/:type', withJsonError(avatarUpload.single('file')), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { type } = req.params;
   if (!['avatar', 'cover'].includes(type)) return res.status(400).json({ error: 'type must be avatar or cover' });
@@ -602,7 +637,7 @@ async function ensureStorageBucket(supabase) {
   }
 }
 
-router.post('/posts/upload', upload.single('file'), async (req, res) => {
+router.post('/posts/upload', withJsonError(upload.single('file')), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
   await ensureStorageBucket(supabase);

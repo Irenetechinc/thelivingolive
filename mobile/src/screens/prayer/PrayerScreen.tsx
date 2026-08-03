@@ -231,7 +231,7 @@ export default function PrayerScreen() {
   const [arrivedFromNotif, setArrivedFromNotif] = useState(false);
   const autoGenerateAttempted = useRef(false);
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 5;
   const INITIAL_HISTORY_SIZE = 5;
   const [showAllRead, setShowAllRead] = useState(false);
 

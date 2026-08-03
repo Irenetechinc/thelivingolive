@@ -15,3 +15,6 @@
 - [RN opacity-0 views still block touches](rn-opacity-touch-block.md) — in React Native, animating opacity to 0 does NOT disable hit-testing; add pointerEvents="none" or unmount the view.
 - [expo-speech-recognition versioning](expo-speech-recognition-versioning.md) — package uses SDK-aligned versions (56.0.1 for SDK 56); use ~56.0.1 for SDK 57 until 57.x is published; import from `expo-speech-recognition`, not sub-paths.
 - [Android NetInfo isInternetReachable unreliable](android-netinfo-reachable.md) — `isInternetReachable` is almost always null/false on Android even on a live connection; gate uploads on `isConnected: true` only.
+- [Multer errors must be JSON-wrapped](multer-json-error-handler.md) — without withJsonError wrapper, multer MIME/size rejections return HTML which mobile JSON.parse catches as "Upload failed"; always wrap upload.single() with withJsonError.
+- [OliveChat PIN must survive background/resume](olivechat-pin-asyncstorage.md) — getPinStatus() fails on app resume if network is momentarily offline; cache result in AsyncStorage (PIN_CACHE_KEY) and restore on error so PIN gate isn't silently cleared.
+- [OliveChat feed pending-posts pattern](olivechat-feed-pending.md) — subscribeToTimeline queues into pendingPosts state (not auto-prepend) so user sees a banner rather than feed jumping; own posts via onCreated still prepend immediately.
