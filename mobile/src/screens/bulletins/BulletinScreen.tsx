@@ -456,7 +456,7 @@ function CommentsModal({
         )}
 
         {/* Input */}
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View style={commentStyles.inputRow}>
             <TextInput
               style={commentStyles.input}

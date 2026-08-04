@@ -16,7 +16,7 @@ import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, ActivityIndicator, Image, TouchableOpacity, Modal,
   KeyboardAvoidingView, Platform, Share, Alert, RefreshControl,
-  Animated, ViewToken,
+  Animated, ViewToken, Keyboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -423,32 +423,47 @@ function CommentsSheet({
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<PostComment | null>(null);
   const [sending, setSending] = useState(false);
+  // Cooldown flag: briefly disables like buttons right after submitting a comment
+  // to prevent ghost-touches caused by layout reflow when keyboard adjusts.
+  const [likeCooldown, setLikeCooldown] = useState(false);
+  const listRef = useRef<import('react-native').FlatList<PostComment>>(null);
 
   useEffect(() => {
     if (visible && post) {
       setLoading(true);
       getPostComments(post.id).then(c => { setComments(c); setLoading(false); }).catch(() => setLoading(false));
     }
+    if (!visible) { setText(''); setReplyTo(null); }
   }, [visible, post?.id]);
 
   async function submit() {
     if (!text.trim() || !post) return;
+    // Capture text before clearing so the network request uses the right value
+    const body = text.trim();
+    // Clear input immediately — keeps keyboard up and avoids any layout jump
+    setText('');
+    setReplyTo(null);
     setSending(true);
+    // Engage like-button cooldown to prevent ghost-touch auto-likes after submit
+    setLikeCooldown(true);
+    setTimeout(() => setLikeCooldown(false), 900);
     try {
-      const c = await addPostComment(post.id, text.trim(), replyTo?.id);
+      const c = await addPostComment(post.id, body, replyTo?.id);
       if (replyTo) {
-        setComments(prev => prev.map(cc => cc.id === replyTo.id ? { ...cc, replies: [...cc.replies, c] } : cc));
+        setComments(prev => prev.map(cc => cc.id === replyTo!.id ? { ...cc, replies: [...cc.replies, c] } : cc));
       } else {
-        setComments(prev => [c, ...prev]);
-        // Notify parent so the comment count in the feed card increments
+        // Append newest at bottom (natural reading order + prevents layout-shift
+        // ghost touches that would land on like buttons near the top of the list)
+        setComments(prev => [...prev, c]);
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
         onCommentAdded?.(post.id);
       }
-      setText(''); setReplyTo(null);
     } catch { Alert.alert('Error', 'Could not post comment. Please try again.'); }
     finally { setSending(false); }
   }
 
   async function handleToggleCommentLike(postId: string, comment: PostComment, isReply: boolean, parentId?: string) {
+    if (likeCooldown) return; // ignore taps during post-submit cooldown
     try {
       const { liked, likeCount } = await toggleCommentLike(postId, comment.id);
       setComments(prev => prev.map(c => {
@@ -469,10 +484,19 @@ function CommentsSheet({
           <Text style={cs.commentAuthor}>{c.author.name} <Text style={cs.commentTime}>{relTime(c.createdAt)}</Text></Text>
           <Text style={cs.commentBody}>{c.body}</Text>
           <View style={cs.commentActions}>
-            <TouchableOpacity onPress={() => post && handleToggleCommentLike(post.id, c, isReply, parentId)}>
-              <Text style={[cs.commentAction, c.liked && { color: '#E05252' }]}>♥ {c.likeCount > 0 ? c.likeCount : 'Like'}</Text>
+            <TouchableOpacity
+              disabled={likeCooldown}
+              onPress={() => post && handleToggleCommentLike(post.id, c, isReply, parentId)}
+            >
+              <Text style={[cs.commentAction, c.liked && { color: '#E05252' }]}>
+                {c.liked ? '♥' : '♡'}{' '}{c.likeCount > 0 ? c.likeCount : 'Like'}
+              </Text>
             </TouchableOpacity>
-            {!isReply && <TouchableOpacity onPress={() => setReplyTo(c)}><Text style={cs.commentAction}>Reply</Text></TouchableOpacity>}
+            {!isReply && (
+              <TouchableOpacity onPress={() => setReplyTo(c)}>
+                <Text style={cs.commentAction}>Reply</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -481,21 +505,29 @@ function CommentsSheet({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      {/* 
-        KeyboardAvoidingView behavior="padding" works on both iOS and Android here.
-        We also apply paddingBottom = insets.bottom so the input row clears the
-        Android system navigation bar (gesture or 3-button nav).
+      {/*
+        iOS: behavior="padding" raises content above the keyboard in a page sheet.
+        Android: behavior="height" shrinks the view height instead of padding —
+        this is more reliable inside a full-screen modal on Android.
+        paddingBottom on inputRow handles the system nav bar (gesture/3-button).
       */}
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior="padding">
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: colors.parchment }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <View style={cs.header}>
           <Text style={cs.title}>Comments</Text>
-          <Pressable onPress={onClose}><Text style={cs.closeBtn}>✕</Text></Pressable>
+          <Pressable onPress={onClose} hitSlop={12}><Text style={cs.closeBtn}>✕</Text></Pressable>
         </View>
         {loading ? <ActivityIndicator color={colors.gold} style={{ marginTop: 32 }} /> : (
           <FlatList
+            ref={listRef}
             data={comments}
             keyExtractor={c => c.id}
             contentContainerStyle={{ padding: spacing.md }}
+            // "handled" keeps the keyboard up when the user scrolls through comments,
+            // preventing accidental keyboard-dismiss + layout-shift ghost touches
+            keyboardShouldPersistTaps="handled"
             renderItem={({ item: c }) => (
               <View>{renderComment(c)}{c.replies.map(r => renderComment(r, true, c.id))}</View>
             )}
@@ -505,12 +537,19 @@ function CommentsSheet({
         {replyTo && (
           <View style={cs.replyBanner}>
             <Text style={cs.replyBannerText}>↩ Replying to {replyTo.author.name}</Text>
-            <Pressable onPress={() => setReplyTo(null)}><Text style={cs.replyBannerClose}>✕</Text></Pressable>
+            <Pressable onPress={() => setReplyTo(null)} hitSlop={8}><Text style={cs.replyBannerClose}>✕</Text></Pressable>
           </View>
         )}
-        {/* paddingBottom ensures input clears Android nav bar */}
+        {/* paddingBottom clears Android system nav bar (gesture / 3-button) */}
         <View style={[cs.inputRow, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          <TextInput style={cs.input} value={text} onChangeText={setText} placeholder="Write a comment…" placeholderTextColor={colors.inkFaint} multiline />
+          <TextInput
+            style={cs.input}
+            value={text}
+            onChangeText={setText}
+            placeholder="Write a comment…"
+            placeholderTextColor={colors.inkFaint}
+            multiline
+          />
           <Pressable style={[cs.sendBtn, sending && { opacity: 0.6 }]} onPress={submit} disabled={sending}>
             {sending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={cs.sendBtnText}>↑</Text>}
           </Pressable>
@@ -542,25 +581,34 @@ const cs = StyleSheet.create({
   empty: { textAlign: 'center', color: colors.inkFaint, paddingVertical: 24, fontSize: 14 },
 });
 
-// ── Create post modal (with @mention tagging) ─────────────────────────────────
+// ── Create post modal (with @mention tagging + connections tag picker) ─────────
 function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; onClose: () => void; onCreated: (p: CommunityPost) => void }) {
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
   const [thumbUri, setThumbUri] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  // Tagging
+  // @mention inline tagging
   const [members, setMembers] = useState<Author[]>([]);
   const [taggedUsers, setTaggedUsers] = useState<Author[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionFiltered, setMentionFiltered] = useState<Author[]>([]);
+  // Connections-based tag picker
+  const [showTagPicker, setShowTagPicker] = useState(false);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [loadingConnections, setLoadingConnections] = useState(false);
 
   useEffect(() => {
     if (visible) {
       getChurchMembers().then(setMembers).catch(() => {});
+      // Pre-load connections for the tag picker
+      setLoadingConnections(true);
+      getConnections().then(setConnections).catch(() => {}).finally(() => setLoadingConnections(false));
     } else {
-      setText(''); setMediaUri(null); setMediaType(null); setThumbUri(null); setTaggedUsers([]); setShowMentions(false);
+      setText(''); setMediaUri(null); setMediaType(null); setThumbUri(null);
+      setTaggedUsers([]); setShowMentions(false); setShowTagPicker(false);
     }
   }, [visible]);
 
