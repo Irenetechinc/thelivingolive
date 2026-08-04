@@ -614,7 +614,7 @@ router.post('/posts', async (req, res) => {
     .from('church_members').select('church_id').eq('user_id', req.user.id).maybeSingle();
   if (!membership) return res.status(403).json({ error: 'Join a church first.' });
 
-  const { body, imageUrl, videoUrl, videoThumbnailUrl } = req.body;
+  const { body, imageUrl, videoUrl, videoThumbnailUrl, taggedUserIds } = req.body;
   if (!body?.trim() && !imageUrl && !videoUrl) return res.status(400).json({ error: 'Post must have text or media.' });
 
   const { data, error } = await supabase.from('community_posts').insert({
@@ -626,6 +626,22 @@ router.post('/posts', async (req, res) => {
   }).select().single();
   if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
   const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
+  const actorName = nameMap[req.user.id]?.name ?? 'Someone';
+
+  // Notify tagged users (mention notifications)
+  if (Array.isArray(taggedUserIds) && taggedUserIds.length > 0) {
+    for (const userId of taggedUserIds.slice(0, 10)) {
+      if (userId !== req.user.id) {
+        notifyCommunity(supabase, getExpo(), {
+          recipientId: userId, actorId: req.user.id, actorName,
+          type: 'mention', postId: data.id,
+          pushTitle: '👤 You were tagged',
+          pushBody: `${actorName} tagged you in a post`,
+        }).catch(() => {});
+      }
+    }
+  }
+
   res.json({ ok: true, post: { ...data, author: { userId: req.user.id, ...nameMap[req.user.id] }, liked: false } });
 });
 

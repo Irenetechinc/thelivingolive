@@ -313,7 +313,7 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
   if (loading) return <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.gold} /></View>;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#F2EDE0' }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#F2EDE0' }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 80}>
       <FlatList
         ref={flatRef}
         data={messages}

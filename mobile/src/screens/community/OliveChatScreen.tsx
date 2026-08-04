@@ -423,9 +423,11 @@ function CommentsSheet({
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<PostComment | null>(null);
   const [sending, setSending] = useState(false);
-  // Cooldown flag: briefly disables like buttons right after submitting a comment
-  // to prevent ghost-touches caused by layout reflow when keyboard adjusts.
-  const [likeCooldown, setLikeCooldown] = useState(false);
+  // Cooldown ref: synchronously blocks like-button handler for 1.2 s after submitting
+  // a comment to prevent ghost-touches from Android keyboard layout reflow.
+  // A ref (not state) is intentional — state updates are batched/async and arrive
+  // too late to block the ghost-touch that fires in the same render cycle.
+  const likeCooldownRef = useRef(false);
   const listRef = useRef<import('react-native').FlatList<PostComment>>(null);
 
   useEffect(() => {
@@ -444,9 +446,11 @@ function CommentsSheet({
     setText('');
     setReplyTo(null);
     setSending(true);
-    // Engage like-button cooldown to prevent ghost-touch auto-likes after submit
-    setLikeCooldown(true);
-    setTimeout(() => setLikeCooldown(false), 900);
+    // Engage like-button cooldown to prevent ghost-touch auto-likes after submit.
+    // Use the ref (synchronous) so the block is in place before any layout-reflow
+    // touch event can fire, rather than waiting for a React state batch to commit.
+    likeCooldownRef.current = true;
+    setTimeout(() => { likeCooldownRef.current = false; }, 1200);
     try {
       const c = await addPostComment(post.id, body, replyTo?.id);
       if (replyTo) {
@@ -463,7 +467,7 @@ function CommentsSheet({
   }
 
   async function handleToggleCommentLike(postId: string, comment: PostComment, isReply: boolean, parentId?: string) {
-    if (likeCooldown) return; // ignore taps during post-submit cooldown
+    if (likeCooldownRef.current) return; // synchronous ref check — blocks ghost-touch auto-likes
     try {
       const { liked, likeCount } = await toggleCommentLike(postId, comment.id);
       setComments(prev => prev.map(c => {
@@ -485,7 +489,6 @@ function CommentsSheet({
           <Text style={cs.commentBody}>{c.body}</Text>
           <View style={cs.commentActions}>
             <TouchableOpacity
-              disabled={likeCooldown}
               onPress={() => post && handleToggleCommentLike(post.id, c, isReply, parentId)}
             >
               <Text style={[cs.commentAction, c.liked && { color: '#E05252' }]}>
@@ -513,7 +516,8 @@ function CommentsSheet({
       */}
       <KeyboardAvoidingView
         style={{ flex: 1, backgroundColor: colors.parchment }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
+        keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}
       >
         <View style={cs.header}>
           <Text style={cs.title}>Comments</Text>
@@ -645,7 +649,13 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
       const asset = res.assets[0];
       setMediaUri(asset.uri);
       // Prefer the picker-reported MIME; fall back gracefully by type
-      const mime = (asset as any).mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      // Normalize MIME type: Android returns non-standard types (video/3gpp,
+      // image/heic, etc.). Always map video to mp4 and unknown images to jpeg
+      // so the server's allowlist is satisfied without expanding it infinitely.
+      const rawMime: string = (asset as any).mimeType ?? '';
+      const mime = asset.type === 'video'
+        ? 'video/mp4'
+        : (rawMime.startsWith('image/') ? rawMime : 'image/jpeg');
       setMediaMimeType(mime);
       if (asset.type === 'video') {
         setMediaType('video');
@@ -678,7 +688,7 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}>
         <View style={cpm.header}>
           <Pressable onPress={onClose}><Text style={cpm.cancel}>Cancel</Text></Pressable>
           <Text style={cpm.title}>New Post</Text>
@@ -718,10 +728,51 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
               <View style={vs.playBtn}><Text style={vs.playIcon}>▶</Text></View>
             </View>
           )}
+          {/* Tag-a-friend picker panel — shown when Tag toolbar button is active */}
+          {showTagPicker && (
+            <View style={cpm.tagPickerWrap}>
+              <Text style={cpm.tagPickerTitle}>Tag friends</Text>
+              {loadingConnections ? (
+                <ActivityIndicator color={colors.gold} size="small" style={{ alignSelf: 'flex-start' }} />
+              ) : connections.filter(c => c.status === 'accepted').length === 0 ? (
+                <Text style={cpm.tagPickerEmpty}>No accepted connections yet.</Text>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
+                  {connections.filter(c => c.status === 'accepted').map(c => {
+                    const isTagged = taggedUsers.some(u => u.userId === c.userId);
+                    return (
+                      <Pressable
+                        key={c.userId}
+                        style={[cpm.tagPickerItem, isTagged && cpm.tagPickerItemActive]}
+                        onPress={() => {
+                          if (isTagged) {
+                            setTaggedUsers(prev => prev.filter(u => u.userId !== c.userId));
+                          } else {
+                            setTaggedUsers(prev => [...prev, { userId: c.userId, name: c.name, avatarUrl: c.avatarUrl }]);
+                          }
+                        }}
+                      >
+                        <Avatar url={c.avatarUrl} name={c.name} size={32} />
+                        <Text style={cpm.tagPickerName} numberOfLines={1}>{c.name}</Text>
+                        {isTagged && <Ionicons name="checkmark-circle" size={14} color={colors.olive} />}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
+          )}
+
           <View style={cpm.toolbar}>
             <Pressable style={cpm.toolBtn} onPress={pickMedia}>
               <Ionicons name="image-outline" size={20} color={colors.inkSoft} />
               <Text style={cpm.toolLabel}>Photo/Video</Text>
+            </Pressable>
+            <Pressable style={cpm.toolBtn} onPress={() => setShowTagPicker(p => !p)}>
+              <Ionicons name="people-outline" size={20} color={showTagPicker ? colors.olive : colors.inkSoft} />
+              <Text style={[cpm.toolLabel, showTagPicker && { color: colors.olive }]}>
+                {`Tag${taggedUsers.length > 0 ? ` (${taggedUsers.length})` : ''}`}
+              </Text>
             </Pressable>
             {mediaUri && (
               <Pressable style={cpm.toolBtn} onPress={() => { setMediaUri(null); setMediaType(null); setThumbUri(null); }}>
@@ -752,6 +803,13 @@ const cpm = StyleSheet.create({
   taggedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.sm },
   tagChip: { backgroundColor: colors.oliveFaint ?? colors.olive + '20', borderRadius: radii.pill, paddingVertical: 4, paddingHorizontal: spacing.sm },
   tagChipText: { fontSize: 12, color: colors.olive, fontWeight: '600' },
+  // Tag-a-friend picker
+  tagPickerWrap: { borderTopWidth: 1, borderTopColor: colors.parchmentDark, paddingTop: spacing.sm, marginBottom: spacing.sm },
+  tagPickerTitle: { fontSize: 12, fontWeight: '700', color: colors.inkSoft, letterSpacing: 0.8, marginBottom: 8 },
+  tagPickerEmpty: { fontSize: 13, color: colors.inkFaint, paddingVertical: spacing.xs },
+  tagPickerItem: { alignItems: 'center', width: 70, paddingVertical: 6, paddingHorizontal: 4, borderRadius: radii.md, gap: 4 },
+  tagPickerItemActive: { backgroundColor: colors.oliveFaint },
+  tagPickerName: { fontSize: 11, color: colors.ink, textAlign: 'center', fontWeight: '500' },
 });
 
 // ── PIN gate ──────────────────────────────────────────────────────────────────
