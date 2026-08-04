@@ -625,24 +625,37 @@ router.post('/posts', async (req, res) => {
     video_thumbnail_url: videoThumbnailUrl ?? null,
   }).select().single();
   if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
-  const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
+
+  // Resolve names for author + all tagged users in a single DB round-trip
+  const validTaggedIds = Array.isArray(taggedUserIds)
+    ? taggedUserIds.filter(id => typeof id === 'string' && id !== req.user.id).slice(0, 10)
+    : [];
+  const nameMap = await resolveDisplayNames(supabase, [req.user.id, ...validTaggedIds]);
   const actorName = nameMap[req.user.id]?.name ?? 'Someone';
 
-  // Notify tagged users (mention notifications)
-  if (Array.isArray(taggedUserIds) && taggedUserIds.length > 0) {
-    for (const userId of taggedUserIds.slice(0, 10)) {
-      if (userId !== req.user.id) {
-        notifyCommunity(supabase, getExpo(), {
-          recipientId: userId, actorId: req.user.id, actorName,
-          type: 'mention', postId: data.id,
-          pushTitle: '👤 You were tagged',
-          pushBody: `${actorName} tagged you in a post`,
-        }).catch(() => {});
-      }
-    }
+  // Build taggedUsers Author[] — client renders "— with X, Y" from this immediately
+  const taggedUsers = validTaggedIds.map(id => ({
+    userId: id,
+    name: nameMap[id]?.name ?? `user_${id.slice(0, 6)}`,
+    avatarUrl: nameMap[id]?.avatarUrl ?? null,
+  }));
+
+  // Notify tagged users (mention notifications) — fire-and-forget
+  for (const userId of validTaggedIds) {
+    notifyCommunity(supabase, getExpo(), {
+      recipientId: userId, actorId: req.user.id, actorName,
+      type: 'mention', postId: data.id,
+      pushTitle: '👤 You were tagged',
+      pushBody: `${actorName} tagged you in a post`,
+    }).catch(() => {});
   }
 
-  res.json({ ok: true, post: { ...data, author: { userId: req.user.id, ...nameMap[req.user.id] }, liked: false } });
+  res.json({ ok: true, post: {
+    ...data,
+    author: { userId: req.user.id, ...nameMap[req.user.id] },
+    taggedUsers,
+    liked: false,
+  } });
 });
 
 // Ensure the community storage bucket exists.
