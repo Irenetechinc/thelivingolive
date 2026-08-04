@@ -76,41 +76,75 @@ create policy "rooms_member_read" on public.chat_rooms
   );
 
 -- ── Message requests (first-time DM gate) ─────────────────────────────────────
+-- Column names: sender_id (who sent), receiver_id (who receives).
+-- If previously created with from_user_id/to_user_id, rename them.
+do $$ begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'message_requests' and column_name = 'from_user_id'
+  ) then
+    alter table public.message_requests rename column from_user_id to sender_id;
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'message_requests' and column_name = 'to_user_id'
+  ) then
+    alter table public.message_requests rename column to_user_id to receiver_id;
+  end if;
+end $$;
+
 create table if not exists public.message_requests (
-  id            uuid        primary key default gen_random_uuid(),
-  from_user_id  uuid        not null references auth.users(id) on delete cascade,
-  to_user_id    uuid        not null references auth.users(id) on delete cascade,
-  room_id       uuid        references public.chat_rooms(id) on delete cascade,
-  status        text        not null default 'pending'
-                            check (status in ('pending', 'accepted', 'rejected')),
-  created_at    timestamptz not null default now(),
-  unique (from_user_id, to_user_id)
+  id          uuid        primary key default gen_random_uuid(),
+  sender_id   uuid        not null references auth.users(id) on delete cascade,
+  receiver_id uuid        not null references auth.users(id) on delete cascade,
+  room_id     uuid        references public.chat_rooms(id) on delete cascade,
+  status      text        not null default 'pending'
+                          check (status in ('pending', 'accepted', 'rejected', 'blocked')),
+  created_at  timestamptz not null default now(),
+  unique (sender_id, receiver_id)
 );
-create index if not exists mr_to_idx   on public.message_requests(to_user_id, status);
-create index if not exists mr_from_idx on public.message_requests(from_user_id);
+create index if not exists mr_receiver_idx on public.message_requests(receiver_id, status);
+create index if not exists mr_sender_idx   on public.message_requests(sender_id);
 alter table public.message_requests enable row level security;
 
 drop policy if exists "mr_owner_read" on public.message_requests;
 create policy "mr_owner_read" on public.message_requests
-  for select using (auth.uid() = from_user_id or auth.uid() = to_user_id);
+  for select using (auth.uid() = sender_id or auth.uid() = receiver_id);
 
 -- ── Blocked users ─────────────────────────────────────────────────────────────
+-- Column names: user_id (the blocker), blocked_user_id (the blocked person).
+-- If this table was previously created with blocker_id/blocked_id rename them.
+do $$ begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'blocked_users' and column_name = 'blocker_id'
+  ) then
+    alter table public.blocked_users rename column blocker_id to user_id;
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'blocked_users' and column_name = 'blocked_id'
+  ) then
+    alter table public.blocked_users rename column blocked_id to blocked_user_id;
+  end if;
+end $$;
+
 create table if not exists public.blocked_users (
-  blocker_id  uuid        not null references auth.users(id) on delete cascade,
-  blocked_id  uuid        not null references auth.users(id) on delete cascade,
-  created_at  timestamptz not null default now(),
-  primary key (blocker_id, blocked_id)
+  user_id         uuid        not null references auth.users(id) on delete cascade,
+  blocked_user_id uuid        not null references auth.users(id) on delete cascade,
+  created_at      timestamptz not null default now(),
+  primary key (user_id, blocked_user_id)
 );
-create index if not exists bu_blocker_idx on public.blocked_users(blocker_id);
+create index if not exists bu_user_idx on public.blocked_users(user_id);
 alter table public.blocked_users enable row level security;
 
 drop policy if exists "bu_owner_read" on public.blocked_users;
 create policy "bu_owner_read" on public.blocked_users
-  for select using (auth.uid() = blocker_id);
+  for select using (auth.uid() = user_id);
 
 drop policy if exists "bu_owner_write" on public.blocked_users;
 create policy "bu_owner_write" on public.blocked_users
-  for all using (auth.uid() = blocker_id) with check (auth.uid() = blocker_id);
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ── Chat messages ─────────────────────────────────────────────────────────────
 create table if not exists public.chat_messages (
@@ -319,6 +353,138 @@ begin
   end if;
 end $$;
 
+-- ── Extended user_profiles columns (idempotent backfills) ────────────────────
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='username') then
+    alter table public.user_profiles add column username text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='church_affiliation') then
+    alter table public.user_profiles add column church_affiliation text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='location') then
+    alter table public.user_profiles add column location text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='state') then
+    alter table public.user_profiles add column state text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='country') then
+    alter table public.user_profiles add column country text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='education') then
+    alter table public.user_profiles add column education text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='gender') then
+    alter table public.user_profiles add column gender text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='website') then
+    alter table public.user_profiles add column website text;
+  end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='user_profiles' and column_name='dob_public') then
+    alter table public.user_profiles add column dob_public boolean not null default false;
+  end if;
+end $$;
+
+-- unique index for username lookups (case-insensitive)
+create unique index if not exists user_profiles_username_uidx
+  on public.user_profiles (lower(username))
+  where username is not null;
+
+-- ── User connections (friend requests / social graph) ─────────────────────────
+create table if not exists public.user_connections (
+  id            uuid        primary key default gen_random_uuid(),
+  requester_id  uuid        not null references auth.users(id) on delete cascade,
+  addressee_id  uuid        not null references auth.users(id) on delete cascade,
+  status        text        not null default 'pending'
+                            check (status in ('pending', 'accepted', 'blocked')),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique (requester_id, addressee_id)
+);
+create index if not exists uc_requester_idx on public.user_connections(requester_id, status);
+create index if not exists uc_addressee_idx on public.user_connections(addressee_id, status);
+alter table public.user_connections enable row level security;
+
+drop policy if exists "uc_parties_read" on public.user_connections;
+create policy "uc_parties_read" on public.user_connections
+  for select using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+drop policy if exists "uc_requester_insert" on public.user_connections;
+create policy "uc_requester_insert" on public.user_connections
+  for insert with check (auth.uid() = requester_id);
+
+drop policy if exists "uc_addressee_update" on public.user_connections;
+create policy "uc_addressee_update" on public.user_connections
+  for update using (auth.uid() = addressee_id or auth.uid() = requester_id);
+
+drop policy if exists "uc_parties_delete" on public.user_connections;
+create policy "uc_parties_delete" on public.user_connections
+  for delete using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+-- ── Stories ───────────────────────────────────────────────────────────────────
+create table if not exists public.community_stories (
+  id          uuid        primary key default gen_random_uuid(),
+  user_id     uuid        not null references auth.users(id) on delete cascade,
+  media_url   text        not null,
+  media_type  text        not null default 'photo'
+                          check (media_type in ('photo', 'video')),
+  caption     text,
+  expires_at  timestamptz not null default (now() + interval '24 hours'),
+  created_at  timestamptz not null default now()
+);
+create index if not exists cs_user_idx    on public.community_stories(user_id);
+create index if not exists cs_expires_idx on public.community_stories(expires_at);
+alter table public.community_stories enable row level security;
+
+drop policy if exists "stories_auth_read" on public.community_stories;
+create policy "stories_auth_read" on public.community_stories
+  for select using (auth.role() = 'authenticated' and expires_at > now());
+
+drop policy if exists "stories_owner_insert" on public.community_stories;
+create policy "stories_owner_insert" on public.community_stories
+  for insert with check (auth.uid() = user_id);
+
+drop policy if exists "stories_owner_delete" on public.community_stories;
+create policy "stories_owner_delete" on public.community_stories
+  for delete using (auth.uid() = user_id);
+
+-- ── Story views ───────────────────────────────────────────────────────────────
+create table if not exists public.story_views (
+  story_id    uuid        not null references public.community_stories(id) on delete cascade,
+  viewer_id   uuid        not null references auth.users(id) on delete cascade,
+  viewed_at   timestamptz not null default now(),
+  primary key (story_id, viewer_id)
+);
+create index if not exists sv_story_idx on public.story_views(story_id);
+alter table public.story_views enable row level security;
+
+drop policy if exists "sv_auth_read" on public.story_views;
+create policy "sv_auth_read" on public.story_views
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists "sv_owner_insert" on public.story_views;
+create policy "sv_owner_insert" on public.story_views
+  for insert with check (auth.uid() = viewer_id);
+
+-- ── Post tags (@mentions) ─────────────────────────────────────────────────────
+create table if not exists public.post_tags (
+  post_id     uuid    not null references public.community_posts(id) on delete cascade,
+  user_id     uuid    not null references auth.users(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (post_id, user_id)
+);
+create index if not exists pt_user_idx on public.post_tags(user_id);
+alter table public.post_tags enable row level security;
+
+drop policy if exists "post_tags_auth_read" on public.post_tags;
+create policy "post_tags_auth_read" on public.post_tags
+  for select using (auth.role() = 'authenticated');
+
+drop policy if exists "post_tags_owner_insert" on public.post_tags;
+create policy "post_tags_owner_insert" on public.post_tags
+  for insert with check (
+    exists (select 1 from public.community_posts where id = post_id and user_id = auth.uid())
+  );
+
 -- ── Realtime publication for broadcast ───────────────────────────────────────
 -- Enable realtime for chat_messages so clients receive new messages via
 -- postgres_changes (reliable delivery, works without presence).
@@ -326,3 +492,4 @@ alter publication supabase_realtime add table public.chat_messages;
 alter publication supabase_realtime add table public.community_posts;
 alter publication supabase_realtime add table public.community_notifications;
 alter publication supabase_realtime add table public.message_requests;
+alter publication supabase_realtime add table public.post_comments;

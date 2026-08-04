@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { colors, spacing } from '../../theme/theme';
+import { colors, spacing, shadows } from '../../theme/theme';
 import { deleteStory, viewStory } from '../../lib/communityApi';
 import type { Story } from '../../lib/communityApi';
 
@@ -260,8 +260,6 @@ const sv = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   topGradient: {
     position: 'absolute', left: 0, right: 0, top: 0, height: 180,
-    background: 'transparent',
-    // Simulated gradient via opacity background
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   bottomGradient: {
@@ -293,7 +291,7 @@ const sv = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  authorName: { color: '#fff', fontSize: 14, fontWeight: '700', ...shadows.text as any },
+  authorName: { color: '#fff', fontSize: 14, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   storyTime: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
   viewCount: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   viewCountText: { color: 'rgba(255,255,255,0.8)', fontSize: 13 },

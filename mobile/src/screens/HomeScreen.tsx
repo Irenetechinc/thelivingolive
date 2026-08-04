@@ -94,6 +94,7 @@ export default function HomeScreen({ navigation }: Props) {
     oliveChat: 0,
   });
   const [newOliveChatPosts, setNewOliveChatPosts] = useState(0);
+  const [newOliveChatComments, setNewOliveChatComments] = useState(0);
 
   useEffect(() => {
     Animated.spring(headerAnim, { toValue: 1, tension: 55, friction: 9, useNativeDriver: true }).start();
@@ -107,7 +108,8 @@ export default function HomeScreen({ navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       loadUnreadCounts();
-      setNewOliveChatPosts(0); // reset when returning from OliveChat
+      setNewOliveChatPosts(0);    // reset when returning from OliveChat
+      setNewOliveChatComments(0); // reset comment counter too
     }, [])
   );
 
@@ -158,12 +160,15 @@ export default function HomeScreen({ navigation }: Props) {
           })
           .subscribe();
       }
-      // Live feed activity counter — increments when anyone posts
+      // Live feed activity counter — increments when anyone posts or comments
       if (!supabase.getChannels().find(c => c.topic === `realtime:${feedChannelName}`)) {
         supabase
           .channel(feedChannelName)
           .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_posts" }, () => {
             setNewOliveChatPosts(prev => prev + 1);
+          })
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "post_comments" }, () => {
+            setNewOliveChatComments(prev => prev + 1);
           })
           .subscribe();
       }
@@ -264,8 +269,13 @@ export default function HomeScreen({ navigation }: Props) {
                 <View style={styles.cardBody}>
                   <Text style={styles.cardTitle}>{card.title}</Text>
                   <Text style={styles.cardDesc}>
-                    {card.key === "OliveChat" && newOliveChatPosts > 0
-                      ? `${newOliveChatPosts} new post${newOliveChatPosts > 1 ? 's' : ''} · `
+                    {card.key === "OliveChat" && (newOliveChatPosts > 0 || newOliveChatComments > 0)
+                      ? (() => {
+                          const parts: string[] = [];
+                          if (newOliveChatPosts > 0) parts.push(`${newOliveChatPosts} new post${newOliveChatPosts > 1 ? 's' : ''}`);
+                          if (newOliveChatComments > 0) parts.push(`${newOliveChatComments} comment${newOliveChatComments > 1 ? 's' : ''}`);
+                          return parts.join(' · ') + ' · ';
+                        })()
                       : ""}
                     {card.description}
                   </Text>

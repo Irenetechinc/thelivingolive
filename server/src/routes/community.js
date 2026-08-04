@@ -955,20 +955,30 @@ router.get('/message-requests', async (req, res) => {
     .select('id, room_id, sender_id, receiver_id, status, created_at')
     .eq('receiver_id', req.user.id)
     .order('created_at', { ascending: false });
-  if (error) { log.error('message-requests fetch error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
+  if (error) {
+    // Gracefully handle missing table (schema not yet applied)
+    if (error.code === '42P01') return res.json({ ok: true, requests: [] });
+    log.error('message-requests fetch error:', error.message);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
 
-  // Enrich with sender display name
-  const senderIds = [...new Set((data ?? []).map(r => r.sender_id))];
-  const { data: profiles } = senderIds.length
-    ? await supabase.from('user_profiles').select('user_id, display_name, avatar_url').in('user_id', senderIds)
-    : { data: [] };
-  const profileMap = Object.fromEntries((profiles ?? []).map(p => [p.user_id, p]));
+  // Enrich with sender display name — user_profiles.id IS the user UUID (PK)
+  const senderIds = [...new Set((data ?? []).map(r => r.sender_id).filter(Boolean))];
+  const nameMap = senderIds.length ? await resolveDisplayNames(supabase, senderIds) : {};
 
   res.json({
+    ok: true,
     requests: (data ?? []).map(r => ({
-      ...r,
-      senderName: profileMap[r.sender_id]?.display_name ?? 'Unknown',
-      senderAvatar: profileMap[r.sender_id]?.avatar_url ?? null,
+      id: r.id,
+      roomId: r.room_id ?? null,
+      status: r.status,
+      createdAt: r.created_at,
+      fromUser: {
+        userId: r.sender_id,
+        name: nameMap[r.sender_id]?.name ?? 'Member',
+        avatarUrl: nameMap[r.sender_id]?.avatarUrl ?? null,
+      },
+      toUserId: r.receiver_id,
     })),
   });
 });

@@ -262,7 +262,18 @@ export async function getChurchMembers(): Promise<Author[]> {
 
 export async function getMessageRequests(): Promise<MessageRequest[]> {
   const r = await apiCall<any>('/api/community/message-requests');
-  return r.requests ?? [];
+  return (r.requests ?? []).map((req: any): MessageRequest => ({
+    id: req.id,
+    fromUser: {
+      userId: req.fromUser?.userId ?? req.sender_id ?? '',
+      name: req.fromUser?.name ?? req.senderName ?? 'Member',
+      avatarUrl: req.fromUser?.avatarUrl ?? req.senderAvatar ?? null,
+    },
+    toUserId: req.toUserId ?? req.receiver_id ?? '',
+    roomId: req.roomId ?? req.room_id ?? null,
+    status: req.status ?? 'pending',
+    createdAt: req.createdAt ?? req.created_at ?? '',
+  }));
 }
 
 export async function respondToRequest(requestId: string, action: 'accept' | 'reject' | 'block'): Promise<{ roomId?: string }> {
