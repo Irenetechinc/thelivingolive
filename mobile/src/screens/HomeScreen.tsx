@@ -93,6 +93,7 @@ export default function HomeScreen({ navigation }: Props) {
     prayer: 0,
     oliveChat: 0,
   });
+  const [newOliveChatPosts, setNewOliveChatPosts] = useState(0);
 
   useEffect(() => {
     Animated.spring(headerAnim, { toValue: 1, tension: 55, friction: 9, useNativeDriver: true }).start();
@@ -102,10 +103,11 @@ export default function HomeScreen({ navigation }: Props) {
     ).start();
   }, []);
 
-  // Refresh unread counts every time the screen comes into focus
+  // Refresh unread counts every time the screen comes into focus; reset live post counter
   useFocusEffect(
     useCallback(() => {
       loadUnreadCounts();
+      setNewOliveChatPosts(0); // reset when returning from OliveChat
     }, [])
   );
 
@@ -141,6 +143,7 @@ export default function HomeScreen({ navigation }: Props) {
       // Wire up realtime for Olive Chat badge — keep alive as long as the
       // navigator is mounted (not just while HomeScreen is focused).
       const channelName = `home:notifs:${user.id}`;
+      const feedChannelName = `home:feed:${user.id}`;
       // Avoid duplicate subscriptions if loadUnreadCounts is called again
       if (!supabase.getChannels().find(c => c.topic === `realtime:${channelName}`)) {
         supabase
@@ -152,6 +155,15 @@ export default function HomeScreen({ navigation }: Props) {
             filter: `recipient_id=eq.${user.id}`,
           }, () => {
             setUnreadCounts(prev => ({ ...prev, oliveChat: prev.oliveChat + 1 }));
+          })
+          .subscribe();
+      }
+      // Live feed activity counter — increments when anyone posts
+      if (!supabase.getChannels().find(c => c.topic === `realtime:${feedChannelName}`)) {
+        supabase
+          .channel(feedChannelName)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_posts" }, () => {
+            setNewOliveChatPosts(prev => prev + 1);
           })
           .subscribe();
       }
@@ -251,7 +263,12 @@ export default function HomeScreen({ navigation }: Props) {
 
                 <View style={styles.cardBody}>
                   <Text style={styles.cardTitle}>{card.title}</Text>
-                  <Text style={styles.cardDesc}>{card.description}</Text>
+                  <Text style={styles.cardDesc}>
+                    {card.key === "OliveChat" && newOliveChatPosts > 0
+                      ? `${newOliveChatPosts} new post${newOliveChatPosts > 1 ? 's' : ''} · `
+                      : ""}
+                    {card.description}
+                  </Text>
                 </View>
 
                 <View style={styles.cardRight}>

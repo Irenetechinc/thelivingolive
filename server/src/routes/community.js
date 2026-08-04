@@ -128,23 +128,47 @@ router.get('/profile', async (req, res) => {
 
 router.get('/profile/:userId', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { data } = await supabase
-    .from('user_profiles')
-    .select('id, display_name, bio, avatar_url, cover_url, date_of_birth')
-    .eq('id', req.params.userId)
-    .maybeSingle();
-  if (!data) return res.status(404).json({ error: 'Profile not found' });
-  res.json({ ok: true, profile: data });
+  const me = req.user.id;
+  const them = req.params.userId;
+  const [profileRes, connRes, postCountRes] = await Promise.all([
+    supabase.from('user_profiles')
+      .select('id, display_name, bio, avatar_url, cover_url, date_of_birth, username, church_affiliation, location, state, country, education, gender, website, dob_public')
+      .eq('id', them).maybeSingle(),
+    supabase.from('user_connections')
+      .select('id, status, requester_id, addressee_id, created_at')
+      .or(`and(requester_id.eq.${me},addressee_id.eq.${them}),and(requester_id.eq.${them},addressee_id.eq.${me})`)
+      .maybeSingle(),
+    supabase.from('community_posts').select('id', { count: 'exact', head: true }).eq('user_id', them),
+    supabase.from('user_connections').select('id', { count: 'exact', head: true })
+      .or(`requester_id.eq.${them},addressee_id.eq.${them}`).eq('status', 'accepted'),
+  ]);
+  if (!profileRes.data) return res.status(404).json({ error: 'Profile not found' });
+  const p = profileRes.data;
+  res.json({ ok: true, profile: { ...p, connectionStatus: connRes.data ?? null, postCount: postCountRes.count ?? 0 } });
 });
 
 router.put('/profile', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { displayName, bio, dateOfBirth } = req.body;
+  const {
+    displayName, bio, dateOfBirth,
+    username, churchAffiliation, location, state, country,
+    education, gender, website, dobPublic,
+  } = req.body;
   const updates = { updated_at: new Date().toISOString() };
   if (displayName !== undefined) updates.display_name = String(displayName).slice(0, 60).trim() || null;
   if (bio !== undefined) updates.bio = String(bio).slice(0, 500).trim() || null;
   if (dateOfBirth !== undefined) updates.date_of_birth = dateOfBirth || null;
-  await supabase.from('user_profiles').upsert({ id: req.user.id, ...updates }, { onConflict: 'id' });
+  if (username !== undefined) updates.username = username ? String(username).replace(/[^a-zA-Z0-9_.]/g, '').slice(0, 30) || null : null;
+  if (churchAffiliation !== undefined) updates.church_affiliation = String(churchAffiliation).slice(0, 120).trim() || null;
+  if (location !== undefined) updates.location = String(location).slice(0, 100).trim() || null;
+  if (state !== undefined) updates.state = String(state).slice(0, 60).trim() || null;
+  if (country !== undefined) updates.country = String(country).slice(0, 60).trim() || null;
+  if (education !== undefined) updates.education = String(education).slice(0, 120).trim() || null;
+  if (gender !== undefined) updates.gender = String(gender).slice(0, 40).trim() || null;
+  if (website !== undefined) updates.website = String(website).slice(0, 200).trim() || null;
+  if (dobPublic !== undefined) updates.dob_public = Boolean(dobPublic);
+  const { error } = await supabase.from('user_profiles').upsert({ id: req.user.id, ...updates }, { onConflict: 'id' });
+  if (error) { log.error('profile update error:', error.message); return res.status(500).json({ error: 'Could not update profile. Please try again.' }); }
   res.json({ ok: true });
 });
 
@@ -1030,6 +1054,222 @@ router.get('/rooms/:roomId/partner-read', async (req, res) => {
     .maybeSingle();
 
   res.json({ lastReadAt: partner?.last_read_at ?? null });
+});
+
+// ── User search ───────────────────────────────────────────────────────────────
+router.get('/users/search', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const q = String(req.query.q ?? '').trim();
+  if (!q || q.length < 2) return res.json({ ok: true, users: [] });
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('id, display_name, bio, avatar_url, username, church_affiliation, location, state, country')
+    .or(`display_name.ilike.%${q}%,username.ilike.%${q}%`)
+    .neq('id', req.user.id)
+    .limit(30);
+  if (error) { log.error('user-search error:', error.message); return res.status(500).json({ error: 'Search failed' }); }
+  res.json({ ok: true, users: data ?? [] });
+});
+
+// ── Connections ───────────────────────────────────────────────────────────────
+router.get('/connections', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const userId = req.user.id;
+  const { data, error } = await supabase
+    .from('user_connections')
+    .select('id, requester_id, addressee_id, status, created_at')
+    .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
+    .eq('status', 'accepted');
+  if (error) return res.status(500).json({ error: 'Could not fetch connections' });
+  const otherIds = (data ?? []).map(c => c.requester_id === userId ? c.addressee_id : c.requester_id);
+  const names = otherIds.length ? await resolveDisplayNames(supabase, otherIds) : {};
+  const connections = (data ?? []).map(c => {
+    const otherId = c.requester_id === userId ? c.addressee_id : c.requester_id;
+    return { id: c.id, userId: otherId, name: names[otherId]?.name ?? 'Member', avatarUrl: names[otherId]?.avatarUrl ?? null, status: c.status, createdAt: c.created_at };
+  });
+  res.json({ ok: true, connections });
+});
+
+router.get('/connections/requests', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data, error } = await supabase
+    .from('user_connections')
+    .select('id, requester_id, status, created_at')
+    .eq('addressee_id', req.user.id)
+    .eq('status', 'pending');
+  if (error) return res.status(500).json({ error: 'Could not fetch requests' });
+  const names = data?.length ? await resolveDisplayNames(supabase, data.map(r => r.requester_id)) : {};
+  const requests = (data ?? []).map(r => ({
+    id: r.id, userId: r.requester_id,
+    name: names[r.requester_id]?.name ?? 'Member',
+    avatarUrl: names[r.requester_id]?.avatarUrl ?? null,
+    status: r.status, createdAt: r.created_at,
+  }));
+  res.json({ ok: true, requests });
+});
+
+router.post('/connections/request', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { targetUserId } = req.body;
+  if (!targetUserId) return res.status(400).json({ error: 'targetUserId required' });
+  if (targetUserId === req.user.id) return res.status(400).json({ error: 'Cannot connect with yourself' });
+  // Check existing in either direction
+  const { data: existing } = await supabase
+    .from('user_connections')
+    .select('id, status')
+    .or(`and(requester_id.eq.${req.user.id},addressee_id.eq.${targetUserId}),and(requester_id.eq.${targetUserId},addressee_id.eq.${req.user.id})`)
+    .maybeSingle();
+  if (existing) {
+    if (existing.status === 'accepted') return res.status(409).json({ error: 'Already connected' });
+    if (existing.status === 'pending') return res.json({ ok: true, connection: { id: existing.id, status: 'pending', requesterId: req.user.id } });
+  }
+  const { data, error } = await supabase
+    .from('user_connections')
+    .insert({ requester_id: req.user.id, addressee_id: targetUserId, status: 'pending' })
+    .select().single();
+  if (error) { log.error('connection-request error:', error.message); return res.status(500).json({ error: 'Could not send request' }); }
+  res.json({ ok: true, connection: data });
+});
+
+router.put('/connections/:id', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { action } = req.body;
+  if (!['accept', 'decline', 'block'].includes(action)) return res.status(400).json({ error: 'action must be accept, decline, or block' });
+  const { data: conn } = await supabase.from('user_connections').select('*').eq('id', req.params.id).maybeSingle();
+  if (!conn) return res.status(404).json({ error: 'Connection not found' });
+  if (conn.addressee_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+  if (action === 'decline') {
+    await supabase.from('user_connections').delete().eq('id', req.params.id);
+    return res.json({ ok: true });
+  }
+  const status = action === 'block' ? 'blocked' : 'accepted';
+  const { data, error } = await supabase.from('user_connections').update({ status, updated_at: new Date().toISOString() }).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: 'Could not update connection' });
+  res.json({ ok: true, connection: data });
+});
+
+router.delete('/connections/:id', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data: conn } = await supabase.from('user_connections').select('requester_id, addressee_id').eq('id', req.params.id).maybeSingle();
+  if (!conn) return res.status(404).json({ error: 'Not found' });
+  if (conn.requester_id !== req.user.id && conn.addressee_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+  await supabase.from('user_connections').delete().eq('id', req.params.id);
+  res.json({ ok: true });
+});
+
+router.get('/connections/status/:userId', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const me = req.user.id;
+  const them = req.params.userId;
+  const { data } = await supabase
+    .from('user_connections')
+    .select('id, status, requester_id, addressee_id, created_at')
+    .or(`and(requester_id.eq.${me},addressee_id.eq.${them}),and(requester_id.eq.${them},addressee_id.eq.${me})`)
+    .maybeSingle();
+  res.json({ ok: true, connection: data ?? null });
+});
+
+// ── User posts ─────────────────────────────────────────────────────────────────
+router.get('/profile/:userId/posts', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data, error } = await supabase
+    .from('community_posts')
+    .select('id, body, image_url, video_url, video_thumbnail_url, like_count, comment_count, created_at')
+    .eq('user_id', req.params.userId)
+    .order('created_at', { ascending: false })
+    .limit(30);
+  if (error) return res.status(500).json({ error: 'Could not fetch posts' });
+  res.json({ ok: true, posts: data ?? [] });
+});
+
+// ── Stories ───────────────────────────────────────────────────────────────────
+const storyUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
+
+router.get('/stories', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const me = req.user.id;
+  // Get accepted connections
+  const { data: conns } = await supabase
+    .from('user_connections')
+    .select('requester_id, addressee_id')
+    .or(`requester_id.eq.${me},addressee_id.eq.${me}`)
+    .eq('status', 'accepted');
+  const connectedIds = (conns ?? []).map(c => c.requester_id === me ? c.addressee_id : c.requester_id);
+  const visibleIds = [me, ...connectedIds];
+  const { data: stories, error } = await supabase
+    .from('community_stories')
+    .select('id, user_id, media_url, media_type, caption, expires_at, created_at')
+    .in('user_id', visibleIds)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false });
+  if (error) {
+    // Gracefully return empty if table doesn't exist yet
+    if (error.code === '42P01') return res.json({ ok: true, stories: [] });
+    return res.status(500).json({ error: 'Could not fetch stories' });
+  }
+  const storyIds = (stories ?? []).map(s => s.id);
+  const { data: views } = storyIds.length
+    ? await supabase.from('story_views').select('story_id, viewer_id').in('story_id', storyIds)
+    : { data: [] };
+  const viewCounts = {};
+  const seenByMe = new Set();
+  for (const v of (views ?? [])) {
+    viewCounts[v.story_id] = (viewCounts[v.story_id] ?? 0) + 1;
+    if (v.viewer_id === me) seenByMe.add(v.story_id);
+  }
+  const authorIds = [...new Set((stories ?? []).map(s => s.user_id))];
+  const names = authorIds.length ? await resolveDisplayNames(supabase, authorIds) : {};
+  const result = (stories ?? []).map(s => ({
+    id: s.id, userId: s.user_id,
+    authorName: names[s.user_id]?.name ?? 'Member',
+    authorAvatarUrl: names[s.user_id]?.avatarUrl ?? null,
+    mediaUrl: s.media_url, mediaType: s.media_type,
+    caption: s.caption ?? null, expiresAt: s.expires_at, createdAt: s.created_at,
+    viewCount: viewCounts[s.id] ?? 0, seenByMe: seenByMe.has(s.id),
+  }));
+  res.json({ ok: true, stories: result });
+});
+
+router.post('/stories/upload', withJsonError(storyUpload.single('file')), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  await ensureStorageBucket(supabase);
+  const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const path = `stories/${req.user.id}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (error) { log.error('story upload error:', error.message); return res.status(500).json({ error: 'Upload failed' }); }
+  const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
+  const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'photo';
+  res.json({ ok: true, url: publicUrl, mediaType });
+});
+
+router.post('/stories', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { mediaUrl, mediaType, caption } = req.body;
+  if (!mediaUrl) return res.status(400).json({ error: 'mediaUrl required' });
+  const { data, error } = await supabase.from('community_stories')
+    .insert({ user_id: req.user.id, media_url: mediaUrl, media_type: mediaType ?? 'photo', caption: caption ?? null })
+    .select().single();
+  if (error) { log.error('create story error:', error.message); return res.status(500).json({ error: 'Could not create story' }); }
+  const names = await resolveDisplayNames(supabase, [req.user.id]);
+  res.json({ ok: true, story: { ...data, userId: data.user_id, authorName: names[req.user.id]?.name ?? 'Member', authorAvatarUrl: names[req.user.id]?.avatarUrl ?? null, viewCount: 0, seenByMe: false } });
+});
+
+router.post('/stories/:id/view', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  await supabase.from('story_views').upsert({ story_id: req.params.id, viewer_id: req.user.id }, { onConflict: 'story_id,viewer_id' });
+  res.json({ ok: true });
+});
+
+router.delete('/stories/:id', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data: story } = await supabase.from('community_stories').select('user_id, media_url').eq('id', req.params.id).maybeSingle();
+  if (!story) return res.status(404).json({ error: 'Not found' });
+  if (story.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+  const storagePath = story.media_url.split('/community/')[1];
+  if (storagePath) await supabase.storage.from('community').remove([storagePath]).catch(() => {});
+  await supabase.from('community_stories').delete().eq('id', req.params.id);
+  res.json({ ok: true });
 });
 
 export { router as communityRouter };

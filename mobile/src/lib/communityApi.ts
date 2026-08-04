@@ -21,6 +21,41 @@ export type UserProfile = {
   dateOfBirth: string | null;
   email?: string;
   pinSet?: boolean;
+  // Extended social fields
+  username: string | null;
+  churchAffiliation: string | null;
+  location: string | null;
+  state: string | null;
+  country: string | null;
+  education: string | null;
+  gender: string | null;
+  website: string | null;
+  dobPublic: boolean;
+  connectionCount?: number;
+};
+
+export type Story = {
+  id: string;
+  userId: string;
+  authorName: string;
+  authorAvatarUrl: string | null;
+  mediaUrl: string;
+  mediaType: 'photo' | 'video';
+  caption: string | null;
+  expiresAt: string;
+  createdAt: string;
+  viewCount: number;
+  seenByMe: boolean;
+};
+
+export type Connection = {
+  id: string;
+  userId: string;
+  name: string;
+  avatarUrl: string | null;
+  status: 'pending' | 'accepted' | 'blocked';
+  requesterId?: string;
+  createdAt?: string;
 };
 
 export type Author = { userId: string; name: string; avatarUrl: string | null };
@@ -144,24 +179,40 @@ async function uploadFileWithMeta(path: string, uri: string, mimeType: string): 
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 
-export async function getMyProfile(): Promise<UserProfile> {
-  const r = await apiCall<any>('/api/community/profile');
-  const p = r.profile;
+function mapProfile(p: any, extra?: { email?: string }): UserProfile {
   return {
     id: p.id, displayName: p.display_name ?? null, bio: p.bio ?? null,
     avatarUrl: p.avatar_url ?? null, coverUrl: p.cover_url ?? null,
-    dateOfBirth: p.date_of_birth ?? null, email: p.email,
+    dateOfBirth: p.date_of_birth ?? null, email: extra?.email,
+    username: p.username ?? null,
+    churchAffiliation: p.church_affiliation ?? null,
+    location: p.location ?? null,
+    state: p.state ?? null,
+    country: p.country ?? null,
+    education: p.education ?? null,
+    gender: p.gender ?? null,
+    website: p.website ?? null,
+    dobPublic: p.dob_public ?? false,
+    connectionCount: p.connectionCount ?? 0,
   };
+}
+
+export async function getMyProfile(): Promise<UserProfile> {
+  const r = await apiCall<any>('/api/community/profile');
+  return mapProfile(r.profile, { email: r.profile?.email });
 }
 
 export async function getUserProfile(userId: string): Promise<UserProfile> {
   const r = await apiCall<any>(`/api/community/profile/${userId}`);
-  const p = r.profile;
-  return { id: p.id, displayName: p.display_name ?? null, bio: p.bio ?? null,
-    avatarUrl: p.avatar_url ?? null, coverUrl: p.cover_url ?? null, dateOfBirth: p.date_of_birth ?? null };
+  return mapProfile(r.profile);
 }
 
-export async function updateProfile(updates: { displayName?: string; bio?: string; dateOfBirth?: string }): Promise<void> {
+export async function updateProfile(updates: {
+  displayName?: string; bio?: string; dateOfBirth?: string;
+  username?: string; churchAffiliation?: string; location?: string;
+  state?: string; country?: string; education?: string;
+  gender?: string; website?: string; dobPublic?: boolean;
+}): Promise<void> {
   await apiCall('/api/community/profile', 'PUT', updates);
 }
 
@@ -483,6 +534,85 @@ export function subscribeToMessageRequests(
     )
     .subscribe();
   return () => supabase.removeChannel(channel);
+}
+
+// ── Stories ───────────────────────────────────────────────────────────────────
+
+export async function getStories(): Promise<Story[]> {
+  const r = await apiCall<any>('/api/community/stories');
+  return r.stories ?? [];
+}
+
+export async function uploadStoryMedia(uri: string): Promise<{ url: string; mediaType: 'photo' | 'video' }> {
+  const headers = await authHeader();
+  delete (headers as any)['Content-Type'];
+  const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const mimeType = ['mp4', 'mov', 'avi', 'webm', '3gp'].includes(ext) ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+  const fd = new FormData();
+  fd.append('file', { uri, name: `story.${ext}`, type: mimeType } as any);
+  const res = await fetch(`${API}/api/community/stories/upload`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(180_000) });
+  const json = await res.json().catch(() => ({ error: 'Upload failed' }));
+  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  return { url: json.url as string, mediaType: json.mediaType as 'photo' | 'video' };
+}
+
+export async function createStory(mediaUrl: string, mediaType: 'photo' | 'video', caption?: string): Promise<Story> {
+  const r = await apiCall<any>('/api/community/stories', 'POST', { mediaUrl, mediaType, caption });
+  return r.story as Story;
+}
+
+export async function viewStory(storyId: string): Promise<void> {
+  await apiCall(`/api/community/stories/${storyId}/view`, 'POST');
+}
+
+export async function deleteStory(storyId: string): Promise<void> {
+  await apiCall(`/api/community/stories/${storyId}`, 'DELETE');
+}
+
+// ── Social graph ──────────────────────────────────────────────────────────────
+
+export async function searchUsers(q: string): Promise<UserProfile[]> {
+  const r = await apiCall<any>(`/api/community/users/search?q=${encodeURIComponent(q)}`);
+  return (r.users ?? []).map((u: any) => mapProfile(u));
+}
+
+export async function getConnections(): Promise<Connection[]> {
+  const r = await apiCall<any>('/api/community/connections');
+  return r.connections ?? [];
+}
+
+export async function getConnectionRequests(): Promise<Connection[]> {
+  const r = await apiCall<any>('/api/community/connections/requests');
+  return r.requests ?? [];
+}
+
+export async function sendConnectionRequest(targetUserId: string): Promise<Connection> {
+  const r = await apiCall<any>('/api/community/connections/request', 'POST', { targetUserId });
+  return r.connection as Connection;
+}
+
+export async function respondToConnection(connectionId: string, action: 'accept' | 'decline' | 'block'): Promise<void> {
+  await apiCall(`/api/community/connections/${connectionId}`, 'PUT', { action });
+}
+
+export async function removeConnection(connectionId: string): Promise<void> {
+  await apiCall(`/api/community/connections/${connectionId}`, 'DELETE');
+}
+
+export async function getConnectionStatus(userId: string): Promise<Connection | null> {
+  const r = await apiCall<any>(`/api/community/connections/status/${userId}`);
+  return r.connection ?? null;
+}
+
+export async function getUserPosts(userId: string): Promise<CommunityPost[]> {
+  const r = await apiCall<any>(`/api/community/profile/${userId}/posts`);
+  return (r.posts ?? []).map((p: any): CommunityPost => ({
+    id: p.id, body: p.body ?? null, imageUrl: p.image_url ?? null,
+    videoUrl: p.video_url ?? null, videoThumbnailUrl: p.video_thumbnail_url ?? null,
+    likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
+    liked: false, createdAt: p.created_at,
+    taggedUsers: [], author: { userId, name: '', avatarUrl: null },
+  }));
 }
 
 // ── Internal mapper ───────────────────────────────────────────────────────────

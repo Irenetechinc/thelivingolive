@@ -43,8 +43,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd mobile && export EXPO_PUBLIC_SUPABASE_URL=\"$SUPABASE_URL\" && export EXPO_PUBLIC_SUPABASE_ANON_KEY=\"$SUPABASE_ANON_KEY\" && export EXPO_PUBLIC_API_URL=\"https://livingolive.adroomai.com\" && npx expo start --tunnel --port 8080"
-waitForPort = 8080
+args = "cd mobile && unset EXPO_TOKEN && export EXPO_PUBLIC_SUPABASE_URL=\"$SUPABASE_URL\" && export EXPO_PUBLIC_SUPABASE_ANON_KEY=\"$SUPABASE_ANON_KEY\" && export EXPO_PUBLIC_API_URL=\"https://livingolive.adroomai.com\" && npx expo start --port 8080"
 
 [[ports]]
 localPort = 5000

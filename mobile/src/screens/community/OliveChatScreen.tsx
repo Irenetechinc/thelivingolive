@@ -37,12 +37,19 @@ import {
   sharePostToRoom, getNotifications, markNotificationsRead,
   getMessageRequests, respondToRequest, blockUser, getChurchMembers,
   subscribeToTimeline, subscribeToNotifications, subscribeToMessageRequests,
+  getStories, createStory, uploadStoryMedia, deleteStory,
+  getConnections, getUserPosts,
   type UserProfile, type CommunityPost, type PostComment,
   type ChatRoom, type CommunityNotification, type MessageRequest, type Author,
+  type Story, type Connection,
 } from '../../lib/communityApi';
 import { supabase } from '../../lib/supabase';
 import OliveChatSplash from '../../components/OliveChatSplash';
 import { SkeletonBox, PostSkeleton, ChatRoomSkeleton, NotifSkeleton } from '../../components/SkeletonCard';
+import StoriesRow from './StoriesRow';
+import StoryViewer from './StoryViewer';
+import UserProfileModal from './UserProfileModal';
+import PeopleSearch from './PeopleSearch';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
@@ -761,21 +768,46 @@ const pg = StyleSheet.create({
 });
 
 // ── Profile tab ───────────────────────────────────────────────────────────────
-function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile | null; profileError: boolean; onReload: () => void }) {
+function ProfileTab({
+  profile, profileError, onReload, myUserId, onViewProfile,
+}: {
+  profile: UserProfile | null; profileError: boolean; onReload: () => void;
+  myUserId: string | null; onViewProfile?: (userId: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(profile?.displayName ?? '');
-  const [bio, setBio] = useState(profile?.bio ?? '');
-  const [dob, setDob] = useState(profile?.dateOfBirth ?? '');
+  const [name, setName] = useState('');
+  const [bio, setBio] = useState('');
+  const [dob, setDob] = useState('');
+  const [username, setUsername] = useState('');
+  const [church, setChurch] = useState('');
+  const [location, setLocation] = useState('');
+  const [stateVal, setStateVal] = useState('');
+  const [country, setCountry] = useState('');
+  const [education, setEducation] = useState('');
+  const [gender, setGender] = useState('');
+  const [website, setWebsite] = useState('');
+  const [dobPublic, setDobPublic] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [pinModal, setPinModal] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [settingPin, setSettingPin] = useState(false);
   const [pinSet, setPinSet] = useState(false);
+  const [connectionCount, setConnectionCount] = useState(0);
+  const [ownPosts, setOwnPosts] = useState<CommunityPost[]>([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     if (profile) {
       setName(profile.displayName ?? ''); setBio(profile.bio ?? ''); setDob(profile.dateOfBirth ?? '');
+      setUsername(profile.username ?? ''); setChurch(profile.churchAffiliation ?? '');
+      setLocation(profile.location ?? ''); setStateVal(profile.state ?? '');
+      setCountry(profile.country ?? ''); setEducation(profile.education ?? '');
+      setGender(profile.gender ?? ''); setWebsite(profile.website ?? '');
+      setDobPublic(profile.dobPublic ?? false);
       getPinStatus().then(setPinSet).catch(() => {});
+      getConnections().then(cs => setConnectionCount(cs.length)).catch(() => {});
+      if (profile.id) getUserPosts(profile.id).then(pp => setOwnPosts(pp.slice(0, 9))).catch(() => {});
+      if (!profile.displayName && !profile.bio) setShowOnboarding(true);
     }
   }, [profile]);
 
@@ -791,8 +823,16 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
 
   async function saveProfile() {
     setSavingProfile(true);
-    try { await updateProfile({ displayName: name.trim(), bio: bio.trim(), dateOfBirth: dob || undefined }); onReload(); setEditing(false); }
-    catch { Alert.alert('Error', 'Could not save profile. Please try again.'); }
+    try {
+      await updateProfile({
+        displayName: name.trim(), bio: bio.trim(), dateOfBirth: dob || undefined,
+        username: username.trim() || undefined, churchAffiliation: church.trim() || undefined,
+        location: location.trim() || undefined, state: stateVal.trim() || undefined,
+        country: country.trim() || undefined, education: education.trim() || undefined,
+        gender: gender.trim() || undefined, website: website.trim() || undefined, dobPublic,
+      });
+      onReload(); setEditing(false);
+    } catch { Alert.alert('Error', 'Could not save profile. Please try again.'); }
     finally { setSavingProfile(false); }
   }
 
@@ -817,24 +857,15 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
   );
   if (!profile) return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-      {/* Cover skeleton */}
       <SkeletonBox style={{ height: 160, borderRadius: 0 }} />
-      {/* Avatar + edit button row */}
       <View style={{ paddingHorizontal: spacing.lg, marginTop: -40, marginBottom: spacing.sm, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <SkeletonBox style={{ width: 84, height: 84, borderRadius: 42 }} />
         <SkeletonBox style={{ width: 100, height: 34, borderRadius: 20 }} />
       </View>
-      {/* Info skeleton */}
       <View style={{ padding: spacing.lg, backgroundColor: colors.white }}>
         <SkeletonBox style={{ height: 20, width: '60%', marginBottom: 10 }} />
         <SkeletonBox style={{ height: 13, width: '80%', marginBottom: 6 }} />
         <SkeletonBox style={{ height: 13, width: '50%', marginBottom: 6 }} />
-      </View>
-      {/* Section skeleton */}
-      <View style={{ margin: spacing.lg, backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg }}>
-        <SkeletonBox style={{ height: 12, width: '40%', marginBottom: 12 }} />
-        <SkeletonBox style={{ height: 13, width: '85%', marginBottom: 8 }} />
-        <SkeletonBox style={{ height: 36, borderRadius: radii.pill, marginTop: spacing.sm }} />
       </View>
     </ScrollView>
   );
@@ -843,6 +874,24 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      {/* Onboarding prompt for new / incomplete profiles */}
+      {showOnboarding && (
+        <View style={pf.onboardingBanner}>
+          <Ionicons name="leaf-outline" size={20} color={colors.olive} />
+          <View style={{ flex: 1 }}>
+            <Text style={pf.onboardingTitle}>Complete your profile</Text>
+            <Text style={pf.onboardingDesc}>Add your name, church, and bio so others can find and connect with you.</Text>
+          </View>
+          <View style={{ gap: 6 }}>
+            <Pressable style={pf.onboardingBtn} onPress={() => { setEditing(true); setShowOnboarding(false); }}>
+              <Text style={pf.onboardingBtnText}>Set up</Text>
+            </Pressable>
+            <Pressable onPress={() => setShowOnboarding(false)}>
+              <Text style={{ fontSize: 11, color: colors.inkFaint, textAlign: 'center' }}>Later</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
       {/* Cover */}
       <Pressable onPress={() => pickAndUpload('cover')}>
         <View style={pf.cover}>
@@ -871,24 +920,81 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
           <>
             <Text style={pf.fieldLabel}>DISPLAY NAME</Text>
             <TextInput style={pf.fieldInput} value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor={colors.inkFaint} />
+            <Text style={pf.fieldLabel}>USERNAME</Text>
+            <TextInput style={pf.fieldInput} value={username} onChangeText={t => setUsername(t.replace(/[^a-zA-Z0-9_.]/g, ''))} placeholder="@username" placeholderTextColor={colors.inkFaint} autoCapitalize="none" />
             <Text style={pf.fieldLabel}>BIO</Text>
             <TextInput style={[pf.fieldInput, { minHeight: 70 }]} value={bio} onChangeText={setBio} placeholder="A little about you…" placeholderTextColor={colors.inkFaint} multiline textAlignVertical="top" />
+            <Text style={pf.fieldLabel}>CHURCH / MINISTRY</Text>
+            <TextInput style={pf.fieldInput} value={church} onChangeText={setChurch} placeholder="Your church or ministry" placeholderTextColor={colors.inkFaint} />
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <View style={{ flex: 1 }}>
+                <Text style={pf.fieldLabel}>CITY / TOWN</Text>
+                <TextInput style={pf.fieldInput} value={location} onChangeText={setLocation} placeholder="City" placeholderTextColor={colors.inkFaint} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={pf.fieldLabel}>STATE</Text>
+                <TextInput style={pf.fieldInput} value={stateVal} onChangeText={setStateVal} placeholder="State" placeholderTextColor={colors.inkFaint} />
+              </View>
+            </View>
+            <Text style={pf.fieldLabel}>COUNTRY</Text>
+            <TextInput style={pf.fieldInput} value={country} onChangeText={setCountry} placeholder="Country" placeholderTextColor={colors.inkFaint} />
+            <Text style={pf.fieldLabel}>EDUCATION</Text>
+            <TextInput style={pf.fieldInput} value={education} onChangeText={setEducation} placeholder="e.g. Seminary, University" placeholderTextColor={colors.inkFaint} />
+            <Text style={pf.fieldLabel}>GENDER</Text>
+            <TextInput style={pf.fieldInput} value={gender} onChangeText={setGender} placeholder="Optional" placeholderTextColor={colors.inkFaint} />
+            <Text style={pf.fieldLabel}>WEBSITE</Text>
+            <TextInput style={pf.fieldInput} value={website} onChangeText={setWebsite} placeholder="https://…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
             <Text style={pf.fieldLabel}>DATE OF BIRTH (YYYY-MM-DD)</Text>
             <TextInput style={pf.fieldInput} value={dob} onChangeText={setDob} placeholder="1990-01-01" placeholderTextColor={colors.inkFaint} />
+            <View style={pf.toggleRow}>
+              <Text style={pf.toggleLabel}>Show birthday publicly</Text>
+              <Pressable style={[pf.toggleBtn, dobPublic && pf.toggleBtnOn]} onPress={() => setDobPublic(v => !v)}>
+                <View style={[pf.toggleThumb, dobPublic && pf.toggleThumbOn]} />
+              </Pressable>
+            </View>
           </>
         ) : (
           <>
-            <Text style={pf.displayName}>{profile.displayName ?? profile.email?.split('@')[0]}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap', marginBottom: 4 }}>
+              <Text style={pf.displayName}>{profile.displayName ?? profile.email?.split('@')[0]}</Text>
+              {profile.username ? <Text style={pf.usernameChip}>@{profile.username}</Text> : null}
+            </View>
             {profile.bio ? <Text style={pf.bioText}>{profile.bio}</Text> : null}
-            {profile.email ? <Text style={pf.metaText}>📧 {profile.email}</Text> : null}
-            {profile.dateOfBirth ? (
-              <Text style={pf.metaText}>
-                🎂 {profile.dateOfBirth}{age !== null ? `  ·  ${age} years old` : ''}
-              </Text>
-            ) : null}
+            <View style={pf.statsRow}>
+              <View style={pf.statChip}>
+                <Text style={pf.statNum}>{connectionCount}</Text>
+                <Text style={pf.statLabel}>Connections</Text>
+              </View>
+              <View style={pf.statChip}>
+                <Text style={pf.statNum}>{ownPosts.length}</Text>
+                <Text style={pf.statLabel}>Posts</Text>
+              </View>
+            </View>
+            {profile.churchAffiliation ? <View style={pf.detailRow}><Ionicons name="business-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.churchAffiliation}</Text></View> : null}
+            {(profile.location || profile.state || profile.country) ? <View style={pf.detailRow}><Ionicons name="location-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{[profile.location, profile.state, profile.country].filter(Boolean).join(', ')}</Text></View> : null}
+            {profile.education ? <View style={pf.detailRow}><Ionicons name="school-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.education}</Text></View> : null}
+            {profile.website ? <View style={pf.detailRow}><Ionicons name="globe-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.website}</Text></View> : null}
+            {profile.dobPublic && age ? <View style={pf.detailRow}><Ionicons name="calendar-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>Age {age}</Text></View> : null}
           </>
         )}
       </View>
+      {/* Own posts mini-grid */}
+      {!editing && ownPosts.length > 0 && (
+        <View style={pf.postsSection}>
+          <Text style={pf.sectionTitle}>MY POSTS</Text>
+          <View style={pf.postsGrid}>
+            {ownPosts.map(p => (
+              <View key={p.id} style={pf.postCell}>
+                {p.imageUrl
+                  ? <Image source={{ uri: p.imageUrl }} style={pf.postThumb} resizeMode="cover" />
+                  : <View style={[pf.postThumb, { backgroundColor: colors.parchmentDark, alignItems: 'center', justifyContent: 'center', padding: 6 }]}>
+                      <Text style={{ fontSize: 10, color: colors.inkSoft, textAlign: 'center' }} numberOfLines={4}>{p.body}</Text>
+                    </View>}
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
       {/* Security */}
       <View style={pf.section}>
         <Text style={pf.sectionTitle}>OLIVE CHAT LOCK</Text>
@@ -918,6 +1024,11 @@ function ProfileTab({ profile, profileError, onReload }: { profile: UserProfile 
   );
 }
 const pf = StyleSheet.create({
+  onboardingBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: '#EDF7E8', margin: spacing.md, borderRadius: radii.xl, padding: spacing.md, borderWidth: 1, borderColor: '#C2D4A0' },
+  onboardingTitle: { fontSize: 14, fontWeight: '700', color: colors.oliveDark, marginBottom: 2 },
+  onboardingDesc: { fontSize: 12, color: colors.inkSoft, lineHeight: 16 },
+  onboardingBtn: { backgroundColor: colors.olive, borderRadius: radii.pill, paddingHorizontal: spacing.md, paddingVertical: 7, alignItems: 'center' },
+  onboardingBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   cover: { height: 160, backgroundColor: colors.oliveDark, position: 'relative', overflow: 'hidden' },
   coverEdit: { position: 'absolute', bottom: 10, right: 12, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 4 },
   coverEditText: { color: '#fff', fontSize: 12 },
@@ -927,13 +1038,29 @@ const pf = StyleSheet.create({
   editBtn: { borderRadius: radii.pill, paddingHorizontal: spacing.md, paddingVertical: 8, borderWidth: 1.5, borderColor: colors.oliveDark, alignSelf: 'flex-end', minWidth: 100, alignItems: 'center' },
   editBtnText: { color: colors.oliveDark, fontWeight: '700', fontSize: 13 },
   infoWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, backgroundColor: colors.white },
-  displayName: { fontSize: 22, fontWeight: '700', color: colors.ink, letterSpacing: -0.3, marginBottom: 6 },
-  bioText: { fontSize: 14, color: colors.inkSoft, lineHeight: 20, marginBottom: 6 },
-  metaText: { fontSize: 13, color: colors.inkFaint, marginBottom: 3 },
+  displayName: { fontSize: 22, fontWeight: '700', color: colors.ink, letterSpacing: -0.3 },
+  usernameChip: { fontSize: 13, color: colors.inkFaint, fontStyle: 'italic' },
+  bioText: { fontSize: 14, color: colors.inkSoft, lineHeight: 20, marginBottom: 8 },
+  statsRow: { flexDirection: 'row', gap: spacing.xl, marginTop: spacing.sm, marginBottom: spacing.sm },
+  statChip: { alignItems: 'center' },
+  statNum: { fontSize: 18, fontWeight: '700', color: colors.ink },
+  statLabel: { fontSize: 11, color: colors.inkFaint, marginTop: 1 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4 },
+  detailText: { fontSize: 13, color: colors.inkSoft },
   fieldLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.xs, marginTop: spacing.sm },
   fieldInput: { backgroundColor: colors.parchment, borderWidth: 1.5, borderColor: colors.parchmentDark, borderRadius: radii.md, padding: spacing.md, fontSize: 15, color: colors.ink, marginBottom: spacing.sm },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm },
+  toggleLabel: { fontSize: 14, color: colors.ink },
+  toggleBtn: { width: 46, height: 26, borderRadius: 13, backgroundColor: colors.parchmentDark, padding: 3 },
+  toggleBtnOn: { backgroundColor: colors.olive },
+  toggleThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.white },
+  toggleThumbOn: { alignSelf: 'flex-end' },
+  postsSection: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, backgroundColor: colors.white },
+  sectionTitle: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.sm, marginTop: spacing.lg },
+  postsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
+  postCell: { width: '32.5%', aspectRatio: 1 },
+  postThumb: { width: '100%', height: '100%', borderRadius: 4, overflow: 'hidden' },
   section: { margin: spacing.lg, backgroundColor: colors.white, borderRadius: radii.xl, padding: spacing.lg, ...shadows.subtle },
-  sectionTitle: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.xs },
   sectionDesc: { fontSize: 13, color: colors.inkSoft, lineHeight: 20, marginBottom: spacing.md },
   pinBtn: { backgroundColor: colors.parchment, borderRadius: radii.md, padding: spacing.md, alignItems: 'center', borderWidth: 1.5, borderColor: colors.parchmentDark },
   pinBtnText: { fontSize: 14, fontWeight: '600', color: colors.oliveDark },
@@ -1110,6 +1237,12 @@ export default function OliveChatScreen() {
   }, []);
   const [sharePost, setSharePost] = useState<CommunityPost | null>(null);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  // Stories + people search
+  const [stories, setStories] = useState<Story[]>([]);
+  const [storyViewerVisible, setStoryViewerVisible] = useState(false);
+  const [storyViewerStart, setStoryViewerStart] = useState(0);
+  const [showPeopleSearch, setShowPeopleSearch] = useState(false);
+  const [viewProfileUserId, setViewProfileUserId] = useState<string | null>(null);
 
   // Pending realtime posts — queued here instead of auto-prepended so the
   // user sees a "N new posts" banner they can tap rather than having the feed
@@ -1201,6 +1334,9 @@ export default function OliveChatScreen() {
         getNotifications().then(notifs => {
           if (active) setUnreadNotifCount(notifs.filter(n => !n.isRead).length);
         }).catch(() => {});
+
+        // ── Stories ───────────────────────────────────────────────────────────
+        getStories().then(s => { if (active) setStories(s); }).catch(() => {});
 
         // ── Real-time subscriptions (set up once per mount) ──────────────────
         if (active && !timelineUnsubRef.current) {
@@ -1376,6 +1512,23 @@ export default function OliveChatScreen() {
     ]);
   }
 
+  async function handleAddStory() {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'] as any,
+      quality: 0.9,
+      videoMaxDuration: 60,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
+    try {
+      const { url, mediaType } = await uploadStoryMedia(asset.uri);
+      const s = await createStory(url, mediaType);
+      setStories(prev => [s, ...prev]);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not create story. Please try again.');
+    }
+  }
+
   if (!pinChecked) return (
     <View style={{ flex: 1 }}>
       <OliveChatSplash onFinish={() => {}} />
@@ -1420,9 +1573,14 @@ export default function OliveChatScreen() {
               </Pressable>
             )}
             {tab === 'feed' && (
-              <Pressable style={main.headerIconBtn} onPress={() => setShowCreate(true)} hitSlop={8}>
-                <Ionicons name="add-circle-outline" size={22} color="#fff" />
-              </Pressable>
+              <>
+                <Pressable style={main.headerIconBtn} onPress={() => setShowPeopleSearch(true)} hitSlop={8}>
+                  <Ionicons name="search-outline" size={22} color="#fff" />
+                </Pressable>
+                <Pressable style={main.headerIconBtn} onPress={() => setShowCreate(true)} hitSlop={8}>
+                  <Ionicons name="add-circle-outline" size={22} color="#fff" />
+                </Pressable>
+              </>
             )}
           </View>
         </View>
@@ -1492,30 +1650,40 @@ export default function OliveChatScreen() {
               data={posts}
               keyExtractor={p => p.id}
               ListHeaderComponent={
-                <Pressable
-                  style={comp.composerRow}
-                  onPress={() => setShowCreate(true)}
-                  android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
-                >
-                  {/* User avatar */}
-                  <Avatar
-                    url={profile?.avatarUrl ?? null}
-                    name={profile?.displayName ?? profile?.email ?? '?'}
-                    size={38}
+                <>
+                  <StoriesRow
+                    stories={stories}
+                    myUserId={myUserId}
+                    myAvatarUrl={profile?.avatarUrl ?? null}
+                    myName={profile?.displayName ?? 'Me'}
+                    onAddStory={handleAddStory}
+                    onViewStory={(idx) => { setStoryViewerStart(idx); setStoryViewerVisible(true); }}
                   />
-                  {/* Placeholder text — tapping anywhere opens CreatePostModal */}
-                  <View style={comp.composerInputFake}>
-                    <Text style={comp.composerPlaceholder}>Share what's on your heart…</Text>
-                  </View>
-                  {/* Camera/image picker shortcut */}
                   <Pressable
-                    style={comp.composerCameraBtn}
+                    style={comp.composerRow}
                     onPress={() => setShowCreate(true)}
-                    hitSlop={8}
+                    android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
                   >
-                    <Ionicons name="image-outline" size={22} color={colors.olive} />
+                    {/* User avatar */}
+                    <Avatar
+                      url={profile?.avatarUrl ?? null}
+                      name={profile?.displayName ?? profile?.email ?? '?'}
+                      size={38}
+                    />
+                    {/* Placeholder text — tapping anywhere opens CreatePostModal */}
+                    <View style={comp.composerInputFake}>
+                      <Text style={comp.composerPlaceholder}>Share what's on your heart…</Text>
+                    </View>
+                    {/* Camera/image picker shortcut */}
+                    <Pressable
+                      style={comp.composerCameraBtn}
+                      onPress={() => setShowCreate(true)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="image-outline" size={22} color={colors.olive} />
+                    </Pressable>
                   </Pressable>
-                </Pressable>
+                </>
               }
               renderItem={({ item, index }) => {
                 const isNearVisible = [...visibleIndicesSnap].some(vi => Math.abs(vi - index) <= 2);
@@ -1595,11 +1763,13 @@ export default function OliveChatScreen() {
         <ProfileTab
           profile={profile}
           profileError={profileError}
+          myUserId={myUserId}
           onReload={async () => {
             setProfileError(false);
             try { const p = await getMyProfile(); setProfile(p); setProfileError(false); }
             catch { setProfileError(true); }
           }}
+          onViewProfile={(userId) => setViewProfileUserId(userId)}
         />
       )}
 
@@ -1634,6 +1804,32 @@ export default function OliveChatScreen() {
         respondingId={respondingId}
         onClose={() => setShowRequestsModal(false)}
         onRespond={handleRespondToRequest}
+      />
+
+      {/* Stories viewer */}
+      <StoryViewer
+        stories={stories}
+        startIndex={storyViewerStart}
+        myUserId={myUserId}
+        visible={storyViewerVisible}
+        onClose={() => setStoryViewerVisible(false)}
+        onDeleted={(id) => setStories(prev => prev.filter(s => s.id !== id))}
+      />
+
+      {/* User profile modal */}
+      <UserProfileModal
+        userId={viewProfileUserId}
+        myUserId={myUserId}
+        visible={!!viewProfileUserId}
+        onClose={() => setViewProfileUserId(null)}
+      />
+
+      {/* People search */}
+      <PeopleSearch
+        visible={showPeopleSearch}
+        myUserId={myUserId}
+        onClose={() => setShowPeopleSearch(false)}
+        onViewProfile={(userId) => { setShowPeopleSearch(false); setViewProfileUserId(userId); }}
       />
     </View>
   );
