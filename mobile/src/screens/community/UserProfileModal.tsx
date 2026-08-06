@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { colors, radii, spacing, typography, shadows } from '../../theme/theme';
 import {
   getUserProfile, getConnectionStatus, sendConnectionRequest,
-  removeConnection, getUserPosts,
+  removeConnection, blockUser, getUserPosts,
   type UserProfile, type Connection, type CommunityPost,
 } from '../../lib/communityApi';
 
@@ -85,6 +85,28 @@ export default function UserProfileModal({ userId, myUserId, visible, onClose, o
     }
   }
 
+  async function handleBlock() {
+    if (!userId) return;
+    Alert.alert(
+      'Block User',
+      `Block ${profile?.displayName ?? 'this user'}? They won't be able to message you or see your activity.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block', style: 'destructive', onPress: async () => {
+            setActionBusy(true);
+            try {
+              await blockUser(userId);
+              Alert.alert('Blocked', `${profile?.displayName ?? 'User'} has been blocked.`);
+              onClose();
+            } catch { Alert.alert('Error', 'Could not block user. Please try again.'); }
+            finally { setActionBusy(false); }
+          },
+        },
+      ]
+    );
+  }
+
   const isOwnProfile = userId === myUserId;
   const connLabel = !connection ? 'Connect' : connection.status === 'accepted' ? 'Connected' : connection.status === 'pending' ? 'Pending…' : 'Connect';
   const connIcon = !connection ? 'person-add-outline' : connection.status === 'accepted' ? 'checkmark-circle-outline' : 'hourglass-outline';
@@ -151,6 +173,15 @@ export default function UserProfileModal({ userId, myUserId, visible, onClose, o
                       <Text style={up.actionBtnSecondaryText}>Message</Text>
                     </Pressable>
                   )}
+                  {/* Block — shown as a small danger icon to keep the row compact */}
+                  <Pressable
+                    style={up.blockBtn}
+                    onPress={handleBlock}
+                    disabled={actionBusy}
+                    hitSlop={10}
+                  >
+                    <Ionicons name="ban-outline" size={18} color="#C0392B" />
+                  </Pressable>
                 </View>
               )}
             </View>
@@ -236,6 +267,7 @@ const up = StyleSheet.create({
   actionBtnText: { fontSize: 13, fontWeight: '700', color: colors.olive },
   actionBtnSecondary: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.md, paddingVertical: 9, borderRadius: radii.pill, borderWidth: 1.5, borderColor: colors.oliveDark },
   actionBtnSecondaryText: { fontSize: 13, fontWeight: '600', color: colors.oliveDark },
+  blockBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: '#F0C0C0', backgroundColor: '#FFF5F5', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end' },
   infoBlock: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, backgroundColor: colors.white },
   displayName: { fontSize: 22, fontWeight: '700', color: colors.ink, letterSpacing: -0.3, marginBottom: 2 },
   username: { fontSize: 14, color: colors.inkFaint, marginBottom: 6 },

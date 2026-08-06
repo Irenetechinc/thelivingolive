@@ -1010,8 +1010,14 @@ router.get('/message-requests', async (req, res) => {
     .eq('receiver_id', req.user.id)
     .order('created_at', { ascending: false });
   if (error) {
-    // Gracefully handle missing table (schema not yet applied)
-    if (error.code === '42P01') return res.json({ ok: true, requests: [] });
+    // Gracefully handle missing table (42P01) or missing column (42703 / PGRST204).
+    // Both mean the migration hasn't been applied yet — return empty so the UI
+    // degrades gracefully instead of crashing with a 500.
+    const isSchemaIssue =
+      error.code === '42P01' || error.code === '42703' || error.code === 'PGRST204' ||
+      error.message?.includes('column') || error.message?.includes('schema cache') ||
+      error.message?.includes('does not exist');
+    if (isSchemaIssue) return res.json({ ok: true, requests: [] });
     log.error('message-requests fetch error:', error.message);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
@@ -1125,12 +1131,32 @@ router.get('/users/search', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const q = String(req.query.q ?? '').trim();
   if (!q || q.length < 2) return res.json({ ok: true, users: [] });
-  const { data, error } = await supabase
+
+  // Try the full select first (extended columns added via migration).
+  // Fall back to base-only columns when the migration hasn't been applied yet.
+  let { data, error } = await supabase
     .from('user_profiles')
     .select('id, display_name, bio, avatar_url, username, church_affiliation, location, state, country')
     .or(`display_name.ilike.%${q}%,username.ilike.%${q}%`)
     .neq('id', req.user.id)
     .limit(30);
+
+  const isSchemaIssue =
+    error?.code === '42703' || error?.code === 'PGRST204' ||
+    error?.message?.includes('column') || error?.message?.includes('schema cache');
+
+  if (isSchemaIssue) {
+    // Extended columns not yet migrated — retry with guaranteed base columns only.
+    const fallback = await supabase
+      .from('user_profiles')
+      .select('id, display_name, bio, avatar_url')
+      .ilike('display_name', `%${q}%`)
+      .neq('id', req.user.id)
+      .limit(30);
+    data = fallback.data;
+    error = fallback.error;
+  }
+
   if (error) { log.error('user-search error:', error.message); return res.status(500).json({ error: 'Search failed' }); }
   res.json({ ok: true, users: data ?? [] });
 });

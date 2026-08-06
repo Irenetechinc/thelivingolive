@@ -32,9 +32,12 @@ END $$;
 ALTER TABLE public.bulletins
   ADD COLUMN IF NOT EXISTS featured_image_url text;
 
--- ── verse_explanations: quality_score column ─────────────────────────────────
+-- ── verse_explanations: add any columns present in schema.sql but missing from
+-- the live table (e.g. quality_score and generated_at if the table was created
+-- from an earlier schema revision that lacked them).
 ALTER TABLE public.verse_explanations
-  ADD COLUMN IF NOT EXISTS quality_score numeric;
+  ADD COLUMN IF NOT EXISTS quality_score  numeric,
+  ADD COLUMN IF NOT EXISTS generated_at  timestamptz NOT NULL DEFAULT now();
 
 -- ── message_requests: create table if missing, or add columns ────────────────
 CREATE TABLE IF NOT EXISTS public.message_requests (

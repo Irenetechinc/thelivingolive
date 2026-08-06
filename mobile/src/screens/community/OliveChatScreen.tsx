@@ -1104,7 +1104,7 @@ function ProfileTab({
                 <Text style={pf.statLabel}>Connections</Text>
               </View>
               <View style={pf.statChip}>
-                <Text style={pf.statNum}>{profile.postCount ?? ownPosts.length}</Text>
+                <Text style={pf.statNum}>{loadingPosts ? '…' : ownPosts.length}</Text>
                 <Text style={pf.statLabel}>Posts</Text>
               </View>
             </View>
@@ -1682,19 +1682,7 @@ export default function OliveChatScreen() {
     }
   }
 
-  if (!pinChecked) return (
-    <View style={{ flex: 1 }}>
-      <OliveChatSplash onFinish={() => {}} />
-    </View>
-  );
   if (pinLocked) return <PinGate onVerified={() => { setPinLocked(false); setShowSplash(false); }} />;
-  // Show splash as full-screen (not an overlay) to prevent blank flicker while
-  // the feed/rooms data loads behind it.
-  if (showSplash) return (
-    <View style={{ flex: 1 }}>
-      <OliveChatSplash onFinish={() => setShowSplash(false)} />
-    </View>
-  );
 
   if (notMember) return (
     <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center', padding: spacing.xl }}>
@@ -1987,6 +1975,21 @@ export default function OliveChatScreen() {
         onClose={() => setShowPeopleSearch(false)}
         onViewProfile={(userId) => { setShowPeopleSearch(false); setViewProfileUserId(userId); }}
       />
+
+      {/* ── Splash overlay ────────────────────────────────────────────────────
+          Rendered ON TOP of the already-mounted main content (which shows
+          skeleton loaders). This eliminates the blank-white flash that used
+          to appear when the early-return splash was unmounted and the main
+          content tree hadn't yet painted.
+          When the splash finishes: overlay disappears, skeletons are already
+          visible underneath → zero blank frames.                            */}
+      {(!pinChecked || showSplash) && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <OliveChatSplash
+            onFinish={pinChecked ? () => setShowSplash(false) : () => {}}
+          />
+        </View>
+      )}
     </View>
   );
 }
