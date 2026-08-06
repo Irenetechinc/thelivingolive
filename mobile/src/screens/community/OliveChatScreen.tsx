@@ -38,7 +38,7 @@ import {
   getMessageRequests, respondToRequest, blockUser, getChurchMembers,
   subscribeToTimeline, subscribeToNotifications, subscribeToMessageRequests,
   getStories, createStory, uploadStoryMedia, deleteStory,
-  getConnections, getUserPosts, togglePostLike, deletePost,
+  getConnections, getUserPosts,
   type UserProfile, type CommunityPost, type PostComment,
   type ChatRoom, type CommunityNotification, type MessageRequest, type Author,
   type Story, type Connection,
