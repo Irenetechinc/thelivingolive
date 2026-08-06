@@ -80,6 +80,14 @@ const CARDS: CardDef[] = [
     accent: "#B07ADF",
     unreadKey: "oliveChat",
   },
+  {
+    key: "OliveShop",
+    title: "Olive Shop",
+    description: "Browse & buy products from your church community",
+    symbol: "🛍",
+    gradient: ["#2B1800", "#5C3A1E"],
+    accent: "#C4860A",
+  },
 ];
 
 export default function HomeScreen({ navigation }: Props) {

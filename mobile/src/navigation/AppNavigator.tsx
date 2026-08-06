@@ -26,6 +26,7 @@ import NotificationAlarmScreen from "../screens/NotificationAlarmScreen";
 import BulletinScreen from "../screens/bulletins/BulletinScreen";
 import DonateScreen from "../screens/donate/DonateScreen";
 import OliveChatScreen from "../screens/community/OliveChatScreen";
+import OliveShopScreen from "../screens/shop/OliveShopScreen";
 import ChatRoomScreen from "../screens/community/ChatRoomScreen";
 import MembersScreen from "../screens/community/MembersScreen";
 
@@ -42,6 +43,7 @@ export type RootStackParamList = {
   Bulletin: undefined;
   Donate: undefined;
   OliveChat: undefined;
+  OliveShop: undefined;
   ChatRoom: { roomId: string; roomName: string };
   CommunityMembers: undefined;
   NotificationAlarm: {

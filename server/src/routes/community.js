@@ -54,7 +54,7 @@ function withJsonError(multerMiddleware) {
     multerMiddleware(req, res, (err) => {
       if (!err) return next();
       if (err.code === 'LIMIT_FILE_SIZE')
-        return res.status(413).json({ error: 'File too large. Maximum size is 100 MB.' });
+        return res.status(413).json({ error: 'File too large. Maximum size is 50 MB.' });
       if (err.message?.startsWith('File type not allowed'))
         return res.status(400).json({ error: 'Unsupported file type. Please upload a JPG, PNG, GIF, or video file.' });
       log.error('multer error:', err.message);
@@ -63,7 +63,9 @@ function withJsonError(multerMiddleware) {
   };
 }
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
+// 50 MB hard cap — must match Supabase free-tier fileSizeLimit in ensureStorageBucket
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
 
 // ── Expo client (shared from app.locals or created locally) ──────────────────
 function getExpo() {
@@ -587,7 +589,7 @@ router.put('/rooms/:roomId/read', async (req, res) => {
   res.json({ ok: true });
 });
 
-const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_MEDIA_TYPES) });
+const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_MEDIA_TYPES) });
 router.post('/rooms/:roomId/upload', mediaUpload.single('file'), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
@@ -683,27 +685,38 @@ router.post('/posts', async (req, res) => {
   } });
 });
 
-// Ensure the community storage bucket exists.
-// _bucketReady is only set true when creation succeeds or bucket already exists.
-// It is NOT set on a real error — that allows the next request to retry.
+// Ensure the 'community' storage bucket exists.
+// Strategy: list buckets first (avoids a failed CREATE when it already exists),
+// then create only if absent. fileSizeLimit = 50 MB to match the Supabase free
+// tier maximum — previously 100 MB caused every createBucket call to fail with
+// "The object exceeded the maximum allowed size", leaving the bucket absent.
 let _bucketReady = false;
 async function ensureStorageBucket(supabase) {
   if (_bucketReady) return;
   try {
+    // ── 1. Check existence first ──────────────────────────────────────────
+    const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
+    if (!listErr && buckets?.some(b => b.name === 'community')) {
+      _bucketReady = true;
+      return;
+    }
+
+    // ── 2. Create with 50 MB limit (Supabase free tier cap) ──────────────
     const { error } = await supabase.storage.createBucket('community', {
       public: true,
-      fileSizeLimit: 100 * 1024 * 1024, // 100MB
+      fileSizeLimit: 50 * 1024 * 1024, // 50 MB — Supabase free tier maximum
       allowedMimeTypes: ['image/*', 'video/*', 'audio/*'],
     });
+
     if (!error) {
-      log.info('storage: community bucket created');
+      log.info('storage: community bucket created (50 MB limit)');
       _bucketReady = true;
     } else if (
       error.message?.toLowerCase().includes('already exists') ||
       error.message?.toLowerCase().includes('duplicate') ||
       error.message?.toLowerCase().includes('violates')
     ) {
-      // Bucket exists — that's fine
+      // Race condition — another request created it first; that's fine
       _bucketReady = true;
     } else {
       // Real error — log it and do NOT set _bucketReady so the next call retries
@@ -1273,7 +1286,7 @@ router.get('/profile/:userId/posts', async (req, res) => {
 });
 
 // ── Stories ───────────────────────────────────────────────────────────────────
-const storyUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
+const storyUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
 
 router.get('/stories', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;

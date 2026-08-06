@@ -21,6 +21,7 @@ import { orgAdminRouter } from "./routes/orgAdmin.js";
 import { bulletinsRouter } from "./routes/bulletins.js";
 import { donateRouter } from "./routes/donate.js";
 import { communityRouter } from "./routes/community.js";
+import { shopRouter } from "./routes/shop.js";
 import { adminBus } from "./lib/adminBus.js";
 
 const log = logger("api");
@@ -842,6 +843,11 @@ app.use("/api/donate", requireUser, (req, _res, next) => {
   req.app.locals.supabaseAdmin = supabaseAdmin;
   next();
 }, donateRouter);
+
+app.use("/api/shop", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, shopRouter);
 
 // ──────────────────────────────────────────────
 // JSON-only 404 + error handling for every /api/* route.
