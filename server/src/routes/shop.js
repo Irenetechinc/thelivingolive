@@ -8,34 +8,18 @@
  */
 
 import { Router } from 'express';
-import multer from 'multer';
 import { logger } from '../lib/logger.js';
+import { ensurePublicBucket } from '../lib/storage.js';
 
 const log    = logger('shop');
 const router = Router();
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 const SHOP_BUCKET = 'shop-assets';
-const SHOP_FILE_LIMIT = 50 * 1024 * 1024; // 50 MB — Supabase free tier cap
-
-let _shopBucketReady = false;
 async function ensureShopBucket(supabase) {
-  if (_shopBucketReady) return;
-  try {
-    const { data: buckets } = await supabase.storage.listBuckets();
-    if (buckets?.some(b => b.name === SHOP_BUCKET)) { _shopBucketReady = true; return; }
-    const { error } = await supabase.storage.createBucket(SHOP_BUCKET, {
-      public: true,
-      fileSizeLimit: SHOP_FILE_LIMIT,
-      allowedMimeTypes: ['image/*', 'audio/*', 'application/pdf', 'application/epub+zip', 'application/octet-stream'],
-    });
-    if (!error || error.message?.toLowerCase().includes('already exists')) {
-      _shopBucketReady = true;
-      log.info('shop-assets bucket ready');
-    } else {
-      log.error('shop-assets bucket error:', error.message);
-    }
-  } catch (e) { log.error('ensureShopBucket threw:', e.message); }
+  await ensurePublicBucket(supabase, SHOP_BUCKET, {
+    allowedMimeTypes: ['image/*', 'video/*', 'audio/*', 'application/pdf', 'application/epub+zip', 'application/octet-stream'],
+  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -46,6 +30,21 @@ async function getUserChurch(supabase, userId) {
     .eq('user_id', userId)
     .maybeSingle();
   return data ?? null;
+}
+
+async function getChurchForBrowse(supabase, req) {
+  const churchId = typeof req.query.church_id === 'string' ? req.query.church_id : null;
+  if (!churchId) return getUserChurch(supabase, req.user.id);
+  const { data } = await supabase
+    .from('churches')
+    .select('id, name, slug, logo_url, description')
+    .eq('id', churchId)
+    .maybeSingle();
+  return data ? { church_id: data.id, churches: data } : null;
+}
+
+async function getMemberChurch(supabase, userId) {
+  return getUserChurch(supabase, userId);
 }
 
 function flutterwaveKey() {
@@ -76,7 +75,7 @@ router.get('/churches', async (req, res) => {
 // ── GET /api/shop/categories ──────────────────────────────────────────────────
 router.get('/categories', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const membership = await getUserChurch(supabase, req.user.id);
+  const membership = await getChurchForBrowse(supabase, req);
   if (!membership) return res.status(403).json({ error: 'No church membership found' });
 
   const { data, error } = await supabase
@@ -93,7 +92,7 @@ router.get('/categories', async (req, res) => {
 // Query params: category_id (optional), page (0-based), limit (max 40)
 router.get('/products', async (req, res) => {
   const supabase  = req.app.locals.supabaseAdmin;
-  const membership = await getUserChurch(supabase, req.user.id);
+  const membership = await getChurchForBrowse(supabase, req);
   if (!membership) return res.status(403).json({ error: 'No church membership found' });
 
   const { category_id, page = '0', limit: lim = '40' } = req.query;
@@ -123,7 +122,7 @@ router.get('/products', async (req, res) => {
 // ── GET /api/shop/products/:id ────────────────────────────────────────────────
 router.get('/products/:id', async (req, res) => {
   const supabase   = req.app.locals.supabaseAdmin;
-  const membership = await getUserChurch(supabase, req.user.id);
+  const membership = await getChurchForBrowse(supabase, req);
   if (!membership) return res.status(403).json({ error: 'No church membership found' });
 
   const { data, error } = await supabase
@@ -158,7 +157,9 @@ router.post('/orders/initiate', async (req, res) => {
   const { productId, buyerName, deliveryAddress } = req.body;
   if (!productId) return res.status(400).json({ error: 'productId is required' });
 
-  const membership = await getUserChurch(supabase, req.user.id);
+  // Browsing a selected church is public to signed-in users, but purchasing
+  // remains restricted to members of that church.
+  const membership = await getMemberChurch(supabase, req.user.id);
   if (!membership) return res.status(403).json({ error: 'No church membership found' });
 
   // Fetch product (church-scoped)

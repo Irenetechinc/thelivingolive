@@ -1,0 +1,16 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "A mobile app for daily spiritual life — Bible reading (KJV, with highlights, notes, and AI verse explanations), a digital hymnbook, and AI-generated devotionals and prayers with scheduled reminders.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "expo": "^57.0.10",
+    "express": "^5.2.1"
+  }
+}

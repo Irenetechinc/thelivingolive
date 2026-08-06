@@ -13,6 +13,7 @@ import { Expo } from 'expo-server-sdk';
 import { logger } from '../lib/logger.js';
 import { notifyCommunity } from '../lib/pushHelper.js';
 import { compressVideo } from '../lib/videoProcessor.js';
+import { ensurePublicBucket, MAX_STORAGE_BYTES } from '../lib/storage.js';
 
 const log = logger('community');
 const router = Router();
@@ -54,7 +55,7 @@ function withJsonError(multerMiddleware) {
     multerMiddleware(req, res, (err) => {
       if (!err) return next();
       if (err.code === 'LIMIT_FILE_SIZE')
-        return res.status(413).json({ error: 'File too large. Maximum size is 50 MB.' });
+        return res.status(413).json({ error: 'File too large. Maximum size is 49 MB.' });
       if (err.message?.startsWith('File type not allowed'))
         return res.status(400).json({ error: 'Unsupported file type. Please upload a JPG, PNG, GIF, or video file.' });
       log.error('multer error:', err.message);
@@ -63,8 +64,9 @@ function withJsonError(multerMiddleware) {
   };
 }
 
-// 50 MB hard cap — must match Supabase free-tier fileSizeLimit in ensureStorageBucket
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+// Keep requests just below Supabase's 50 MB object limit. The margin avoids
+// provider-side rounding differences while still allowing large mobile media.
+const MAX_UPLOAD_BYTES = MAX_STORAGE_BYTES;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
 
 // ── Expo client (shared from app.locals or created locally) ──────────────────
@@ -240,7 +242,7 @@ router.post('/profile/upload/:type', withJsonError(avatarUpload.single('file')),
   const { type } = req.params;
   if (!['avatar', 'cover'].includes(type)) return res.status(400).json({ error: 'type must be avatar or cover' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  await ensureStorageBucket(supabase); // profile uploads use the same community bucket
+  await ensurePublicBucket(supabase, 'community');
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `profiles/${req.user.id}/${type}_${Date.now()}.${ext}`;
   const { error } = await supabase.storage
@@ -590,9 +592,10 @@ router.put('/rooms/:roomId/read', async (req, res) => {
 });
 
 const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_MEDIA_TYPES) });
-router.post('/rooms/:roomId/upload', mediaUpload.single('file'), async (req, res) => {
+router.post('/rooms/:roomId/upload', withJsonError(mediaUpload.single('file')), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
+  await ensurePublicBucket(supabase, 'community');
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'bin';
   const path = `messages/${req.params.roomId}/${req.user.id}_${Date.now()}.${ext}`;
   const { error } = await supabase.storage
@@ -685,53 +688,10 @@ router.post('/posts', async (req, res) => {
   } });
 });
 
-// Ensure the 'community' storage bucket exists.
-// Strategy: list buckets first (avoids a failed CREATE when it already exists),
-// then create only if absent. fileSizeLimit = 50 MB to match the Supabase free
-// tier maximum — previously 100 MB caused every createBucket call to fail with
-// "The object exceeded the maximum allowed size", leaving the bucket absent.
-let _bucketReady = false;
-async function ensureStorageBucket(supabase) {
-  if (_bucketReady) return;
-  try {
-    // ── 1. Check existence first ──────────────────────────────────────────
-    const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
-    if (!listErr && buckets?.some(b => b.name === 'community')) {
-      _bucketReady = true;
-      return;
-    }
-
-    // ── 2. Create with 50 MB limit (Supabase free tier cap) ──────────────
-    const { error } = await supabase.storage.createBucket('community', {
-      public: true,
-      fileSizeLimit: 50 * 1024 * 1024, // 50 MB — Supabase free tier maximum
-      allowedMimeTypes: ['image/*', 'video/*', 'audio/*'],
-    });
-
-    if (!error) {
-      log.info('storage: community bucket created (50 MB limit)');
-      _bucketReady = true;
-    } else if (
-      error.message?.toLowerCase().includes('already exists') ||
-      error.message?.toLowerCase().includes('duplicate') ||
-      error.message?.toLowerCase().includes('violates')
-    ) {
-      // Race condition — another request created it first; that's fine
-      _bucketReady = true;
-    } else {
-      // Real error — log it and do NOT set _bucketReady so the next call retries
-      log.error('storage: bucket creation error:', error.message);
-    }
-  } catch (e) {
-    log.error('storage: bucket ensure threw:', e.message);
-    // Do not set _bucketReady — allow retry on next request
-  }
-}
-
 router.post('/posts/upload', withJsonError(upload.single('file')), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  await ensureStorageBucket(supabase);
+  await ensurePublicBucket(supabase, 'community');
 
   const isVideo = req.file.mimetype.startsWith('video/');
   const ts = Date.now();
@@ -1336,7 +1296,7 @@ router.get('/stories', async (req, res) => {
 router.post('/stories/upload', withJsonError(storyUpload.single('file')), async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  await ensureStorageBucket(supabase);
+  await ensurePublicBucket(supabase, 'community');
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
   const path = `stories/${req.user.id}/${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });

@@ -513,8 +513,8 @@ export default function OliveShopScreen() {
       setMembership(m);
       if (!m) { setShowChurchSelect(true); return; }
       const [cats, { products: prods }] = await Promise.all([
-        getShopCategories(),
-        getShopProducts(),
+        getShopCategories(m.church_id),
+        getShopProducts({ churchId: m.church_id }),
       ]);
       setCategories(cats);
       setProducts(prods);
@@ -548,8 +548,8 @@ export default function OliveShopScreen() {
         await import('../../lib/api').then(m => m.setMyChurch(church.id)).catch(() => {});
       }
       const [cats, { products: prods }] = await Promise.all([
-        getShopCategories().catch(() => []),
-        getShopProducts().catch(() => ({ products: [], churchName: '' })),
+        getShopCategories(church.id).catch(() => []),
+        getShopProducts({ churchId: church.id }).catch(() => ({ products: [], churchName: '' })),
       ]);
       setMembership({ church_id: church.id, churches: church });
       setCategories(cats as ShopCategory[]);

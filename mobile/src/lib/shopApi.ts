@@ -78,15 +78,17 @@ export async function getAllChurches(): Promise<ShopChurch[]> {
   return r.churches ?? [];
 }
 
-export async function getShopCategories(): Promise<ShopCategory[]> {
-  const r = await shopGet<any>('/api/shop/categories');
+export async function getShopCategories(churchId?: string): Promise<ShopCategory[]> {
+  const qs = churchId ? `?church_id=${encodeURIComponent(churchId)}` : '';
+  const r = await shopGet<any>(`/api/shop/categories${qs}`);
   return r.categories ?? [];
 }
 
-export async function getShopProducts(opts: { categoryId?: string; page?: number } = {}): Promise<{ products: ShopProduct[]; churchName: string }> {
+export async function getShopProducts(opts: { categoryId?: string; page?: number; churchId?: string } = {}): Promise<{ products: ShopProduct[]; churchName: string }> {
   const params = new URLSearchParams();
   if (opts.categoryId) params.set('category_id', opts.categoryId);
   if (opts.page) params.set('page', String(opts.page));
+  if (opts.churchId) params.set('church_id', opts.churchId);
   const qs = params.toString();
   const r  = await shopGet<any>(`/api/shop/products${qs ? `?${qs}` : ''}`);
   return { products: r.products ?? [], churchName: r.churchName ?? '' };

@@ -12,8 +12,16 @@ import { fileURLToPath } from 'node:url';
 import multer from 'multer';
 import { logger } from '../lib/logger.js';
 import { adminBus } from '../lib/adminBus.js';
+import { ensurePublicBucket, MAX_STORAGE_BYTES } from '../lib/storage.js';
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+const ALLOWED_SHOP_TYPES = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  'image/heic', 'image/heif',
+  'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg',
+  'video/mp4', 'video/quicktime', 'video/webm',
+  'application/pdf', 'application/epub+zip', 'application/octet-stream',
+]);
 function imageOnlyFilter(_req, file, cb) {
   if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) return cb(null, true);
   cb(Object.assign(new Error('Only image files are allowed (JPEG, PNG, WebP, GIF).'), { status: 400 }), false);
@@ -21,6 +29,21 @@ function imageOnlyFilter(_req, file, cb) {
 const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
 const bulletinImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const shopAssetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_STORAGE_BYTES },
+  fileFilter: (_req, file, cb) => ALLOWED_SHOP_TYPES.has(file.mimetype)
+    ? cb(null, true)
+    : cb(Object.assign(new Error('Unsupported shop file type.'), { status: 400 }), false),
+});
+
+function withJsonUpload(middleware) {
+  return (req, res, next) => middleware(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ ok: false, error: 'File too large. Maximum size is 49 MB.' });
+    return res.status(400).json({ ok: false, error: err.message || 'Upload failed.' });
+  });
+}
 
 const log = logger('org-admin');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -222,7 +245,7 @@ router.post('/api/bulletins/:id/upload-featured-image', requireOrgAdmin, bulleti
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
   const storagePath = `bulletins/${churchId}/${req.params.id}/featured.${ext}`;
 
-  await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+  await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
   const { error } = await supabase.storage.from('church-assets').upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
   if (error) { log.error('bulletin image upload error:', error.message); return res.status(500).json({ ok: false, error: 'Upload failed' }); }
 
@@ -395,7 +418,7 @@ router.post('/api/announcements/upload-banner', requireOrgAdmin, announcementBan
   const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
   const storagePath = `announcements/${churchId}/banner_${Date.now()}.${ext}`;
   try {
-    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
     const { error } = await supabase.storage.from('church-assets')
       .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
     if (error) throw error;
@@ -442,7 +465,7 @@ router.post('/api/upload-logo', requireOrgAdmin, logoUpload.single('logo'), asyn
 
   try {
     // Ensure bucket exists (no-op if already present)
-    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
 
     const { error: uploadError } = await supabase.storage
       .from('church-assets')
@@ -509,7 +532,7 @@ router.post('/api/ads/upload-image', requireOrgAdmin, adImageUpload.single('imag
   const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
   const storagePath = `ads/${churchId}/ad_${Date.now()}.${ext}`;
   try {
-    await supabase.storage.createBucket('church-assets', { public: true }).catch(() => {});
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
     const { error } = await supabase.storage.from('church-assets')
       .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
     if (error) throw error;
@@ -571,6 +594,149 @@ router.put('/api/extras', requireOrgAdmin, async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Olive Shop management ─────────────────────────────────────────────────────
+// Products and categories are always scoped to the church in the signed-in
+// organisation-admin session. The mobile API never receives unpublished rows.
+router.get('/api/shop/categories', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await req.app.locals.supabaseAdmin
+    .from('shop_categories').select('*').eq('church_id', churchId)
+    .order('sort_order').order('name');
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, categories: data ?? [] });
+});
+
+router.post('/api/shop/categories', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { name, icon, color, sortOrder } = req.body;
+  if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Category name is required' });
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_categories').insert({
+    church_id: churchId, name: name.trim().slice(0, 80), icon: icon?.trim() || '🛍',
+    color: color?.trim() || '#5B6B45', sort_order: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+  }).select().single();
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, category: data });
+});
+
+router.put('/api/shop/categories/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const updates = {};
+  if (req.body.name !== undefined) updates.name = String(req.body.name).trim().slice(0, 80);
+  if (req.body.icon !== undefined) updates.icon = String(req.body.icon).trim().slice(0, 8) || '🛍';
+  if (req.body.color !== undefined) updates.color = String(req.body.color).trim().slice(0, 20) || '#5B6B45';
+  if (req.body.sortOrder !== undefined) updates.sort_order = Number(req.body.sortOrder) || 0;
+  if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_categories').update(updates)
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.delete('/api/shop/categories/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_categories').delete()
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.get('/api/shop/products', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_products')
+    .select('*, shop_categories(name, icon)').eq('church_id', churchId)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, products: data ?? [] });
+});
+
+router.post('/api/shop/products', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const {
+    title, description, categoryId, price, currency, isFree, productType,
+    thumbnailUrl, mediaUrl, stockCount, isPublished,
+  } = req.body;
+  if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Product title is required' });
+  if (!['physical', 'digital', 'media'].includes(productType)) {
+    return res.status(400).json({ ok: false, error: 'Product type must be physical, digital, or media' });
+  }
+  const amount = isFree ? 0 : Math.max(0, Number(price) || 0);
+  if (!isFree && amount <= 0) return res.status(400).json({ ok: false, error: 'Paid products need a price' });
+  const supabase = req.app.locals.supabaseAdmin;
+  if (categoryId) {
+    const { data: category } = await supabase.from('shop_categories').select('id')
+      .eq('id', categoryId).eq('church_id', churchId).maybeSingle();
+    if (!category) return res.status(400).json({ ok: false, error: 'Category does not belong to this church' });
+  }
+  const { data, error } = await supabase.from('shop_products').insert({
+    church_id: churchId, category_id: categoryId || null, title: title.trim().slice(0, 160),
+    description: description?.trim() || null, price: amount, currency: currency || 'NGN',
+    is_free: !!isFree, product_type: productType, thumbnail_url: thumbnailUrl || null,
+    media_url: mediaUrl || null, stock_count: stockCount === '' || stockCount === null || stockCount === undefined
+      ? null : Math.max(0, parseInt(stockCount, 10) || 0),
+    is_published: !!isPublished, updated_at: new Date().toISOString(),
+  }).select().single();
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, product: data });
+});
+
+router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const supabase = req.app.locals.supabaseAdmin;
+  const updates = {};
+  const body = req.body;
+  if (body.title !== undefined) updates.title = String(body.title).trim().slice(0, 160);
+  if (body.description !== undefined) updates.description = String(body.description).trim() || null;
+  if (body.categoryId !== undefined) updates.category_id = body.categoryId || null;
+  if (body.price !== undefined) updates.price = Math.max(0, Number(body.price) || 0);
+  if (body.currency !== undefined) updates.currency = String(body.currency).slice(0, 8);
+  if (body.isFree !== undefined) { updates.is_free = !!body.isFree; if (body.isFree) updates.price = 0; }
+  if (body.productType !== undefined) updates.product_type = body.productType;
+  if (body.thumbnailUrl !== undefined) updates.thumbnail_url = body.thumbnailUrl || null;
+  if (body.mediaUrl !== undefined) updates.media_url = body.mediaUrl || null;
+  if (body.stockCount !== undefined) updates.stock_count = body.stockCount === '' || body.stockCount === null ? null : Math.max(0, parseInt(body.stockCount, 10) || 0);
+  if (body.isPublished !== undefined) updates.is_published = !!body.isPublished;
+  updates.updated_at = new Date().toISOString();
+  if (updates.category_id) {
+    const { data: category } = await supabase.from('shop_categories').select('id').eq('id', updates.category_id).eq('church_id', churchId).maybeSingle();
+    if (!category) return res.status(400).json({ ok: false, error: 'Category does not belong to this church' });
+  }
+  if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
+  const { error } = await supabase.from('shop_products').update(updates).eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.delete('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_products').delete()
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.post('/api/shop/upload', requireOrgAdmin, withJsonUpload(shopAssetUpload.single('file')), async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+  try {
+    const supabase = req.app.locals.supabaseAdmin;
+    await ensurePublicBucket(supabase, 'shop-assets', {
+      allowedMimeTypes: ['image/*', 'video/*', 'audio/*', 'application/pdf', 'application/epub+zip', 'application/octet-stream'],
+    });
+    const kind = req.body.kind === 'media' ? 'media' : 'thumbnail';
+    const ext = (req.file.originalname.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const storagePath = `shop/${churchId}/${kind}_${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('shop-assets').upload(storagePath, req.file.buffer, {
+      contentType: req.file.mimetype, upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('shop-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
+  } catch (e) {
+    log.error('shop asset upload error:', e.message);
+    res.status(500).json({ ok: false, error: 'Shop asset upload failed' });
+  }
 });
 
 // ── Helper: push to all church members ────────────────────────────────────────
