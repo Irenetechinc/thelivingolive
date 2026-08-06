@@ -677,7 +677,13 @@ router.post('/api/shop/products', requireOrgAdmin, async (req, res) => {
       ? null : Math.max(0, parseInt(stockCount, 10) || 0),
     is_published: !!isPublished, updated_at: new Date().toISOString(),
   }).select().single();
-  if (error) return res.status(500).json({ ok: false, error: error.message });
+  if (error) {
+    // Translate Supabase constraint violations into user-friendly messages
+    if (error.message?.includes('description_check')) {
+      return res.status(400).json({ ok: false, error: 'Description is required — please add a product description and try again.' });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
   res.json({ ok: true, product: data });
 });
 
@@ -704,7 +710,12 @@ router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
   }
   if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
   const { error } = await supabase.from('shop_products').update(updates).eq('id', req.params.id).eq('church_id', churchId);
-  if (error) return res.status(500).json({ ok: false, error: error.message });
+  if (error) {
+    if (error.message?.includes('description_check')) {
+      return res.status(400).json({ ok: false, error: 'Description is required — please add a product description and try again.' });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
   res.json({ ok: true });
 });
 
