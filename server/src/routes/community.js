@@ -693,7 +693,25 @@ router.post('/posts/upload', withJsonError(upload.single('file')), async (req, r
   if (!req.file) return res.status(400).json({ error: 'No file' });
   await ensurePublicBucket(supabase, 'community');
 
-  const isVideo = req.file.mimetype.startsWith('video/');
+  // Infer true MIME type when Android sends application/octet-stream.
+  // We look at the original filename extension so the correct storage
+  // content-type and isVideo flag are derived even when the OS doesn't
+  // provide a proper MIME type for content:// URIs.
+  const EXT_MIME_MAP = {
+    mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/x-m4v',
+    webm: 'video/webm', mkv: 'video/x-matroska',
+    '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    gif: 'image/gif', webp: 'image/webp',
+    heic: 'image/heic', heif: 'image/heif',
+  };
+  let resolvedMime = req.file.mimetype;
+  if (resolvedMime === 'application/octet-stream') {
+    const ext = (req.file.originalname.split('.').pop() ?? '').toLowerCase();
+    resolvedMime = EXT_MIME_MAP[ext] ?? resolvedMime;
+  }
+
+  const isVideo = resolvedMime.startsWith('video/');
   const ts = Date.now();
   const uid = req.user.id;
 
@@ -732,7 +750,7 @@ router.post('/posts/upload', withJsonError(upload.single('file')), async (req, r
   const ext  = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
   const imgPath = `posts/${uid}/${ts}.${ext}`;
   const { error } = await supabase.storage
-    .from('community').upload(imgPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    .from('community').upload(imgPath, req.file.buffer, { contentType: resolvedMime, upsert: true });
   if (error) {
     log.error('image upload error:', error.message);
     return res.status(500).json({ error: `Upload failed: ${error.message}` });

@@ -724,8 +724,6 @@ export default function OliveShopScreen() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingTop: spacing.md, paddingBottom: 80 + insets.bottom }}
-          refreshing={refreshing}
-          onScroll={undefined}
         >
           {sections.map(section => (
             <CategorySection

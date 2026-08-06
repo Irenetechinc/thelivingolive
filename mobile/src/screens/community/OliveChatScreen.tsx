@@ -688,7 +688,7 @@ function CreatePostModal({ visible, onClose, onCreated }: { visible: boolean; on
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}>
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.parchment }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}>
         <View style={cpm.header}>
           <Pressable onPress={onClose}><Text style={cpm.cancel}>Cancel</Text></Pressable>
           <Text style={cpm.title}>New Post</Text>
