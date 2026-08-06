@@ -2,9 +2,12 @@ import { logger } from './logger.js';
 
 const log = logger('storage');
 
-// Supabase projects with a 50 MB storage cap reject a bucket configured at
-// exactly 50 MB. Keep both the request limit and bucket limit below that cap.
-export const MAX_STORAGE_BYTES = 49 * 1000 * 1000;
+// Per-file upload limit enforced by multer on the server side.
+// We do NOT pass fileSizeLimit to createBucket because Supabase's free-tier
+// API rejects the call when that field is set — the field is interpreted
+// differently across plan tiers and causes "object exceeded maximum allowed
+// size" errors even though 49 MB is within the 50 MB plan cap.
+export const MAX_STORAGE_BYTES = 49 * 1000 * 1000;   // 49 MB — used by multer only
 
 const bucketStates = new Map();
 
@@ -14,6 +17,7 @@ export async function ensurePublicBucket(supabase, name, {
   if (!supabase) throw new Error('Storage is not configured');
   if (bucketStates.get(name) === true) return;
 
+  // Check whether the bucket already exists first.
   const { data: buckets, error: listError } = await supabase.storage.listBuckets();
   if (!listError && buckets?.some((bucket) => bucket.name === name)) {
     bucketStates.set(name, true);
@@ -23,9 +27,10 @@ export async function ensurePublicBucket(supabase, name, {
     log.warn(`Could not list storage buckets before ensuring ${name}: ${listError.message}`);
   }
 
+  // Create without fileSizeLimit — Supabase uses the plan default.
+  // File-size enforcement is handled by multer before any upload reaches here.
   const { error } = await supabase.storage.createBucket(name, {
     public: true,
-    fileSizeLimit: MAX_STORAGE_BYTES,
     allowedMimeTypes,
   });
 

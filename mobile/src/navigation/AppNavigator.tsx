@@ -157,6 +157,13 @@ export default function AppNavigator() {
               <Stack.Screen name="Bulletin" component={BulletinScreen} options={{ headerShown: false }} />
               <Stack.Screen name="Donate" component={DonateScreen} options={{ headerShown: false }} />
 
+              {/* ── Olive Shop ── */}
+              <Stack.Screen
+                name="OliveShop"
+                component={OliveShopScreen}
+                options={{ headerShown: false }}
+              />
+
               {/* ── Olive Chat ── */}
               <Stack.Screen
                 name="OliveChat"
