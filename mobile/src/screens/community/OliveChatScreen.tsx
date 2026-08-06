@@ -38,7 +38,7 @@ import {
   getMessageRequests, respondToRequest, blockUser, getChurchMembers,
   subscribeToTimeline, subscribeToNotifications, subscribeToMessageRequests,
   getStories, createStory, uploadStoryMedia, deleteStory,
-  getConnections, getUserPosts,
+  getConnections, getUserPosts, togglePostLike, deletePost,
   type UserProfile, type CommunityPost, type PostComment,
   type ChatRoom, type CommunityNotification, type MessageRequest, type Author,
   type Story, type Connection,
@@ -875,10 +875,11 @@ const pg = StyleSheet.create({
 
 // ── Profile tab ───────────────────────────────────────────────────────────────
 function ProfileTab({
-  profile, profileError, onReload, myUserId, onViewProfile,
+  profile, profileError, onReload, myUserId, onViewProfile, onOpenComments,
 }: {
   profile: UserProfile | null; profileError: boolean; onReload: () => void;
   myUserId: string | null; onViewProfile?: (userId: string) => void;
+  onOpenComments?: (post: CommunityPost) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
@@ -900,6 +901,7 @@ function ProfileTab({
   const [pinSet, setPinSet] = useState(false);
   const [connectionCount, setConnectionCount] = useState(0);
   const [ownPosts, setOwnPosts] = useState<CommunityPost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
@@ -912,10 +914,40 @@ function ProfileTab({
       setDobPublic(profile.dobPublic ?? false);
       getPinStatus().then(setPinSet).catch(() => {});
       getConnections().then(cs => setConnectionCount(cs.length)).catch(() => {});
-      if (profile.id) getUserPosts(profile.id).then(pp => setOwnPosts(pp.slice(0, 9))).catch(() => {});
+      if (profile.id) {
+        setLoadingPosts(true);
+        // Load all posts (no slice limit) — display them as full feed cards
+        getUserPosts(profile.id).then(pp => { setOwnPosts(pp); setLoadingPosts(false); }).catch(() => setLoadingPosts(false));
+      }
       if (!profile.displayName && !profile.bio) setShowOnboarding(true);
     }
   }, [profile]);
+
+  async function handleLikePost(postId: string) {
+    // Optimistic update
+    setOwnPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, liked: !p.liked, likeCount: p.likeCount + (p.liked ? -1 : 1) } : p
+    ));
+    try {
+      const res = await togglePostLike(postId);
+      setOwnPosts(prev => prev.map(p => p.id === postId ? { ...p, liked: res.liked, likeCount: res.likeCount } : p));
+    } catch {
+      // Revert on error
+      setOwnPosts(prev => prev.map(p =>
+        p.id === postId ? { ...p, liked: !p.liked, likeCount: p.likeCount + (p.liked ? 1 : -1) } : p
+      ));
+    }
+  }
+
+  async function handleDeletePost(postId: string) {
+    Alert.alert('Delete Post', 'Delete this post permanently?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        setOwnPosts(prev => prev.filter(p => p.id !== postId));
+        try { await deletePost(postId); } catch { /* post already removed from UI */ }
+      }},
+    ]);
+  }
 
   async function pickAndUpload(type: 'avatar' | 'cover') {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
@@ -1072,7 +1104,7 @@ function ProfileTab({
                 <Text style={pf.statLabel}>Connections</Text>
               </View>
               <View style={pf.statChip}>
-                <Text style={pf.statNum}>{ownPosts.length}</Text>
+                <Text style={pf.statNum}>{profile.postCount ?? ownPosts.length}</Text>
                 <Text style={pf.statLabel}>Posts</Text>
               </View>
             </View>
@@ -1084,21 +1116,36 @@ function ProfileTab({
           </>
         )}
       </View>
-      {/* Own posts mini-grid */}
-      {!editing && ownPosts.length > 0 && (
-        <View style={pf.postsSection}>
-          <Text style={pf.sectionTitle}>MY POSTS</Text>
-          <View style={pf.postsGrid}>
-            {ownPosts.map(p => (
-              <View key={p.id} style={pf.postCell}>
-                {p.imageUrl
-                  ? <Image source={{ uri: p.imageUrl }} style={pf.postThumb} resizeMode="cover" />
-                  : <View style={[pf.postThumb, { backgroundColor: colors.parchmentDark, alignItems: 'center', justifyContent: 'center', padding: 6 }]}>
-                      <Text style={{ fontSize: 10, color: colors.inkSoft, textAlign: 'center' }} numberOfLines={4}>{p.body}</Text>
-                    </View>}
-              </View>
-            ))}
+      {/* Own posts — full timeline feed, same as home screen (Facebook-style) */}
+      {!editing && (
+        <View style={{ marginTop: spacing.sm }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark }}>
+            <Ionicons name="grid-outline" size={16} color={colors.olive} style={{ marginRight: 6 }} />
+            <Text style={pf.sectionTitle}>MY POSTS</Text>
           </View>
+          {loadingPosts ? (
+            <PostSkeleton />
+          ) : ownPosts.length === 0 ? (
+            <View style={{ alignItems: 'center', padding: spacing.xl }}>
+              <Ionicons name="leaf-outline" size={40} color={colors.inkFaint} />
+              <Text style={{ marginTop: 12, color: colors.inkFaint, fontSize: 14 }}>No posts yet</Text>
+              <Text style={{ color: colors.inkFaint, fontSize: 12, marginTop: 4 }}>Share something with the community!</Text>
+            </View>
+          ) : (
+            ownPosts.map(p => (
+              <PostCard
+                key={p.id}
+                post={p}
+                myId={myUserId}
+                isNearVisible={true}
+                onLike={() => handleLikePost(p.id)}
+                onComment={() => onOpenComments?.(p)}
+                onShare={() => {}}
+                onShareToRoom={() => {}}
+                onDelete={() => handleDeletePost(p.id)}
+              />
+            ))
+          )}
         </View>
       )}
       {/* Security */}
@@ -1641,6 +1688,13 @@ export default function OliveChatScreen() {
     </View>
   );
   if (pinLocked) return <PinGate onVerified={() => { setPinLocked(false); setShowSplash(false); }} />;
+  // Show splash as full-screen (not an overlay) to prevent blank flicker while
+  // the feed/rooms data loads behind it.
+  if (showSplash) return (
+    <View style={{ flex: 1 }}>
+      <OliveChatSplash onFinish={() => setShowSplash(false)} />
+    </View>
+  );
 
   if (notMember) return (
     <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center', padding: spacing.xl }}>
@@ -1663,11 +1717,6 @@ export default function OliveChatScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.parchment }}>
-      {/* Splash — shown once per session after PIN is cleared */}
-      {pinChecked && !pinLocked && showSplash && (
-        <OliveChatSplash onFinish={() => setShowSplash(false)} />
-      )}
-
       {/* Header */}
       <LinearGradient colors={['#2E3A1F','#3E4A2F','#5B6B45']} style={[main.header, { paddingTop: spacing.sm + insets.top }]}>
         <View style={main.headerInner}>
@@ -1876,6 +1925,7 @@ export default function OliveChatScreen() {
             catch { setProfileError(true); }
           }}
           onViewProfile={(userId) => setViewProfileUserId(userId)}
+          onOpenComments={(post) => setCommentPost(post)}
         />
       )}
 

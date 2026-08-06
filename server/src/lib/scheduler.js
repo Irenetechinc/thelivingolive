@@ -372,9 +372,11 @@ async function runQualityBenchmark(supabase) {
     return;
   }
   adminBus.agentStart("qualityBenchmark", "Scoring cached explanations against teaching snippets…");
+  // verse_explanations has verse_ref as PK (not id). quality_score may not exist yet
+  // (pending migration) so we select only the guaranteed base columns.
   const { data: explanations, error } = await supabase
     .from("verse_explanations")
-    .select("id, verse_ref, explanation, quality_score, generated_at")
+    .select("verse_ref, explanation, generated_at")
     .order("generated_at", { ascending: false })
     .limit(100);
 
@@ -386,21 +388,22 @@ async function runQualityBenchmark(supabase) {
 
   for (const row of explanations) {
     const score = scoreExplanation(row.explanation ?? "");
-    if (Math.abs(score - (row.quality_score ?? 0)) > 5) {
-      // Score has drifted — update it
-      await supabase.from("verse_explanations").update({ quality_score: score }).eq("id", row.id);
-      rescored++;
-    }
+    // Try updating quality_score — column may not exist yet (pending migration); ignore error
+    const { error: updateErr } = await supabase
+      .from("verse_explanations")
+      .update({ quality_score: score })
+      .eq("verse_ref", row.verse_ref);
+    if (!updateErr) rescored++;
     if (score < 55) {
       low++;
       // Only purge entries older than 12 hours so we don't thrash fresh ones
       const ageH = (Date.now() - new Date(row.generated_at).getTime()) / 3600000;
-      if (ageH > 12) toDelete.push(row.id);
+      if (ageH > 12) toDelete.push(row.verse_ref);
     }
   }
 
   if (toDelete.length > 0) {
-    const { error: delErr } = await supabase.from("verse_explanations").delete().in("id", toDelete);
+    const { error: delErr } = await supabase.from("verse_explanations").delete().in("verse_ref", toDelete);
     if (!delErr) purged = toDelete.length;
     else log.warn("quality benchmark: purge failed:", delErr.message);
   }

@@ -123,7 +123,10 @@ router.get('/profile', async (req, res) => {
     data = created;
   }
   const { chat_pin_hash: _, ...safe } = data ?? {};
-  res.json({ ok: true, profile: { ...safe, email: req.user.email } });
+  // Include own post count so profile tab can show it immediately without a second fetch
+  const { count: postCount } = await supabase
+    .from('community_posts').select('id', { count: 'exact', head: true }).eq('user_id', userId);
+  res.json({ ok: true, profile: { ...safe, email: req.user.email, postCount: postCount ?? 0 } });
 });
 
 router.get('/profile/:userId', async (req, res) => {
@@ -131,8 +134,10 @@ router.get('/profile/:userId', async (req, res) => {
   const me = req.user.id;
   const them = req.params.userId;
   const [profileRes, connRes, postCountRes] = await Promise.all([
+    // Select only base guaranteed columns first — extended columns (church_affiliation etc.)
+    // may not exist in production yet. We'll try extended fields separately.
     supabase.from('user_profiles')
-      .select('id, display_name, bio, avatar_url, cover_url, date_of_birth, username, church_affiliation, location, state, country, education, gender, website, dob_public')
+      .select('id, display_name, bio, avatar_url, cover_url, date_of_birth')
       .eq('id', them).maybeSingle(),
     supabase.from('user_connections')
       .select('id, status, requester_id, addressee_id, created_at')
@@ -143,7 +148,14 @@ router.get('/profile/:userId', async (req, res) => {
       .or(`requester_id.eq.${them},addressee_id.eq.${them}`).eq('status', 'accepted'),
   ]);
   if (!profileRes.data) return res.status(404).json({ error: 'Profile not found' });
-  const p = profileRes.data;
+  let p = profileRes.data;
+  // Try to fetch extended profile fields (added via migration). If columns don't exist yet, skip gracefully.
+  try {
+    const { data: ext } = await supabase.from('user_profiles')
+      .select('username, church_affiliation, location, state, country, education, gender, website, dob_public')
+      .eq('id', them).maybeSingle();
+    if (ext) p = { ...p, ...ext };
+  } catch {}
   res.json({ ok: true, profile: { ...p, connectionStatus: connRes.data ?? null, postCount: postCountRes.count ?? 0 } });
 });
 
@@ -167,7 +179,20 @@ router.put('/profile', async (req, res) => {
   if (gender !== undefined) updates.gender = String(gender).slice(0, 40).trim() || null;
   if (website !== undefined) updates.website = String(website).slice(0, 200).trim() || null;
   if (dobPublic !== undefined) updates.dob_public = Boolean(dobPublic);
-  const { error } = await supabase.from('user_profiles').upsert({ id: req.user.id, ...updates }, { onConflict: 'id' });
+  let { error } = await supabase.from('user_profiles').upsert({ id: req.user.id, ...updates }, { onConflict: 'id' });
+
+  // If a column doesn't exist yet (migration pending), fall back to core fields only.
+  // Error code 42703 = undefined_column in PostgreSQL / Supabase.
+  if (error && (error.code === '42703' || error.message?.includes('column') || error.message?.includes('schema cache'))) {
+    log.warn('profile update: extended columns missing, falling back to base fields. Run fix_missing_columns.sql migration.');
+    const baseUpdates = { updated_at: updates.updated_at };
+    if (updates.display_name !== undefined) baseUpdates.display_name = updates.display_name;
+    if (updates.bio !== undefined) baseUpdates.bio = updates.bio;
+    if (updates.date_of_birth !== undefined) baseUpdates.date_of_birth = updates.date_of_birth;
+    const fallback = await supabase.from('user_profiles').upsert({ id: req.user.id, ...baseUpdates }, { onConflict: 'id' });
+    error = fallback.error;
+  }
+
   if (error) { log.error('profile update error:', error.message); return res.status(500).json({ error: 'Could not update profile. Please try again.' }); }
   res.json({ ok: true });
 });

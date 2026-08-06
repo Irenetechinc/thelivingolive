@@ -13,6 +13,7 @@ const API = PRODUCTION_API_URL;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type UserProfile = {
+  postCount?: number;
   id: string;
   displayName: string | null;
   bio: string | null;
@@ -155,25 +156,48 @@ async function apiCall<T = any>(path: string, method = 'GET', body?: object): Pr
   return json as T;
 }
 
+/**
+ * All file uploads use XMLHttpRequest instead of fetch.
+ * fetch + FormData with the {uri,name,type} native file descriptor throws
+ * "Unsupported FormDataPart implementation" in newer Hermes/RN builds.
+ * XHR uses the legacy bridge FormData path that handles native file parts.
+ */
+async function xhrUpload(url: string, headers: Record<string, string>, uri: string, mimeType: string, fileName: string, timeoutMs = 180_000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.timeout = timeoutMs;
+    Object.entries(headers).forEach(([k, v]) => {
+      if (k.toLowerCase() !== 'content-type') xhr.setRequestHeader(k, v);
+    });
+    xhr.onload = () => {
+      try {
+        const json = JSON.parse(xhr.responseText);
+        if (xhr.status >= 400 || json.error) reject(new Error(json.error ?? `Upload failed (${xhr.status})`));
+        else resolve(json);
+      } catch {
+        reject(new Error(`Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out'));
+    const fd = new FormData();
+    fd.append('file', { uri, name: fileName, type: mimeType } as any);
+    xhr.send(fd);
+  });
+}
+
 async function uploadFile(path: string, uri: string, mimeType: string): Promise<string> {
   const headers = await authHeader();
-  delete (headers as any)['Content-Type'];
-  const fd = new FormData();
-  fd.append('file', { uri, name: uri.split('/').pop() ?? 'file', type: mimeType } as any);
-  const res = await fetch(`${API}${path}`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(120_000) });
-  const json = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  const fileName = uri.split('/').pop() ?? 'file';
+  const json = await xhrUpload(`${API}${path}`, headers as any, uri, mimeType, fileName, 120_000);
   return json.url as string;
 }
 
 async function uploadFileWithMeta(path: string, uri: string, mimeType: string): Promise<{ url: string; thumbnailUrl?: string }> {
   const headers = await authHeader();
-  delete (headers as any)['Content-Type'];
-  const fd = new FormData();
-  fd.append('file', { uri, name: uri.split('/').pop() ?? 'file', type: mimeType } as any);
-  const res = await fetch(`${API}${path}`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(180_000) });
-  const json = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  const fileName = uri.split('/').pop() ?? 'file';
+  const json = await xhrUpload(`${API}${path}`, headers as any, uri, mimeType, fileName, 180_000);
   return { url: json.url as string, thumbnailUrl: json.thumbnailUrl ?? undefined };
 }
 
@@ -194,6 +218,7 @@ function mapProfile(p: any, extra?: { email?: string }): UserProfile {
     website: p.website ?? null,
     dobPublic: p.dob_public ?? false,
     connectionCount: p.connectionCount ?? 0,
+    postCount: p.postCount ?? undefined,
   };
 }
 
@@ -348,12 +373,8 @@ export async function sendMessage(roomId: string, payload: {
 export async function uploadMessageMedia(roomId: string, uri: string, type: 'image' | 'voice'): Promise<string> {
   const mimeType = type === 'voice' ? 'audio/m4a' : `image/${uri.split('.').pop()?.toLowerCase() ?? 'jpeg'}`;
   const headers = await authHeader();
-  delete (headers as any)['Content-Type'];
-  const fd = new FormData();
-  fd.append('file', { uri, name: uri.split('/').pop() ?? 'file', type: mimeType } as any);
-  const res = await fetch(`${API}/api/community/rooms/${roomId}/upload`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(60_000) });
-  const json = await res.json().catch(() => ({ error: 'Upload failed' }));
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  const fileName = uri.split('/').pop() ?? 'file';
+  const json = await xhrUpload(`${API}/api/community/rooms/${roomId}/upload`, headers as any, uri, mimeType, fileName, 60_000);
   return json.url as string;
 }
 
@@ -556,14 +577,9 @@ export async function getStories(): Promise<Story[]> {
 
 export async function uploadStoryMedia(uri: string): Promise<{ url: string; mediaType: 'photo' | 'video' }> {
   const headers = await authHeader();
-  delete (headers as any)['Content-Type'];
   const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
   const mimeType = ['mp4', 'mov', 'avi', 'webm', '3gp'].includes(ext) ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
-  const fd = new FormData();
-  fd.append('file', { uri, name: `story.${ext}`, type: mimeType } as any);
-  const res = await fetch(`${API}/api/community/stories/upload`, { method: 'POST', headers, body: fd, signal: AbortSignal.timeout(180_000) });
-  const json = await res.json().catch(() => ({ error: 'Upload failed' }));
-  if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+  const json = await xhrUpload(`${API}/api/community/stories/upload`, headers as any, uri, mimeType, `story.${ext}`, 180_000);
   return { url: json.url as string, mediaType: json.mediaType as 'photo' | 'video' };
 }
 
