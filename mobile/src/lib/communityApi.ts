@@ -578,7 +578,9 @@ export async function getStories(): Promise<Story[]> {
 export async function uploadStoryMedia(uri: string): Promise<{ url: string; mediaType: 'photo' | 'video' }> {
   const headers = await authHeader();
   const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const mimeType = ['mp4', 'mov', 'avi', 'webm', '3gp'].includes(ext) ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+  const mimeType = ['mp4', 'm4v', 'mov', 'avi', 'webm', '3gp'].includes(ext)
+    ? (ext === 'mov' ? 'video/quicktime' : ext === '3gp' ? 'video/3gpp' : 'video/mp4')
+    : `image/${ext === 'jpg' ? 'jpeg' : ['heic', 'heif'].includes(ext) ? 'jpeg' : ext}`;
   const json = await xhrUpload(`${API}/api/community/stories/upload`, headers as any, uri, mimeType, `story.${ext}`, 180_000);
   return { url: json.url as string, mediaType: json.mediaType as 'photo' | 'video' };
 }
@@ -638,7 +640,11 @@ export async function getUserPosts(userId: string): Promise<CommunityPost[]> {
     videoUrl: p.video_url ?? null, videoThumbnailUrl: p.video_thumbnail_url ?? null,
     likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
     liked: false, createdAt: p.created_at,
-    taggedUsers: [], author: { userId, name: '', avatarUrl: null },
+    taggedUsers: [], author: {
+      userId: p.author?.userId ?? p.user_id ?? userId,
+      name: p.author?.name ?? 'Member',
+      avatarUrl: p.author?.avatarUrl ?? null,
+    },
   }));
 }
 

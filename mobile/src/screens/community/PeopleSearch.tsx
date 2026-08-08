@@ -47,7 +47,9 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
       setLoading(true);
       try {
         const res = await searchUsers(text.trim());
-        setResults(res.filter(u => u.id !== myUserId));
+        // Self is a valid search result: opening it uses the normal self
+        // profile tab semantics instead of hiding the account from its owner.
+        setResults(res);
       } catch {
         setResults([]);
       } finally {

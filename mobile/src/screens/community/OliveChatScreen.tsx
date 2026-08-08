@@ -978,7 +978,12 @@ function ProfileTab({
     if (!newPin.trim()) { await setPin(null); setPinSet(false); setPinModal(false); setNewPin(''); return; }
     if (!/^\d{4,8}$/.test(newPin)) { Alert.alert('Invalid PIN', 'PIN must be 4–8 digits'); return; }
     setSettingPin(true);
-    try { await setPin(newPin); setPinSet(true); setPinModal(false); setNewPin(''); Alert.alert('PIN set', 'Your Olive Chat PIN has been saved.'); }
+     try {
+       await setPin(newPin);
+       await AsyncStorage.setItem('olivechat.pinActive.v1', 'true');
+       setPinSet(true); setPinModal(false); setNewPin('');
+       Alert.alert('PIN set', 'Your Olive Chat PIN has been saved.');
+     }
     catch { Alert.alert('Error', 'Could not save PIN. Please try again.'); }
     finally { setSettingPin(false); }
   }

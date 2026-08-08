@@ -11,6 +11,8 @@
   "license": "ISC",
   "dependencies": {
     "expo": "^57.0.10",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "living-olive-server": "file:server",
+    "mobile": "file:mobile"
   }
 }

@@ -1129,7 +1129,6 @@ router.get('/users/search', async (req, res) => {
     .from('user_profiles')
     .select('id, display_name, bio, avatar_url, username, church_affiliation, location, state, country')
     .or(`display_name.ilike.%${q}%,username.ilike.%${q}%`)
-    .neq('id', req.user.id)
     .limit(30);
 
   const isSchemaIssue =
@@ -1142,7 +1141,6 @@ router.get('/users/search', async (req, res) => {
       .from('user_profiles')
       .select('id, display_name, bio, avatar_url')
       .ilike('display_name', `%${q}%`)
-      .neq('id', req.user.id)
       .limit(30);
     data = fallback.data;
     error = fallback.error;
@@ -1253,14 +1251,47 @@ router.get('/connections/status/:userId', async (req, res) => {
 // ── User posts ─────────────────────────────────────────────────────────────────
 router.get('/profile/:userId/posts', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { data, error } = await supabase
+  const userId = req.params.userId;
+  const ownedRes = await supabase
     .from('community_posts')
-    .select('id, body, image_url, video_url, video_thumbnail_url, like_count, comment_count, created_at')
-    .eq('user_id', req.params.userId)
+    .select('id, user_id, body, image_url, video_url, video_thumbnail_url, like_count, comment_count, created_at')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(30);
-  if (error) return res.status(500).json({ error: 'Could not fetch posts' });
-  res.json({ ok: true, posts: data ?? [] });
+  if (ownedRes.error) return res.status(500).json({ error: 'Could not fetch posts' });
+
+  // A profile feed includes posts authored by the user and posts where they
+  // were tagged. Older deployments may not have post_tags yet, so preserve
+  // the owned-post feed if that optional table is unavailable.
+  let taggedPosts = [];
+  const taggedRes = await supabase
+    .from('post_tags')
+    .select('post_id')
+    .eq('user_id', userId);
+  if (!taggedRes.error && taggedRes.data?.length) {
+    const taggedIds = taggedRes.data.map((tag) => tag.post_id);
+    const taggedPostRes = await supabase
+      .from('community_posts')
+      .select('id, user_id, body, image_url, video_url, video_thumbnail_url, like_count, comment_count, created_at')
+      .in('id', taggedIds)
+      .neq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (!taggedPostRes.error) taggedPosts = taggedPostRes.data ?? [];
+  }
+
+  const posts = [...(ownedRes.data ?? []), ...taggedPosts]
+    .filter((post, index, all) => all.findIndex((candidate) => candidate.id === post.id) === index)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 30);
+  const names = await resolveDisplayNames(supabase, posts.map((post) => post.user_id));
+  res.json({
+    ok: true,
+    posts: posts.map((post) => ({
+      ...post,
+      author: { userId: post.user_id, ...names[post.user_id] },
+    })),
+  });
 });
 
 // ── Stories ───────────────────────────────────────────────────────────────────
@@ -1316,11 +1347,19 @@ router.post('/stories/upload', withJsonError(storyUpload.single('file')), async 
   if (!req.file) return res.status(400).json({ error: 'No file' });
   await ensurePublicBucket(supabase, 'community');
   const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const resolvedMime = req.file.mimetype === 'application/octet-stream'
+    ? ({
+        mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/x-m4v',
+        webm: 'video/webm', '3gp': 'video/3gpp',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
+      }[ext] ?? req.file.mimetype)
+    : req.file.mimetype;
   const path = `stories/${req.user.id}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from('community').upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
-  if (error) { log.error('story upload error:', error.message); return res.status(500).json({ error: 'Upload failed' }); }
+  const { error } = await supabase.storage.from('community').upload(path, req.file.buffer, { contentType: resolvedMime, upsert: true });
+  if (error) { log.error('story upload error:', error.message); return res.status(500).json({ error: `Story media upload failed: ${error.message}` }); }
   const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
-  const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'photo';
+  const mediaType = resolvedMime.startsWith('video/') ? 'video' : 'photo';
   res.json({ ok: true, url: publicUrl, mediaType });
 });
 
@@ -1331,7 +1370,13 @@ router.post('/stories', async (req, res) => {
   const { data, error } = await supabase.from('community_stories')
     .insert({ user_id: req.user.id, media_url: mediaUrl, media_type: mediaType ?? 'photo', caption: caption ?? null })
     .select().single();
-  if (error) { log.error('create story error:', error.message); return res.status(500).json({ error: 'Could not create story' }); }
+  if (error) {
+    log.error('create story error:', error.message);
+    if (error.code === '42P01' || error.code === 'PGRST205' || /community_stories|schema cache|relation .* does not exist/i.test(error.message ?? '')) {
+      return res.status(503).json({ error: 'Stories are not enabled yet. Apply the community schema migration in Supabase, then try again.' });
+    }
+    return res.status(500).json({ error: `Could not create story: ${error.message}` });
+  }
   const names = await resolveDisplayNames(supabase, [req.user.id]);
   res.json({ ok: true, story: { ...data, userId: data.user_id, authorName: names[req.user.id]?.name ?? 'Member', authorAvatarUrl: names[req.user.id]?.avatarUrl ?? null, viewCount: 0, seenByMe: false } });
 });
