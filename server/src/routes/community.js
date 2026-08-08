@@ -1316,7 +1316,7 @@ router.get('/stories', async (req, res) => {
     .order('created_at', { ascending: false });
   if (error) {
     // Gracefully return empty if table doesn't exist yet
-    if (error.code === '42P01') return res.json({ ok: true, stories: [] });
+    if (isMissingCommunityTable(error, 'community_stories')) return res.json({ ok: true, stories: [] });
     return res.status(500).json({ error: 'Could not fetch stories' });
   }
   const storyIds = (stories ?? []).map(s => s.id);
@@ -1372,7 +1372,11 @@ router.post('/stories', async (req, res) => {
     .select().single();
   if (error) {
     log.error('create story error:', error.message);
-    if (error.code === '42P01' || error.code === 'PGRST205' || /community_stories|schema cache|relation .* does not exist/i.test(error.message ?? '')) {
+    // Upload and row creation are separate requests. If the database migration
+    // is missing, remove the already-uploaded object so retrying does not leak
+    // storage objects. The client still receives the actionable migration error.
+    await removeCommunityMedia(supabase, mediaUrl);
+    if (isMissingCommunityTable(error, 'community_stories')) {
       return res.status(503).json({ error: 'Stories are not enabled yet. Apply the community schema migration in Supabase, then try again.' });
     }
     return res.status(500).json({ error: `Could not create story: ${error.message}` });
@@ -1380,6 +1384,23 @@ router.post('/stories', async (req, res) => {
   const names = await resolveDisplayNames(supabase, [req.user.id]);
   res.json({ ok: true, story: { ...data, userId: data.user_id, authorName: names[req.user.id]?.name ?? 'Member', authorAvatarUrl: names[req.user.id]?.avatarUrl ?? null, viewCount: 0, seenByMe: false } });
 });
+
+function isMissingCommunityTable(error, tableName) {
+  return error?.code === '42P01' ||
+    error?.code === 'PGRST205' ||
+    new RegExp(`${tableName}|schema cache|relation .* does not exist`, 'i').test(error?.message ?? '');
+}
+
+async function removeCommunityMedia(supabase, mediaUrl) {
+  if (typeof mediaUrl !== 'string') return;
+  const marker = '/community/';
+  const markerIndex = mediaUrl.indexOf(marker);
+  if (markerIndex === -1) return;
+  const storagePath = decodeURIComponent(mediaUrl.slice(markerIndex + marker.length));
+  if (!storagePath) return;
+  const { error } = await supabase.storage.from('community').remove([storagePath]);
+  if (error) log.warn('Could not clean up failed story upload:', error.message);
+}
 
 router.post('/stories/:id/view', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
@@ -1392,8 +1413,7 @@ router.delete('/stories/:id', async (req, res) => {
   const { data: story } = await supabase.from('community_stories').select('user_id, media_url').eq('id', req.params.id).maybeSingle();
   if (!story) return res.status(404).json({ error: 'Not found' });
   if (story.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-  const storagePath = story.media_url.split('/community/')[1];
-  if (storagePath) await supabase.storage.from('community').remove([storagePath]).catch(() => {});
+  await removeCommunityMedia(supabase, story.media_url);
   await supabase.from('community_stories').delete().eq('id', req.params.id);
   res.json({ ok: true });
 });

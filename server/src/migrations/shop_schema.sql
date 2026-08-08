@@ -56,3 +56,71 @@ create table if not exists shop_orders (
 create index if not exists shop_orders_user_id    on shop_orders(user_id);
 create index if not exists shop_orders_product_id on shop_orders(product_id);
 create index if not exists shop_orders_flw_tx_ref on shop_orders(flw_tx_ref);
+
+-- ── Product detail metadata (safe addendum for existing installations) ───────
+alter table if exists shop_products
+  add column if not exists image_urls jsonb not null default '[]'::jsonb,
+  add column if not exists condition text,
+  add column if not exists shipping_cost numeric(10,2) not null default 0,
+  add column if not exists return_policy text,
+  add column if not exists estimated_delivery text,
+  add column if not exists import_fee_info text,
+  add column if not exists specifications jsonb not null default '{}'::jsonb,
+  add column if not exists available_colors jsonb not null default '[]'::jsonb,
+  add column if not exists available_sizes jsonb not null default '[]'::jsonb,
+  add column if not exists pickup_available boolean not null default true,
+  add column if not exists delivery_available boolean not null default true;
+
+-- Older deployments accidentally added a constraint that rejected valid
+-- descriptions containing markup, punctuation, or longer text.
+do $$
+begin
+  if to_regclass('public.shop_products') is not null then
+    alter table public.shop_products drop constraint if exists shop_product_description_check;
+  end if;
+end $$;
+
+-- ── Persistent cart and wishlist ──────────────────────────────────────────────
+create table if not exists shop_cart_items (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users(id) on delete cascade,
+  product_id      uuid not null references shop_products(id) on delete cascade,
+  quantity        integer not null default 1 check (quantity > 0),
+  selected_color  text,
+  selected_size   text,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  unique(user_id, product_id, selected_color, selected_size)
+);
+create index if not exists shop_cart_user_idx on shop_cart_items(user_id);
+
+create table if not exists shop_wishlists (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  product_id uuid not null references shop_products(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique(user_id, product_id)
+);
+create index if not exists shop_wishlist_user_idx on shop_wishlists(user_id);
+
+-- ── Fulfillment, invoice, collection, and tracking fields ─────────────────────
+alter table if exists shop_orders
+  add column if not exists quantity integer not null default 1,
+  add column if not exists selected_color text,
+  add column if not exists selected_size text,
+  add column if not exists fulfillment_method text not null default 'delivery',
+  add column if not exists shipping_name text,
+  add column if not exists shipping_phone text,
+  add column if not exists shipping_address text,
+  add column if not exists collection_code text,
+  add column if not exists collection_qr text,
+  add column if not exists invoice_number text,
+  add column if not exists order_group_id uuid,
+  add column if not exists tracking_status text not null default 'order_received',
+  add column if not exists tracking_number text,
+  add column if not exists tracking_events jsonb not null default '[]'::jsonb,
+  add column if not exists paid_at timestamptz;
+
+create unique index if not exists shop_orders_collection_code_idx
+  on shop_orders(collection_code) where collection_code is not null;
+create index if not exists shop_orders_group_idx on shop_orders(order_group_id);

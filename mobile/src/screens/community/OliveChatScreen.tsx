@@ -16,7 +16,7 @@ import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, ActivityIndicator, Image, TouchableOpacity, Modal,
   KeyboardAvoidingView, Platform, Share, Alert, RefreshControl,
-  Animated, ViewToken, Keyboard,
+  Animated, ViewToken, Keyboard, AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1212,9 +1212,13 @@ const pf = StyleSheet.create({
   cover: { height: 160, backgroundColor: colors.oliveDark, position: 'relative', overflow: 'hidden' },
   coverEdit: { position: 'absolute', bottom: 10, right: 12, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 4 },
   coverEditText: { color: '#fff', fontSize: 12 },
+  menuBtn: { alignSelf: 'flex-end', padding: 8, marginBottom: 8 },
   avatarRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: spacing.lg, marginTop: -40, marginBottom: spacing.sm },
   avatarWrap: { width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: colors.white, backgroundColor: colors.white, position: 'relative', ...shadows.card },
   avatarEditBadge: { position: 'absolute', bottom: 0, right: 0, width: 24, height: 24, borderRadius: 12, backgroundColor: colors.olive, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.white },
+  editActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, alignSelf: 'flex-end', marginBottom: 8 },
+  cancelEditBtn: { paddingHorizontal: spacing.md, paddingVertical: 9, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.parchmentDark, backgroundColor: colors.white },
+  cancelEditText: { color: colors.inkSoft, fontSize: 13, fontWeight: '600' },
   editBtn: { borderRadius: radii.pill, paddingHorizontal: spacing.md, paddingVertical: 8, borderWidth: 1.5, borderColor: colors.oliveDark, alignSelf: 'flex-end', minWidth: 100, alignItems: 'center' },
   editBtnText: { color: colors.oliveDark, fontWeight: '700', fontSize: 13 },
   infoWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, backgroundColor: colors.white },
@@ -1250,6 +1254,11 @@ const pf = StyleSheet.create({
   pinCardDesc: { fontSize: 13, color: colors.inkSoft, marginBottom: spacing.md, lineHeight: 18 },
   pinInput: { backgroundColor: colors.parchment, borderWidth: 1.5, borderColor: colors.parchmentDark, borderRadius: radii.md, padding: spacing.md, fontSize: 22, letterSpacing: 8, color: colors.ink, textAlign: 'center' },
   pinAction: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.md, borderRadius: radii.md },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.18)', justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: 120, paddingRight: spacing.lg },
+  profileMenu: { width: 220, backgroundColor: colors.white, borderRadius: radii.lg, paddingVertical: spacing.sm, ...shadows.card },
+  profileMenuTitle: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: 12, fontWeight: '700', color: colors.inkFaint, textTransform: 'uppercase', letterSpacing: 0.7 },
+  profileMenuItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md },
+  profileMenuText: { fontSize: 15, color: colors.ink, fontWeight: '600' },
 });
 
 // ── Notifications tab ─────────────────────────────────────────────────────────

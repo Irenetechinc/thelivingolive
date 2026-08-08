@@ -655,7 +655,9 @@ router.post('/api/shop/products', requireOrgAdmin, async (req, res) => {
   const { churchId } = req.session.orgAdmin;
   const {
     title, description, categoryId, price, currency, isFree, productType,
-    thumbnailUrl, mediaUrl, stockCount, isPublished,
+    thumbnailUrl, mediaUrl, imageUrls, stockCount, isPublished,
+    condition, shippingCost, returnPolicy, estimatedDelivery, importFeeInfo,
+    specifications, availableColors, availableSizes, pickupAvailable, deliveryAvailable,
   } = req.body;
   if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Product title is required' });
   if (!['physical', 'digital', 'media'].includes(productType)) {
@@ -671,17 +673,25 @@ router.post('/api/shop/products', requireOrgAdmin, async (req, res) => {
   }
   const { data, error } = await supabase.from('shop_products').insert({
     church_id: churchId, category_id: categoryId || null, title: title.trim().slice(0, 160),
-    description: description?.trim() || null, price: amount, currency: currency || 'NGN',
+    description: description === undefined || description === null ? null : String(description),
+    price: amount, currency: currency || 'NGN',
     is_free: !!isFree, product_type: productType, thumbnail_url: thumbnailUrl || null,
     media_url: mediaUrl || null, stock_count: stockCount === '' || stockCount === null || stockCount === undefined
       ? null : Math.max(0, parseInt(stockCount, 10) || 0),
+    image_urls: Array.isArray(imageUrls) ? imageUrls.filter(Boolean).slice(0, 12) : [],
+    condition: condition ? String(condition).slice(0, 80) : null,
+    shipping_cost: Math.max(0, Number(shippingCost) || 0),
+    return_policy: returnPolicy === undefined || returnPolicy === null ? null : String(returnPolicy),
+    estimated_delivery: estimatedDelivery ? String(estimatedDelivery).slice(0, 120) : null,
+    import_fee_info: importFeeInfo === undefined || importFeeInfo === null ? null : String(importFeeInfo),
+    specifications: specifications && typeof specifications === 'object' ? specifications : {},
+    available_colors: Array.isArray(availableColors) ? availableColors.filter(Boolean).slice(0, 30) : [],
+    available_sizes: Array.isArray(availableSizes) ? availableSizes.filter(Boolean).slice(0, 30) : [],
+    pickup_available: pickupAvailable !== false,
+    delivery_available: deliveryAvailable !== false,
     is_published: !!isPublished, updated_at: new Date().toISOString(),
   }).select().single();
   if (error) {
-    // Translate Supabase constraint violations into user-friendly messages
-    if (error.message?.includes('description_check')) {
-      return res.status(400).json({ ok: false, error: 'Description is required — please add a product description and try again.' });
-    }
     return res.status(500).json({ ok: false, error: error.message });
   }
   res.json({ ok: true, product: data });
@@ -701,7 +711,18 @@ router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
   if (body.productType !== undefined) updates.product_type = body.productType;
   if (body.thumbnailUrl !== undefined) updates.thumbnail_url = body.thumbnailUrl || null;
   if (body.mediaUrl !== undefined) updates.media_url = body.mediaUrl || null;
+  if (body.imageUrls !== undefined) updates.image_urls = Array.isArray(body.imageUrls) ? body.imageUrls.filter(Boolean).slice(0, 12) : [];
   if (body.stockCount !== undefined) updates.stock_count = body.stockCount === '' || body.stockCount === null ? null : Math.max(0, parseInt(body.stockCount, 10) || 0);
+  if (body.condition !== undefined) updates.condition = body.condition ? String(body.condition).slice(0, 80) : null;
+  if (body.shippingCost !== undefined) updates.shipping_cost = Math.max(0, Number(body.shippingCost) || 0);
+  if (body.returnPolicy !== undefined) updates.return_policy = body.returnPolicy === null ? null : String(body.returnPolicy);
+  if (body.estimatedDelivery !== undefined) updates.estimated_delivery = body.estimatedDelivery ? String(body.estimatedDelivery).slice(0, 120) : null;
+  if (body.importFeeInfo !== undefined) updates.import_fee_info = body.importFeeInfo === null ? null : String(body.importFeeInfo);
+  if (body.specifications !== undefined) updates.specifications = body.specifications && typeof body.specifications === 'object' ? body.specifications : {};
+  if (body.availableColors !== undefined) updates.available_colors = Array.isArray(body.availableColors) ? body.availableColors.filter(Boolean).slice(0, 30) : [];
+  if (body.availableSizes !== undefined) updates.available_sizes = Array.isArray(body.availableSizes) ? body.availableSizes.filter(Boolean).slice(0, 30) : [];
+  if (body.pickupAvailable !== undefined) updates.pickup_available = body.pickupAvailable !== false;
+  if (body.deliveryAvailable !== undefined) updates.delivery_available = body.deliveryAvailable !== false;
   if (body.isPublished !== undefined) updates.is_published = !!body.isPublished;
   updates.updated_at = new Date().toISOString();
   if (updates.category_id) {
@@ -711,9 +732,6 @@ router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
   if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
   const { error } = await supabase.from('shop_products').update(updates).eq('id', req.params.id).eq('church_id', churchId);
   if (error) {
-    if (error.message?.includes('description_check')) {
-      return res.status(400).json({ ok: false, error: 'Description is required — please add a product description and try again.' });
-    }
     return res.status(500).json({ ok: false, error: error.message });
   }
   res.json({ ok: true });
@@ -735,7 +753,7 @@ router.post('/api/shop/upload', requireOrgAdmin, withJsonUpload(shopAssetUpload.
     await ensurePublicBucket(supabase, 'shop-assets', {
       allowedMimeTypes: ['image/*', 'video/*', 'audio/*', 'application/pdf', 'application/epub+zip', 'application/octet-stream'],
     });
-    const kind = req.body.kind === 'media' ? 'media' : 'thumbnail';
+    const kind = ['media', 'gallery'].includes(req.body.kind) ? req.body.kind : 'thumbnail';
     const ext = (req.file.originalname.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
     const storagePath = `shop/${churchId}/${kind}_${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from('shop-assets').upload(storagePath, req.file.buffer, {

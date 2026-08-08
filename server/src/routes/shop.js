@@ -8,6 +8,7 @@
  */
 
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import { logger } from '../lib/logger.js';
 import { ensurePublicBucket } from '../lib/storage.js';
 
@@ -26,10 +27,42 @@ async function ensureShopBucket(supabase) {
 async function getUserChurch(supabase, userId) {
   const { data } = await supabase
     .from('church_members')
-    .select('church_id, churches(id, name, slug, logo_url)')
+    .select('church_id, churches(id, name, slug, logo_url, description, email, phone, website)')
     .eq('user_id', userId)
     .maybeSingle();
   return data ?? null;
+}
+
+function jsonArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function jsonObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function makeInvoiceNumber() {
+  return `LO-${new Date().getUTCFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+}
+
+function makeCollectionCode() {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
+
+function trackingEvent(status, note) {
+  return [{ status, note, at: new Date().toISOString() }];
+}
+
+function productPayload(product, churchName, seller = null) {
+  return {
+    ...product,
+    image_urls: jsonArray(product.image_urls),
+    specifications: jsonObject(product.specifications),
+    available_colors: jsonArray(product.available_colors),
+    available_sizes: jsonArray(product.available_sizes),
+    churchName,
+    seller,
+  };
 }
 
 async function getChurchForBrowse(supabase, req) {
@@ -102,7 +135,7 @@ router.get('/products', async (req, res) => {
 
   let q = supabase
     .from('shop_products')
-    .select('id, church_id, category_id, title, description, price, currency, is_free, product_type, thumbnail_url, stock_count, shop_categories(name, icon, color)')
+    .select('id, church_id, category_id, title, description, price, currency, is_free, product_type, thumbnail_url, stock_count, image_urls, condition, shipping_cost, estimated_delivery, available_colors, available_sizes, shop_categories(name, icon, color)')
     .eq('church_id', membership.church_id)
     .eq('is_published', true)
     .order('created_at', { ascending: false })
@@ -115,7 +148,7 @@ router.get('/products', async (req, res) => {
 
   // Attach church name for display in the card
   const churchName = membership.churches?.name ?? '';
-  const products   = (data ?? []).map(p => ({ ...p, churchName }));
+  const products   = (data ?? []).map(p => productPayload(p, churchName));
   res.json({ ok: true, products, churchName });
 });
 
@@ -133,7 +166,108 @@ router.get('/products/:id', async (req, res) => {
     .eq('is_published', true)
     .maybeSingle();
   if (error || !data) return res.status(404).json({ error: 'Product not found' });
-  res.json({ ok: true, product: { ...data, churchName: membership.churches?.name ?? '' } });
+
+  const seller = membership.churches
+    ? {
+        id: membership.churches.id,
+        name: membership.churches.name,
+        description: membership.churches.description ?? null,
+        email: membership.churches.email ?? null,
+        phone: membership.churches.phone ?? null,
+        website: membership.churches.website ?? null,
+        logoUrl: membership.churches.logo_url ?? null,
+      }
+    : null;
+  const { data: related } = data.category_id
+    ? await supabase.from('shop_products')
+        .select('id, church_id, category_id, title, description, price, currency, is_free, product_type, thumbnail_url, stock_count, image_urls, condition, shipping_cost, estimated_delivery, available_colors, available_sizes, shop_categories(name, icon, color)')
+        .eq('church_id', membership.church_id)
+        .eq('category_id', data.category_id)
+        .eq('is_published', true)
+        .neq('id', data.id)
+        .order('created_at', { ascending: false })
+        .limit(8)
+    : { data: [] };
+  res.json({
+    ok: true,
+    product: productPayload(data, membership.churches?.name ?? '', seller),
+    relatedProducts: (related ?? []).map(p => productPayload(p, membership.churches?.name ?? '')),
+  });
+});
+
+// ── Persistent cart and wishlist ─────────────────────────────────────────────
+router.get('/cart', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data, error } = await supabase.from('shop_cart_items')
+    .select('id, product_id, quantity, selected_color, selected_size, shop_products(id, church_id, title, price, currency, is_free, product_type, thumbnail_url, stock_count, image_urls, is_published)')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, items: data ?? [] });
+});
+
+router.post('/cart', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { productId, quantity = 1, selectedColor = null, selectedSize = null } = req.body;
+  const qty = Math.max(1, Math.min(99, parseInt(quantity, 10) || 1));
+  if (!productId) return res.status(400).json({ error: 'productId is required' });
+  const { data: product } = await supabase.from('shop_products')
+    .select('id, stock_count, is_published').eq('id', productId).maybeSingle();
+  if (!product?.is_published) return res.status(404).json({ error: 'Product not found' });
+  if (product.stock_count !== null && qty > product.stock_count) {
+    return res.status(409).json({ error: `Only ${product.stock_count} item(s) are available` });
+  }
+  const { data, error } = await supabase.from('shop_cart_items').upsert({
+    user_id: req.user.id, product_id: productId, quantity: qty,
+    selected_color: selectedColor || null, selected_size: selectedSize || null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,product_id,selected_color,selected_size' }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, item: data });
+});
+
+router.put('/cart/:id', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const qty = Math.max(1, Math.min(99, parseInt(req.body.quantity, 10) || 1));
+  const { data, error } = await supabase.from('shop_cart_items')
+    .update({ quantity: qty, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id).eq('user_id', req.user.id).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Cart item not found' });
+  res.json({ ok: true, item: data });
+});
+
+router.delete('/cart/:id', async (req, res) => {
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_cart_items')
+    .delete().eq('id', req.params.id).eq('user_id', req.user.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+router.get('/wishlist', async (req, res) => {
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_wishlists')
+    .select('id, product_id, created_at, shop_products(id, title, price, currency, is_free, product_type, thumbnail_url, stock_count)')
+    .eq('user_id', req.user.id).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, items: data ?? [] });
+});
+
+router.post('/wishlist/:productId', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data: product } = await supabase.from('shop_products').select('id').eq('id', req.params.productId).eq('is_published', true).maybeSingle();
+  if (!product) return res.status(404).json({ error: 'Product not found' });
+  const { data, error } = await supabase.from('shop_wishlists')
+    .upsert({ user_id: req.user.id, product_id: req.params.productId }, { onConflict: 'user_id,product_id' })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, item: data });
+});
+
+router.delete('/wishlist/:productId', async (req, res) => {
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_wishlists')
+    .delete().eq('user_id', req.user.id).eq('product_id', req.params.productId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // ── GET /api/shop/my-orders ───────────────────────────────────────────────────
@@ -141,7 +275,7 @@ router.get('/my-orders', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const { data, error } = await supabase
     .from('shop_orders')
-    .select('*, shop_products(id, title, thumbnail_url, product_type, media_url)')
+    .select('*, shop_products(id, title, thumbnail_url, product_type, media_url, image_urls)')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false })
     .limit(50);
@@ -154,8 +288,13 @@ router.get('/my-orders', async (req, res) => {
 // Body: { productId, buyerName, deliveryAddress? }
 router.post('/orders/initiate', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
-  const { productId, buyerName, deliveryAddress } = req.body;
+  const {
+    productId, buyerName, deliveryAddress, shippingName, shippingPhone,
+    fulfillmentMethod = 'delivery', quantity = 1, selectedColor = null, selectedSize = null,
+  } = req.body;
   if (!productId) return res.status(400).json({ error: 'productId is required' });
+  if (!['pickup', 'delivery'].includes(fulfillmentMethod)) return res.status(400).json({ error: 'Choose pickup or delivery' });
+  const qty = Math.max(1, Math.min(99, parseInt(quantity, 10) || 1));
 
   // Browsing a selected church is public to signed-in users, but purchasing
   // remains restricted to members of that church.
@@ -165,28 +304,40 @@ router.post('/orders/initiate', async (req, res) => {
   // Fetch product (church-scoped)
   const { data: product, error: pErr } = await supabase
     .from('shop_products')
-    .select('id, title, price, currency, is_free, product_type, stock_count, church_id, is_published')
+    .select('id, title, price, currency, is_free, product_type, stock_count, church_id, is_published, shipping_cost, pickup_available, delivery_available')
     .eq('id', productId)
     .eq('church_id', membership.church_id)
     .eq('is_published', true)
     .maybeSingle();
   if (pErr || !product) return res.status(404).json({ error: 'Product not found' });
+  if (fulfillmentMethod === 'pickup' && product.pickup_available === false) return res.status(400).json({ error: 'Pickup is not available for this product' });
+  if (fulfillmentMethod === 'delivery' && product.delivery_available === false) return res.status(400).json({ error: 'Delivery is not available for this product' });
+  if (fulfillmentMethod === 'delivery' && !deliveryAddress?.trim()) return res.status(400).json({ error: 'Delivery address is required' });
+  if (product.stock_count !== null && qty > product.stock_count) return res.status(409).json({ error: `Only ${product.stock_count} item(s) are available` });
+  const itemAmount = product.is_free ? 0 : Number(product.price) * qty;
+  const shippingAmount = fulfillmentMethod === 'delivery' ? Number(product.shipping_cost ?? 0) : 0;
+  const amount = itemAmount + shippingAmount;
+  const invoiceNumber = makeInvoiceNumber();
+  const commonOrder = {
+    user_id: req.user.id, product_id: product.id, church_id: product.church_id,
+    amount, currency: product.currency, quantity: qty, selected_color: selectedColor || null,
+    selected_size: selectedSize || null, fulfillment_method: fulfillmentMethod,
+    buyer_name: buyerName?.trim() || req.user.email?.split('@')[0], buyer_email: req.user.email,
+    shipping_name: shippingName?.trim() || buyerName?.trim() || null,
+    shipping_phone: shippingPhone?.trim() || null, shipping_address: deliveryAddress?.trim() || null,
+    delivery_address: deliveryAddress?.trim() || null, invoice_number: invoiceNumber,
+    tracking_status: fulfillmentMethod === 'pickup' ? 'ready_for_collection' : 'order_received',
+    tracking_events: trackingEvent(fulfillmentMethod === 'pickup' ? 'ready_for_collection' : 'order_received', 'Order received'),
+  };
 
   // Free product — create order immediately, no payment needed
   if (product.is_free || product.price <= 0) {
-    const { data: order, error: oErr } = await supabase.from('shop_orders').insert({
-      user_id: req.user.id,
-      product_id: product.id,
-      church_id: product.church_id,
-      amount: 0,
-      currency: product.currency,
-      status: 'paid',
-      buyer_name: buyerName?.trim() || req.user.email?.split('@')[0],
-      buyer_email: req.user.email,
-      delivery_address: deliveryAddress?.trim() || null,
-    }).select().single();
+    const paidFields = fulfillmentMethod === 'pickup'
+      ? { status: 'paid', paid_at: new Date().toISOString(), collection_code: makeCollectionCode(), collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${invoiceNumber}` }
+      : { status: 'paid', paid_at: new Date().toISOString() };
+    const { data: order, error: oErr } = await supabase.from('shop_orders').insert({ ...commonOrder, ...paidFields }).select().single();
     if (oErr) return res.status(500).json({ error: oErr.message });
-    return res.json({ ok: true, free: true, orderId: order.id });
+    return res.json({ ok: true, free: true, orderId: order.id, invoiceNumber, collectionCode: order.collection_code });
   }
 
   // Paid product — create pending order then initiate Flutterwave
@@ -197,19 +348,8 @@ router.post('/orders/initiate', async (req, res) => {
   const txRef  = `shop_${req.user.id}_${product.id}_${Date.now()}`;
   const email  = req.user.email ?? 'buyer@livingolive.app';
   const name   = buyerName?.trim() || email.split('@')[0];
-  const amount = parseFloat(product.price);
-
   const { data: order, error: oErr } = await supabase.from('shop_orders').insert({
-    user_id: req.user.id,
-    product_id: product.id,
-    church_id: product.church_id,
-    amount,
-    currency: product.currency,
-    status: 'pending',
-    flw_tx_ref: txRef,
-    buyer_name: name,
-    buyer_email: email,
-    delivery_address: deliveryAddress?.trim() || null,
+    ...commonOrder, amount, status: 'pending', flw_tx_ref: txRef, buyer_name: name, buyer_email: email,
   }).select().single();
   if (oErr) return res.status(500).json({ error: oErr.message });
 
@@ -218,7 +358,7 @@ router.post('/orders/initiate', async (req, res) => {
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tx_ref: txRef,
-      amount,
+       amount,
       currency: product.currency,
       redirect_url: 'https://livingolive.adroomai.com/payment/success',
       customer: { email, name },
@@ -227,7 +367,7 @@ router.post('/orders/initiate', async (req, res) => {
         description: product.title,
         logo: 'https://livingolive.adroomai.com/icon.png',
       },
-      meta: { user_id: req.user.id, product_id: product.id, order_id: order.id },
+       meta: { user_id: req.user.id, product_id: product.id, order_id: order.id, fulfillment_method: fulfillmentMethod },
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -241,7 +381,7 @@ router.post('/orders/initiate', async (req, res) => {
   if (!paymentLink) return res.status(502).json({ error: 'No payment link returned from provider' });
 
   log.info(`Shop order initiated: ${txRef} product=${product.id} amount=${amount}`);
-  res.json({ ok: true, paymentLink, txRef, orderId: order.id });
+   res.json({ ok: true, paymentLink, txRef, orderId: order.id, invoiceNumber });
 });
 
 // ── POST /api/shop/orders/verify ──────────────────────────────────────────────
@@ -278,17 +418,35 @@ router.post('/orders/verify', async (req, res) => {
   }
 
   // Update order to paid
+  const { data: existingOrder } = await supabase.from('shop_orders')
+    .select('id, fulfillment_method, collection_code, collection_qr')
+    .eq('flw_tx_ref', txRef ?? '')
+    .eq('user_id', req.user.id).maybeSingle();
+  const paidFields = {
+    status: 'paid', flw_tx_id: String(verifyId), paid_at: new Date().toISOString(),
+    ...(existingOrder?.fulfillment_method === 'pickup' && !existingOrder.collection_code
+      ? { collection_code: makeCollectionCode(), collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${existingOrder.id}` }
+      : {}),
+  };
   const { data: order, error: oErr } = await supabase
     .from('shop_orders')
-    .update({ status: 'paid', flw_tx_id: String(verifyId) })
+    .update(paidFields)
     .eq('flw_tx_ref', tx.tx_ref)
     .eq('user_id', req.user.id)
-    .select('*, shop_products(title, product_type, media_url)')
+    .select('*, shop_products(title, product_type, media_url, image_urls)')
     .maybeSingle();
 
   if (oErr) return res.status(500).json({ error: oErr.message });
   log.info(`Shop order paid: ${tx.tx_ref}`);
   res.json({ ok: true, order });
+});
+
+router.get('/orders/:orderId', async (req, res) => {
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_orders')
+    .select('*, shop_products(id, title, thumbnail_url, product_type, media_url, image_urls)')
+    .eq('id', req.params.orderId).eq('user_id', req.user.id).maybeSingle();
+  if (error || !data) return res.status(404).json({ error: 'Order not found' });
+  res.json({ ok: true, order: data });
 });
 
 // ── GET /api/shop/download/:orderId ──────────────────────────────────────────
