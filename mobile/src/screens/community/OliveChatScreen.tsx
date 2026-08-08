@@ -895,6 +895,7 @@ function ProfileTab({
   const [website, setWebsite] = useState('');
   const [dobPublic, setDobPublic] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [pinModal, setPinModal] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [settingPin, setSettingPin] = useState(false);
@@ -975,7 +976,14 @@ function ProfileTab({
   }
 
   async function handleSetPin() {
-    if (!newPin.trim()) { await setPin(null); setPinSet(false); setPinModal(false); setNewPin(''); return; }
+    if (!newPin.trim()) {
+      await setPin(null);
+      setPinSet(false);
+      await AsyncStorage.setItem('olivechat.pinActive.v1', 'false').catch(() => {});
+      setPinModal(false);
+      setNewPin('');
+      return;
+    }
     if (!/^\d{4,8}$/.test(newPin)) { Alert.alert('Invalid PIN', 'PIN must be 4–8 digits'); return; }
     setSettingPin(true);
      try {
@@ -1053,10 +1061,17 @@ function ProfileTab({
           </View>
         </Pressable>
         {!editing
-          ? <Pressable style={pf.editBtn} onPress={() => setEditing(true)}><Text style={pf.editBtnText}>Edit Profile</Text></Pressable>
-          : <Pressable style={[pf.editBtn, { backgroundColor: colors.olive }]} onPress={saveProfile} disabled={savingProfile}>
-              {savingProfile ? <ActivityIndicator size="small" color="#fff" /> : <Text style={[pf.editBtnText, { color: '#fff' }]}>Save</Text>}
-            </Pressable>}
+          ? <Pressable style={pf.menuBtn} onPress={() => setProfileMenuOpen(true)} hitSlop={8}>
+              <Ionicons name="ellipsis-horizontal" size={22} color={colors.oliveDark} />
+            </Pressable>
+          : <View style={pf.editActions}>
+              <Pressable style={pf.cancelEditBtn} onPress={() => { setEditing(false); setShowOnboarding(false); }}>
+                <Text style={pf.cancelEditText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[pf.editBtn, { backgroundColor: colors.olive }]} onPress={saveProfile} disabled={savingProfile}>
+                {savingProfile ? <ActivityIndicator size="small" color="#fff" /> : <Text style={[pf.editBtnText, { color: '#fff' }]}>Save</Text>}
+              </Pressable>
+            </View>}
       </View>
       <View style={pf.infoWrap}>
         {editing ? (
@@ -1126,7 +1141,7 @@ function ProfileTab({
         <View style={{ marginTop: spacing.sm }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark }}>
             <Ionicons name="grid-outline" size={16} color={colors.olive} style={{ marginRight: 6 }} />
-            <Text style={pf.sectionTitle}>MY POSTS</Text>
+            <Text style={pf.sectionTitle}>POSTS & TAGGED</Text>
           </View>
           {loadingPosts ? (
             <PostSkeleton />
@@ -1153,14 +1168,21 @@ function ProfileTab({
           )}
         </View>
       )}
-      {/* Security */}
-      <View style={pf.section}>
-        <Text style={pf.sectionTitle}>OLIVE CHAT LOCK</Text>
-        <Text style={pf.sectionDesc}>Set a PIN to protect access to Olive Chat on this device.</Text>
-        <Pressable style={pf.pinBtn} onPress={() => setPinModal(true)}>
-          <Text style={pf.pinBtnText}>{pinSet ? '🔒 Change / Remove PIN' : '🔓 Set PIN'}</Text>
+      <Modal visible={profileMenuOpen} transparent animationType="fade" onRequestClose={() => setProfileMenuOpen(false)}>
+        <Pressable style={pf.menuOverlay} onPress={() => setProfileMenuOpen(false)}>
+          <View style={pf.profileMenu}>
+            <Text style={pf.profileMenuTitle}>Profile options</Text>
+            <Pressable style={pf.profileMenuItem} onPress={() => { setProfileMenuOpen(false); setEditing(true); }}>
+              <Ionicons name="create-outline" size={20} color={colors.olive} />
+              <Text style={pf.profileMenuText}>Edit profile</Text>
+            </Pressable>
+            <Pressable style={pf.profileMenuItem} onPress={() => { setProfileMenuOpen(false); setPinModal(true); }}>
+              <Ionicons name="lock-closed-outline" size={20} color={colors.olive} />
+              <Text style={pf.profileMenuText}>{pinSet ? 'Change or remove PIN' : 'Set PIN'}</Text>
+            </Pressable>
+          </View>
         </Pressable>
-      </View>
+      </Modal>
       <Modal visible={pinModal} animationType="fade" transparent onRequestClose={() => setPinModal(false)}>
         <View style={pf.pinOverlay}>
           <View style={pf.pinCard}>
@@ -1548,6 +1570,28 @@ export default function OliveChatScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []));
 
+  // Navigation focus does not fire when the app is backgrounded and resumed
+  // while this screen remains mounted. Re-check the server-backed lock on
+  // every foreground transition so leaving the app cannot bypass the PIN.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextState) => {
+      if (nextState !== 'active') return;
+      try {
+        const activePin = await getPinStatus();
+        await AsyncStorage.setItem(PIN_CACHE_KEY, JSON.stringify(activePin));
+        setPinLocked(activePin);
+        setPinChecked(true);
+        if (activePin) setShowSplash(true);
+      } catch {
+        const cached = await AsyncStorage.getItem(PIN_CACHE_KEY).catch(() => null);
+        const activePin = cached ? JSON.parse(cached) === true : false;
+        setPinLocked(activePin);
+        setPinChecked(true);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   // Clean up realtime on unmount
   useEffect(() => {
     return () => {
@@ -1679,7 +1723,11 @@ export default function OliveChatScreen() {
     if (res.canceled || !res.assets[0]) return;
     const asset = res.assets[0];
     try {
-      const { url, mediaType } = await uploadStoryMedia(asset.uri);
+      const { url, mediaType } = await uploadStoryMedia(
+        asset.uri,
+        asset.type === 'video' ? 'video' : 'image',
+        (asset as any).mimeType ?? null,
+      );
       const s = await createStory(url, mediaType);
       setStories(prev => [s, ...prev]);
     } catch (e: any) {

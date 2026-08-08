@@ -189,16 +189,26 @@ async function xhrUpload(url: string, headers: Record<string, string>, uri: stri
 
 async function uploadFile(path: string, uri: string, mimeType: string): Promise<string> {
   const headers = await authHeader();
-  const fileName = uri.split('/').pop() ?? 'file';
+  const fileName = uploadFileName(uri, mimeType);
   const json = await xhrUpload(`${API}${path}`, headers as any, uri, mimeType, fileName, 120_000);
   return json.url as string;
 }
 
 async function uploadFileWithMeta(path: string, uri: string, mimeType: string): Promise<{ url: string; thumbnailUrl?: string }> {
   const headers = await authHeader();
-  const fileName = uri.split('/').pop() ?? 'file';
+  const fileName = uploadFileName(uri, mimeType);
   const json = await xhrUpload(`${API}${path}`, headers as any, uri, mimeType, fileName, 180_000);
   return { url: json.url as string, thumbnailUrl: json.thumbnailUrl ?? undefined };
+}
+
+function uploadFileName(uri: string, mimeType: string): string {
+  const uriName = decodeURIComponent(uri.split(/[/?]/).pop() ?? '');
+  if (/\.[a-z0-9]{2,5}$/i.test(uriName)) return uriName;
+  const ext = mimeType.startsWith('video/') ? 'mp4'
+    : mimeType === 'image/png' ? 'png'
+      : mimeType === 'image/gif' ? 'gif'
+        : mimeType.startsWith('audio/') ? 'm4a' : 'jpg';
+  return `upload.${ext}`;
 }
 
 // ── Profile ───────────────────────────────────────────────────────────────────
@@ -575,12 +585,21 @@ export async function getStories(): Promise<Story[]> {
   return r.stories ?? [];
 }
 
-export async function uploadStoryMedia(uri: string): Promise<{ url: string; mediaType: 'photo' | 'video' }> {
+export async function uploadStoryMedia(
+  uri: string,
+  assetType?: 'image' | 'video',
+  reportedMimeType?: string | null,
+): Promise<{ url: string; mediaType: 'photo' | 'video' }> {
   const headers = await authHeader();
-  const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const mimeType = ['mp4', 'm4v', 'mov', 'avi', 'webm', '3gp'].includes(ext)
-    ? (ext === 'mov' ? 'video/quicktime' : ext === '3gp' ? 'video/3gpp' : 'video/mp4')
-    : `image/${ext === 'jpg' ? 'jpeg' : ['heic', 'heif'].includes(ext) ? 'jpeg' : ext}`;
+  // Android content:// URIs frequently have no extension. The picker asset
+  // type is authoritative; the URI extension is only a fallback for older
+  // picker versions.
+  const rawExt = uri.split(/[.?]/).pop()?.toLowerCase() ?? '';
+  const isVideo = assetType === 'video' || (!assetType && ['mp4', 'm4v', 'mov', 'avi', 'webm', '3gp'].includes(rawExt));
+  const mimeType = isVideo
+    ? 'video/mp4'
+    : ((reportedMimeType ?? '').startsWith('image/') ? reportedMimeType! : 'image/jpeg');
+  const ext = isVideo ? 'mp4' : (mimeType === 'image/png' ? 'png' : mimeType === 'image/gif' ? 'gif' : 'jpg');
   const json = await xhrUpload(`${API}/api/community/stories/upload`, headers as any, uri, mimeType, `story.${ext}`, 180_000);
   return { url: json.url as string, mediaType: json.mediaType as 'photo' | 'video' };
 }
