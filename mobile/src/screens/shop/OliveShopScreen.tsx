@@ -22,7 +22,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   getMyShopChurch, getAllChurches, getShopCategories, getShopProducts,
-  getMyOrders, initiateShopOrder, verifyShopOrder, getDownloadLink,
+  getShopProductDetail, getShopCart, addShopCartItem, addShopWishlist, removeShopWishlist,
+  getMyOrders, getShopOrder, initiateShopOrder, verifyShopOrder, getDownloadLink,
   type ShopChurch, type ShopCategory, type ShopProduct, type ShopOrder,
 } from '../../lib/shopApi';
 import { colors, radii, spacing, typography, shadows } from '../../theme/theme';

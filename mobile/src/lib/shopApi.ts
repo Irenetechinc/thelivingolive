@@ -154,6 +154,11 @@ export async function getShopProductDetail(id: string): Promise<{ product: ShopP
   return { product: r.product, relatedProducts: r.relatedProducts ?? [] };
 }
 
+export async function getShopOrder(orderId: string): Promise<ShopOrder> {
+  const r = await shopGet<any>(`/api/shop/orders/${orderId}`);
+  return r.order;
+}
+
 export async function getShopCart(): Promise<ShopCartItem[]> {
   const r = await shopGet<any>('/api/shop/cart');
   return r.items ?? [];
