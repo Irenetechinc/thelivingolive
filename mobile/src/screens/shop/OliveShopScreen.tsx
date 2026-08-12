@@ -619,8 +619,8 @@ function MyOrdersSheet({ orders, loading, onClose, onDownload, onVerify }: {
   orders: ShopOrder[]; loading: boolean; onClose: () => void;
   onDownload: (o: ShopOrder) => void; onVerify: (o: ShopOrder) => void;
 }) {
-  const statusColor = (s: string) => ({ paid: '#2E7D32', pending: S.gold, failed: '#C62828', refunded: '#1565C0' }[s] ?? '#666');
-  const statusLabel = (s: string) => ({ paid: '✓ Paid', pending: '⏳ Pending', failed: '✕ Failed', refunded: '↩ Refunded' }[s] ?? s);
+  const statusColor = (s: string) => ({ paid: '#2E7D32', collected: '#2E7D32', pending: S.gold, failed: '#C62828', refunded: '#1565C0' }[s] ?? '#666');
+  const statusLabel = (s: string) => ({ paid: '✓ Paid', collected: '✓ Collected', pending: '⏳ Pending', failed: '✕ Failed', refunded: '↩ Refunded' }[s] ?? s);
   const trackingStepIcon = (idx: number, curIdx: number) =>
     idx < curIdx ? '✓' : idx === curIdx ? '●' : '○';
   const trackingStepColor = (idx: number, curIdx: number) =>
@@ -671,7 +671,7 @@ function MyOrdersSheet({ orders, loading, onClose, onDownload, onVerify }: {
           }
           renderItem={({ item: o }) => {
             const trackingIdx = getTrackingIdx(o);
-            const isPickupPaid = o.status === 'paid' && o.fulfillment_method === 'pickup';
+            const isPickupPaid = (o.status === 'paid' || o.status === 'collected') && o.fulfillment_method === 'pickup';
             return (
               <View style={{ backgroundColor: '#fff', borderRadius: radii.lg, padding: spacing.md, marginBottom: spacing.md, ...shadows.subtle }}>
                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm }}>
@@ -710,7 +710,7 @@ function MyOrdersSheet({ orders, loading, onClose, onDownload, onVerify }: {
                           <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Verify Payment</Text>
                         </Pressable>
                       )}
-                      {o.status === 'paid' && ['digital', 'media'].includes(o.shop_products?.product_type ?? '') && (
+                      {(o.status === 'paid' || o.status === 'collected') && ['digital', 'media'].includes(o.shop_products?.product_type ?? '') && (
                         <Pressable onPress={() => onDownload(o)} style={{ backgroundColor: colors.olive, borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 4 }}>
                           <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>⬇ Download</Text>
                         </Pressable>
@@ -1099,6 +1099,9 @@ export default function OliveShopScreen() {
           'Payment opened',
           `Invoice ${result.invoiceNumber ?? ''} was sent to your email. Complete payment in your browser, then return to My Orders to verify.`.replace(/\s+/g, ' ').trim(),
         );
+      } else {
+        setCartItems([]);
+        Alert.alert('Order placed', 'Your cart order has been placed successfully. Check My Orders for details.');
       }
     } catch (e: any) {
       Alert.alert('Cart checkout error', e.message ?? 'Could not start cart checkout');
@@ -1145,10 +1148,12 @@ export default function OliveShopScreen() {
     if (!o.flw_tx_ref) return;
     try {
       const { order } = await verifyShopOrder(o.flw_tx_ref);
-      if (order.status === 'paid') {
-        const refreshed = await getMyOrders();
-        setOrders(refreshed);
-        Alert.alert('✓ Confirmed', 'Payment verified! Your order is complete.');
+      const refreshed = await getMyOrders();
+      setOrders(refreshed);
+      if (order.status === 'paid' || order.status === 'collected') {
+        Alert.alert('✓ Confirmed', order.status === 'collected'
+          ? 'Payment is confirmed and your pickup has been collected.'
+          : 'Payment verified! Your order is complete.');
       } else {
         Alert.alert('Not confirmed', 'Payment not found yet. Try again after completing payment.');
       }

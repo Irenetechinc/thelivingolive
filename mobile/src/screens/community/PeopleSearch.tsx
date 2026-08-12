@@ -105,7 +105,7 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
               return (
                 <Pressable
                   style={({ pressed }) => [ps.row, pressed && { backgroundColor: colors.parchment }]}
-                  onPress={() => { onClose(); onViewProfile(u.id); }}
+                  onPress={() => { onClose(); setTimeout(() => onViewProfile(u.id), 140); }}
                 >
                   {u.avatarUrl
                     ? <Image source={{ uri: u.avatarUrl }} style={ps.avatar} />
@@ -113,7 +113,7 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
                         <Text style={ps.avatarInitial}>{(u.displayName ?? '?').slice(0, 1).toUpperCase()}</Text>
                       </View>}
                   <View style={{ flex: 1 }}>
-                    <Text style={ps.name}>{u.displayName ?? 'Member'}{isSelf ? ' (You)' : ''}</Text>
+                    <Text style={ps.name}>{u.displayName?.trim() || 'Member'}{isSelf ? ' (You)' : ''}</Text>
                     {u.username ? <Text style={ps.username}>@{u.username}</Text> : null}
                     {u.churchAffiliation ? (
                       <Text style={ps.sub} numberOfLines={1}>
