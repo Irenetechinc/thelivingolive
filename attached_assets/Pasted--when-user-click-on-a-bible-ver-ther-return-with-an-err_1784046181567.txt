@@ -1,0 +1,421 @@
+
+when user click on a bible ver ther return with an error page investgate and fix this "smething went wrong, chnaging numCulums on the fly is not supported. change the key prop on flatlist when chnaging the number of columns to force a fresh render of the component".
+in the my hilight and notes screen when user finsh recording its says queed and waiting for connection even tho there is connection investigate and fix this so transcription can proceed smothly after recoding is complet, also the screen should have when user can enter manual note entries as well as edit the transcribe recoding by adding or removing at will also when recording and user live the hilight screen or note screen thier should be a floating icon where user can user easly acces the note and recoding screen, also noticed the when user leave the highlight and recoding screen the recoding stops entirely fix this.
+check for broken or incomplet implimentation and impliment them accodinly.
+imporve whats alrady built impliment a fully autonomous, self-evolving prayer and devotional agent that:
+
+Runs 24/7 non-stop on Railway servers
+
+Learns primarily from provided Bible and prayer data (your data)
+
+Augments learning with free internet data (NO LLM APIs, NO GPU)
+
+Automatically detects prayer categories: Adoration, Warfare, Intercession
+
+Generates category-appropriate prayer points with scriptural backing
+
+Creates full devotionals with narration-ready verses
+
+Self-improves recursively through algorithmic evolution
+
+Operates entirely without AI APIs, GPUs, or ML libraries
+
+🧠 CORE INTELLIGENCE REQUIREMENTS
+1. Category Detection Intelligence
+The agent must automatically determine which prayer category a user needs based on their heart desire:
+
+Adoration - When user expresses:
+
+Praise, worship, gratitude, thanksgiving
+
+Awe of God's nature, character, or works
+
+Desire to exalt, magnify, or honor God
+
+Words like: praise, worship, thank, glorify, exalt, honor, adore
+
+Warfare - When user expresses:
+
+Spiritual battle, opposition, or attack
+
+Need for deliverance, breakthrough, or victory
+
+Binding, breaking, or destroying spiritual strongholds
+
+Words like: battle, fight, overcome, deliver, break, bind, destroy, victory
+
+Intercession - When user expresses:
+
+Praying on behalf of others
+
+Standing in the gap for people, nations, or situations
+
+Compassion for others' needs
+
+Words like: intercede, stand in the gap, pray for others, family, nation, salvation
+
+How It Learns:
+
+Starts with keyword-based detection (pre-loaded from your data)
+
+Learns from every user interaction
+
+Refines detection based on user feedback
+
+Discovers subtle patterns and new categories over time
+
+2. Category-Specific Generation
+The agent must generate content appropriate for each category:
+
+Adoration Generation:
+
+Praise-focused language
+
+Scripture emphasizing God's nature and works
+
+Worshipful tone
+
+Verses from Psalms, Revelation, worship passages
+
+Warfare Generation:
+
+Declarative, authoritative language
+
+Scripture on spiritual armor and victory
+
+Breakthrough and deliverance focus
+
+Verses from Ephesians, 2 Corinthians, battle passages
+
+Intercession Generation:
+
+Compassionate, petitionary language
+
+Scripture on standing in the gap
+
+Focus on others' needs and salvation
+
+Verses from 1 Timothy, Ezekiel, intercessory passages
+
+3. Scripture Matching Intelligence
+EVERY prayer point must have relevant Bible verses attached:
+
+Not random verses - Verses must directly support the prayer point
+Not generic verses - Verses must be specifically chosen for the category and theme
+Context-aware - Verses should include context explanation for understanding
+
+How It Learns:
+
+Starts with your provided Bible data and tagged verses
+
+Learns which verses work best for which categories
+
+Adapts verse selection based on user engagement
+
+Discovers new verse associations from internet data
+
+🔄 SELF-IMPROVEMENT REQUIREMENTS
+The Agent Must Learn From:
+1. Your Provided Data (Primary)
+
+All Bible verses with your tags, keywords, categories
+
+All prayer points with your scripture backings
+
+Your success patterns and usage history
+
+2. User Interactions (Real-Time)
+
+Every prayer request → learns patterns
+
+Every rating (1-5 stars) → adjusts weights
+
+Every verse read → learns relevance
+
+Every narration used → learns engagement
+
+3. Internet Data (Free Augmentation)
+
+API.Bible (5,000 free queries/day) for fresh translations
+
+Open Bible APIs (free, unlimited) for verse data
+
+Web search for prayer patterns (self-hosted, no LLM)
+
+Web scraping for structured prayer content
+
+4. Category Evolution
+
+Discovers new prayer categories from patterns
+
+Creates sub-categories from successful variations
+
+Merges categories when patterns overlap
+
+Refines detection thresholds automatically
+
+Learning Cycles
+Real-Time Learning:
+
+Immediate weight updates per interaction
+
+User preference adaptation
+
+Category detection refinement
+
+Hourly Learning:
+
+Batch processing of recent feedback
+
+Pattern discovery from new interactions
+
+Weight normalization
+
+Daily Learning (2 AM):
+
+Full retraining from 24 hours of data
+
+Genetic algorithm for pattern evolution
+
+Category detection model update
+
+Template success score update
+
+Weekly Evolution (Sunday 3 AM):
+
+Full system self-audit
+
+Algorithm improvement suggestions
+
+New category discovery evaluation
+
+Performance optimization
+
+Internet Data Fetch (Every 6 Hours):
+
+Fresh verse data from APIs
+
+Prayer pattern discovery from web
+
+New scripture associations
+
+🌐 INTERNET DATA ACQUISITION (FREE, NO LLM)
+Sources the Agent Must Use:
+1. Bible APIs (Free)
+
+API.Bible - 5,000 queries/day free
+
+bible-api.com - Unlimited free queries
+
+Open-Bible-API - Completely free and open-source
+
+2. Self-Hosted Web Tools (Railway Deployable)
+
+SearXNG for free web search (privacy-respecting)
+
+Crawl4AI for free web crawling (no LLM)
+
+Web Tools Toolkit (8 tools: search, fetch, screenshot, crawl, etc.)
+
+3. Web Scraping (Free)
+
+Beautiful Soup for HTML parsing
+
+CSS selectors for structured data extraction
+
+No LLM needed - pure algorithmic extraction
+
+4. Christian Content Sources
+
+Bible Gateway (verse search by topic)
+
+Open Bible (thematic verse collections)
+
+Christian prayer websites (free content)
+
+How It Uses Internet Data:
+Discovers new verse associations
+
+Finds fresh prayer point patterns
+
+Learns cultural variations in prayer
+
+Updates scripture translations
+
+Expands keyword knowledge
+
+📝 GENERATION REQUIREMENTS
+Prayer Point Generation
+For every request, the agent must generate:
+
+Category Detection:
+
+Identify if user needs Adoration, Warfare, or Intercession
+
+Provide confidence score
+
+Ask for clarification if uncertain
+
+Prayer Points (3-5 per request):
+
+Each point must be relevant to the detected category
+
+Each point must have AT LEAST one Bible verse attached
+
+Verses must directly support the prayer point (not random)
+
+Include verse reference AND full text
+
+Provide brief context for each verse
+
+Full Devotional (When Requested):
+
+Opening thought (category-appropriate)
+
+Main scripture with narration option
+
+All prayer points with their verses
+
+Reflection questions
+
+Closing prayer
+
+All verses accessible in one "verses for narration" section
+
+Output Format
+The agent must produce structured output containing:
+
+Detected category with reasoning
+
+Prayer points with scripture references
+
+Full verses attached to each point
+
+Context explanations for verses
+
+All verses available for narration/reading
+
+🚀 RAILWAY DEPLOYMENT REQUIREMENTS
+24/7 Operation
+The agent must run continuously on Railway with:
+
+Main Application:
+
+Flask server handling all API endpoints
+
+Always running, always available
+
+Health check endpoint for monitoring
+
+Background Workers:
+
+Learning worker (real-time + hourly batch)
+
+Internet fetcher (every 6 hours)
+
+Daily retraining worker (2 AM)
+
+Weekly evolution worker (Sunday 3 AM)
+
+Railway Cron Jobs:
+
+Hourly learning cycles
+
+Daily retraining
+
+Weekly evolution
+
+Internet data fetch
+
+Self-Healing:
+
+Automatic restart on failure
+
+State persistence across restarts
+
+Checkpoint saving for recovery
+
+Performance degradation detection
+
+🎯 SUCCESS CRITERIA
+Must Have
+Automatically detects prayer category (Adoration, Warfare, Intercession)
+
+Generates category-appropriate prayer points
+
+EVERY prayer point has relevant Bible verses attached (never random)
+
+Learns primarily from your provided Bible and prayer data
+
+Augments learning with free internet data (no LLM)
+
+Runs 24/7 on Railway with no human intervention
+
+Self-improves from every user interaction
+
+Zero AI APIs, zero GPU, zero ML libraries
+
+Full devotional generation with narration-ready verses
+
+Recursive learning and adaptation
+
+Nice to Have
+Discover new prayer categories from patterns
+
+Category transition suggestions
+
+Cultural adaptation from web data
+
+Trending theme detection
+
+User preference migration across sessions
+
+🔑 KEY CAPABILITIES SUMMARY
+✅ Category Intelligence: Knows when to praise, fight, or intercede
+✅ Scripture-Backed Every Time: No random verses, always relevant
+✅ Self-Learning Detection: Gets better at understanding user needs
+✅ 24/7 Autonomous Operation: Never sleeps, always learning
+✅ Primary Learning from Your Data: Your Bible + prayer points are foundation
+✅ Zero LLM Costs: Pure algorithms, free data sources
+✅ No GPU Required: Runs on standard Railway CPU
+✅ Internet Augmentation: Free APIs and web scraping for fresh data
+✅ Recursive Improvement: Evolves from every interaction
+
+📝 FINAL INSTRUCTIONS
+AI Coding Agent, build a Self-Evolving Prayer and Devotional System with Category Intelligence.
+
+Core Mission: Create an autonomous agent that:
+
+Understands what prayer category a user needs (Adoration, Warfare, Intercession)
+
+Generates relevant prayer points with appropriate scriptures for each category
+
+Learns from user feedback to improve category detection and prayer quality
+
+Evolves continuously from provided data and internet sources
+
+Runs 24/7 on Railway with zero human intervention
+
+Core Requirements:
+
+Auto-detect prayer category from user input
+
+Generate category-appropriate prayer points
+
+EVERY prayer point MUST have relevant Bible verses attached
+
+Learn primarily from provided Bible + prayer data
+
+Augment with free internet data (no LLM)
+
+Self-improve recursively from every interaction
+
+Run 24/7 on Railway, zero intervention
+
+No AI APIs, no GPU, no ML libraries
+
+Start building now. The agent knows which database schema, algorithms, and architecture to use.
+
+This agent will understand your heart - whether you need to praise (Adoration), fight (Warfare), or pray for others (Intercession). It will learn from every prayer, every verse read, every rating given. It will never stop improving. Build it.
+
+Please Note: no demo implimentations, no no dumy code, all implimentations and fix must be for production and realtime. this app must work 100% withoput replit,so do not user any replit hosting or databse use the one specified by me wihc is railway for server and superbasefor database, url for backend livingolive.adroomai.com

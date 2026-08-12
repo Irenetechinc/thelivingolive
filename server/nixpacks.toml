@@ -1,0 +1,19 @@
+[variables]
+NODE_VERSION = "22"
+
+# Force public registry before install so Railway never hits Replit-internal URLs.
+# Uses npm ci (strict lockfile) for reproducible, fast builds.
+[phases.install]
+cmds = [
+  'npm config set registry https://registry.npmjs.org/',
+  'npm ci --omit=dev'
+]
+
+[phases.build]
+# Fail the Railway build immediately if the lockfile was committed with
+# Replit-internal registry URLs — better to catch it here than debug a
+# broken install on the next deploy.
+cmds = ['node scripts/check-lockfile.cjs']
+
+[start]
+cmd = 'node src/index.js'

@@ -1,0 +1,30 @@
+
+the when user set pin for account it dosnt take effect after user leavs the app and combace the pin is netirely erased and user is asked to set a new one fix this, once user set pin and tries leave the leaving oive app enterly and comes back before accessing the oliver right after the oive chat splash screen they should be required to enter thier pin to unlock the olive chat that is if user has prevously set pin.
+
+in the profile tab or screen in the olive chat the indivual post dont carry the user profile picture as it should insted its showing just green blank and aslo the user display name is not showing on the post that will indicate which user post it is just like it is on the home screen fix this from root couse as well.
+
+the set pin option shouldnt be found directly in the profile screen or tab insted it should be in a mue in the profile screen or tabe that when user click the mneu the should find the edit profile option and set pasword option. also the edit profile should have where user can cacle incas the user dont want to edit profile any more for now its only the save button that is avable.
+
+in the profile screen on tabe remove the text and icon my poost becouse not just the user post will be displayed here 
+but all post that the user was taged in.
+
+the seach user feture is not working as it should fix this from root couse user should be able to search any user including thier selfs and view other user profile as vistors with no right to edit, but if user is viewing self profile then there ius no need for the visotors view.
+
+in the bulletten screen the like and coming both made on the prvous buttens and todays bulleten section dont show whe page is loaded or user navigates to page except when user open an indivual bulleten then the entire likes and comments are made visble to user fix this from root couse all like and commnet s shouldbe visible soon as user navigate to bulleten screen just like it is in the olive chat posts.
+
+the olive shop should single produxct screen should inlcude more details of  the product and diplayed for user as a standerd single product screen with add to cart option qnatity, color selection if any , size selection if any, buy now button, add to wishlist button, othe rimages of the product not just once image, condiction of the product, shiping cost if any, return policy if any set byt he org admin,, estimated delivery time if any, import fee and info if any, item.product specificas, and related product  and org andmin should be bale to add images too to the product details, abount this seller section where will contain a comprehensive and well detailed info about the seller which here is the church just likenin standered shoping indivual single product page and make sure org admin can set update upload and edit all this values from arg admin.
+
+add a proper skelleton loader to the olive chat that will show insted of the roting loader that currently there
+
+the poduct puchase option when clikced or buy now option when click should requere user to select either pick up product immidatly on site or delevery if pick up on sit user should be generate a standared puchase invoice as well as have the fuitter chechout so user can proceed with payment after which payment has been made and verified automaticlly becouse its a pick imidiatly user should have collection code genrated and a bar code that can be scaned to confirm the user payment for the precise product same gose for the code , here admin can verify paument when the scan the code with thier camera a redirect link should apaear when clicked should redirecrt admin the org admin oage where product will be veried that payment has been made for it same gose for the code org admin should be able to verfy product payment with code in the org admin section as well .
+where user selects delevery the should be required to add shipping info after which invoice is genrated, sent to their email while the check out for pops up for user to complet payment. after user complets payment, impliment a prduct order realtime tracking where user can track thier deleverie sin realtime.
+
+in org admin admin whe admin tries to upload product and th e description is too lon or have other carater apart from text the admin is retured with an error "DESCRIPTION REQUIRED PLEASE- PLEAS ADD A PRODUCT DESCRIPTION AND TRY AGAIN"  eeven tho there is a description there but then the admin remove the long description and adds a plain one with no other chaters but text the upload gose through fix this so user can add any type of description they reqwuire and how ever long they require.
+
+in the olive shop home screen ad the adto cat button as well and make ure that no matter what the amount of product title text all producs displaying in the front end are of equal hights.
+
+in the creat category section in the org-admin add all the line icons so user can ueasy search an select the required icon for any category the creat insted of an emoji.
+
+impliment and proper category menue in the olive shop screen i dont like the currently here
+
+please note, no simplified implimatations, no shurt cuts all implimentation must be for reatime and production as well as fully rubust and well implimentated to standard with no erros or broken implimentation , this app must wok 100 with out replit, replit hosting or dependecises use already provided superbae for databse, railway for server, and livingolive.adroomai.com for back end url

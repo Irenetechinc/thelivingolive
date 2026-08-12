@@ -1,0 +1,32 @@
+# EAS build upload exclusions
+
+# Runtime cache created by React Native DevTools / Metro
+.cache/
+
+# Expo local cache
+.expo/
+
+# Dependencies (EAS installs fresh)
+node_modules/
+
+# Build output
+dist/
+web-build/
+android/
+ios/
+
+# Dev/debug artifacts
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS files
+.DS_Store
+
+# Local env
+.env
+.env*.local
+
+# TypeScript incremental build
+*.tsbuildinfo

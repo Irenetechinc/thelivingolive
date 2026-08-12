@@ -1,0 +1,883 @@
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import session from "express-session";
+import OpenAI from "openai";
+import { createClient } from "@supabase/supabase-js";
+import { Expo } from "expo-server-sdk";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import crypto from "node:crypto";
+import multer from "multer";
+import { toFile } from "openai/uploads";
+import { generatePrayerPoints, generateDevotional } from "./lib/prayerEngine.js";
+import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/scheduler.js";
+import { logger } from "./lib/logger.js";
+import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
+import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
+import { adminRouter } from "./routes/admin.js";
+import { orgAdminRouter } from "./routes/orgAdmin.js";
+import { bulletinsRouter } from "./routes/bulletins.js";
+import { donateRouter } from "./routes/donate.js";
+import { communityRouter } from "./routes/community.js";
+import { shopRouter } from "./routes/shop.js";
+import { adminBus } from "./lib/adminBus.js";
+
+const log = logger("api");
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const bibleDir = path.join(__dirname, "data", "bible");
+const bibleIndex = JSON.parse(readFileSync(path.join(bibleDir, "index.json"), "utf-8"));
+const bibleBookCache = new Map();
+
+function loadBibleBook(bookId) {
+  if (!bibleBookCache.has(bookId)) {
+    const filePath = path.join(bibleDir, `book-${bookId}.json`);
+    bibleBookCache.set(bookId, JSON.parse(readFileSync(filePath, "utf-8")));
+  }
+  return bibleBookCache.get(bookId);
+}
+
+// Supabase keys are required for auth and all database-backed features.
+// OPENAI_API_KEY is optional — only needed for sermon transcription, prayer,
+// and devotion generation. All Bible reading, verse explanation, and
+// rule-based prayer/devotion features run without it.
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const isProd = process.env.NODE_ENV === "production";
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    "[FATAL] Missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY environment variables. " +
+    "Auth verification will be unavailable. Set these in your Railway environment variables."
+  );
+}
+if (!process.env.OPENAI_API_KEY) {
+  console.warn("[WARN] OPENAI_API_KEY not set — sermon transcription, AI prayer, and AI devotion features will be unavailable. All other features run without it.");
+}
+if (isProd && !process.env.SESSION_SECRET) {
+  console.error(
+    "[FATAL] SESSION_SECRET is not set in production. Admin sessions use a weak hardcoded " +
+    "fallback that could be guessed. Set SESSION_SECRET to a long random string in Railway → Variables."
+  );
+}
+
+const app = express();
+
+// Trust Railway's reverse proxy so express-session secure cookies work over HTTPS
+app.set("trust proxy", 1);
+
+// Security headers — helmet sets sensible defaults (X-Frame-Options, HSTS, etc.)
+// contentSecurityPolicy is relaxed so the admin dashboard HTML inline scripts still work.
+app.use(helmet({
+  contentSecurityPolicy: false, // admin dashboard uses inline <script> blocks
+  crossOriginEmbedderPolicy: false,
+}));
+
+// CORS — the mobile app is a native client (CORS doesn't apply to it).
+// Only the admin dashboard makes cross-origin XHR, and it is same-origin in
+// production. Restrict to the production domain; allow all in development so
+// Expo Go / local tools work without config changes.
+const ALLOWED_ORIGINS = isProd
+  ? ["https://livingolive.adroomai.com"]
+  : true; // allow all in development
+app.use(cors({
+  origin: ALLOWED_ORIGINS,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Cron-Secret"],
+  credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // needed for admin login form
+
+// Session — used only by the admin dashboard (cookie-based, never shared with mobile app)
+// sameSite:"lax" is intentional — it blocks CSRF by refusing cross-site POSTs while still
+// allowing the same-origin admin tab to function. "none" is NOT used because it would expose
+// all admin write endpoints to cross-site request forgery. secure:true in production ensures
+// the cookie is never sent over plain HTTP behind Railway's HTTPS proxy.
+// Derive session secret: always use the env var in production.
+// In dev/ci, generate an ephemeral random secret so the fallback is never a
+// predictable, hard-coded string visible in source code.
+const _sessionSecret = process.env.SESSION_SECRET ?? (() => {
+  const s = crypto.randomBytes(32).toString("hex");
+  if (!isProd) {
+    console.warn(
+      "[WARN] SESSION_SECRET not set — using an ephemeral random secret. " +
+      "Admin sessions will not survive server restarts. " +
+      "Set SESSION_SECRET in your environment for persistent sessions."
+    );
+  }
+  return s;
+})();
+
+app.use(session({
+  secret: _sessionSecret,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",   // CSRF-resistant: blocks cross-site POSTs in all environments
+    secure: isProd,    // HTTPS-only in production (works because trust proxy is set above)
+    maxAge: 8 * 60 * 60 * 1000, // 8h
+  },
+}));
+
+// ──────────────────────────────────────────────
+// Request logging — every API call, printed to stdout so it shows up in
+// `railway logs` (Railway has no separate logging API; it just captures
+// whatever the process writes to stdout/stderr). Logs method, path, status,
+// duration, and the authenticated user id when available.
+// ──────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    const who = req.user?.id ? ` user=${req.user.id}` : "";
+    log.info(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)${who}`);
+  });
+  next();
+});
+
+// Lazy-initialize OpenAI so a missing key doesn't crash startup
+let _openai = null;
+function getOpenAI() {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
+
+// Build the admin Supabase client only when credentials are present.
+// If missing, every route that calls requireUser() will return a clear
+// 503 instead of making a network call to a non-existent host.
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+  : null;
+const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
+
+// Expose supabaseAdmin to admin routes via app.locals
+app.locals.supabaseAdmin = supabaseAdmin;
+
+// Push stats — in-memory counters shared across routes; reset on restart.
+// Delivery history (last 50 pushes) is available to the admin dashboard.
+app.locals.pushStats = { sent: 0, failed: 0, recentPushes: [] };
+
+// Restore persisted feature flags from Supabase so admin toggles survive restarts.
+// This runs in the background; the server serves traffic immediately on startup.
+if (supabaseAdmin) {
+  adminBus.loadFlagsFromDb(supabaseAdmin).catch((e) =>
+    console.warn("[adminBus] Could not restore feature flags:", e.message)
+  );
+}
+
+// ── Admin dashboards (session-protected, no Bearer token required) ────────────
+// Mounted before requireUser so admin/org pages use cookie-based sessions.
+app.use("/admin", adminRouter);
+app.use("/org-admin", orgAdminRouter);
+
+// Payment success landing page (Flutterwave redirects here after checkout)
+app.get("/payment/success", (_req, res) => {
+  res.type("html").send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment — Living Olive</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#F7F1E3;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Georgia,serif;text-align:center;padding:32px}
+.card{background:#fff;border-radius:20px;padding:48px 40px;max-width:400px;box-shadow:0 8px 40px rgba(30,42,18,.1)}
+.icon{font-size:56px;margin-bottom:20px}.title{font-size:22px;font-weight:700;color:#2B2A25;margin-bottom:12px}
+.desc{font-size:15px;color:#5C5A4E;line-height:1.7;margin-bottom:28px}
+.hint{font-size:13px;color:#9A9485;background:#F0E8D0;padding:12px 16px;border-radius:10px}</style>
+</head><body><div class="card">
+<div class="icon">✅</div>
+<div class="title">Payment Received</div>
+<div class="desc">Thank you! Return to the Living Olive app and tap <strong>"Yes, verify"</strong> to unlock your content.</div>
+<div class="hint">You can close this page and go back to the app.</div>
+</div></body></html>`);
+});
+
+// In-memory upload handling for sermon audio — files are transcribed and
+// discarded immediately, never written to disk. Cap keeps a single request
+// from exhausting server memory on a long recording.
+const ALLOWED_AUDIO_TYPES = new Set([
+  'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/aac',
+  'audio/ogg', 'audio/webm', 'audio/x-m4a', 'audio/3gpp',
+]);
+function audioOnlyFilter(_req, file, cb) {
+  if (ALLOWED_AUDIO_TYPES.has(file.mimetype)) return cb(null, true);
+  cb(Object.assign(new Error('Only audio files are accepted for transcription.'), { status: 400 }), false);
+}
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 }, fileFilter: audioOnlyFilter });
+
+// ── Feature flag guard — returns 503 when a feature is disabled by admin ──────
+function requireFlag(flag) {
+  return (req, res, next) => {
+    if (!adminBus.isEnabled(flag)) {
+      return res.status(503).json({
+        error: `This feature is currently disabled by the system administrator.`,
+        feature: flag,
+        disabled: true,
+      });
+    }
+    next();
+  };
+}
+
+// Verify the caller's Supabase access token and attach the user to the request.
+async function requireUser(req, res, next) {
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: "Authentication service is temporarily unavailable. Please try again later.",
+    });
+  }
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Missing bearer token" });
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data?.user) return res.status(401).json({ error: "Invalid or expired session" });
+  req.user = data.user;
+  next();
+}
+
+// ──────────────────────────────────────────────
+// Health & landing
+// ──────────────────────────────────────────────
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "the-living-olive-api" });
+});
+
+app.get("/", (_req, res) => {
+  res.type("html").send(`
+    <html>
+      <head><title>The Living Olive API</title></head>
+      <body style="font-family: system-ui; padding: 2rem; max-width: 640px; margin: auto;">
+        <h1>🫒 The Living Olive — backend API</h1>
+        <p>This is the backend service. The mobile app is <strong>The Living Olive</strong>,
+        running in the <strong>"Mobile (Expo)"</strong> workflow.</p>
+        <p>Health: <a href="/health">/health</a></p>
+      </body>
+    </html>
+  `);
+});
+
+// ──────────────────────────────────────────────
+// Bible text (KJV local + other versions via bible-api.com)
+// Supported free versions: kjv, web (World English Bible), asv (Am. Standard)
+// ──────────────────────────────────────────────
+
+// Map bible-api.com verse format to our string-array format
+async function fetchBibleApiChapter(bookName, chapter, translation) {
+  // Build a sanitized book name for the URL (e.g. "1 Samuel" → "1+samuel")
+  const encodedBook = encodeURIComponent(bookName.toLowerCase().replace(/ /g, "+"));
+  const url = `https://bible-api.com/${encodedBook}+${chapter}?translation=${translation}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`bible-api.com returned ${res.status} for ${bookName} ${chapter}`);
+  const json = await res.json();
+  if (!json.verses?.length) throw new Error("No verse data returned");
+  // Return an array of verse texts indexed by verse number (1-based, index 0 = verse 1)
+  const maxVerse = Math.max(...json.verses.map((v) => v.verse));
+  const verses = Array(maxVerse).fill("");
+  for (const v of json.verses) {
+    verses[v.verse - 1] = v.text.trim();
+  }
+  return verses;
+}
+
+app.get("/api/bible/books", (req, res) => {
+  if (!adminBus.isEnabled("bible_reader")) {
+    return res.status(503).json({ error: "Bible reader is currently disabled by the system administrator.", disabled: true });
+  }
+  res.set("Cache-Control", "public, max-age=86400");
+  res.json(bibleIndex);
+});
+
+app.get("/api/bible/:bookId/:chapter", async (req, res) => {
+  if (!adminBus.isEnabled("bible_reader")) {
+    return res.status(503).json({ error: "Bible reader is currently disabled by the system administrator.", disabled: true });
+  }
+  const bookId = parseInt(req.params.bookId, 10);
+  const chapter = parseInt(req.params.chapter, 10);
+  const version = (req.query.version || "KJV").toString().toUpperCase();
+  const meta = bibleIndex.find((b) => b.id === bookId);
+  if (!meta) return res.status(404).json({ error: "Unknown book" });
+
+  // KJV is served from local data
+  if (version === "KJV") {
+    try {
+      const chapters = loadBibleBook(bookId);
+      const verses = chapters[chapter - 1];
+      if (!verses) return res.status(404).json({ error: "Unknown chapter" });
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.json({ bookId, bookName: meta.name, chapter, version: "KJV", verses });
+    } catch (err) {
+      console.error("bible chapter error:", err);
+      return res.status(500).json({ error: "Failed to load chapter" });
+    }
+  }
+
+  // Other versions: proxy to bible-api.com (free, public-domain versions)
+  // Supported: WEB (World English Bible), ASV (American Standard Version)
+  if (!adminBus.isEnabled("translation_switcher")) {
+    // Fall back to KJV when translation switcher is disabled by admin
+    try {
+      const chapters = loadBibleBook(bookId);
+      const verses = chapters[chapter - 1];
+      if (!verses) return res.status(404).json({ error: "Unknown chapter" });
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.json({ bookId, bookName: meta.name, chapter, version: "KJV", verses, fallback: true, fallbackReason: "Translation switcher is currently disabled" });
+    } catch { return res.status(500).json({ error: "Failed to load chapter" }); }
+  }
+  const translationMap = { WEB: "web", ASV: "asv" };
+  const translation = translationMap[version];
+  if (!translation) {
+    return res.status(400).json({
+      error: `Version "${version}" is not available. Supported: KJV, WEB, ASV`,
+    });
+  }
+
+  try {
+    const verses = await fetchBibleApiChapter(meta.name, chapter, translation);
+    res.set("Cache-Control", "public, max-age=86400");
+    res.json({ bookId, bookName: meta.name, chapter, version, verses });
+  } catch (err) {
+    console.error("bible-api.com error:", err);
+    // Fall back to KJV if the external API fails
+    try {
+      const chapters = loadBibleBook(bookId);
+      const verses = chapters[chapter - 1];
+      if (!verses) return res.status(404).json({ error: "Unknown chapter" });
+      res.set("Cache-Control", "public, max-age=3600");
+      return res.json({
+        bookId,
+        bookName: meta.name,
+        chapter,
+        version: "KJV",
+        verses,
+        fallback: true,
+        fallbackReason: "External version API unavailable; showing KJV",
+      });
+    } catch {
+      return res.status(500).json({ error: "Failed to load chapter" });
+    }
+  }
+});
+
+// ──────────────────────────────────────────────
+// Algorithmic verse explanation — no LLM, no GPU
+// Uses the verseExplainEngine (Free Dictionary API + Markov chains +
+// scraped teaching context + cross-references). Same response shape as
+// before so the mobile app needs no changes.
+// ──────────────────────────────────────────────
+app.post("/api/ai/explain-verse", requireUser, requireFlag("verse_explain"), async (req, res) => {
+  try {
+    const { reference, text, version } = req.body;
+    if (!reference || !text) return res.status(400).json({ error: "reference and text are required" });
+
+    const result = await explainVerse({ reference, text, version }, supabaseAdmin);
+
+    // Kick off a background teaching-context fetch for this verse if not
+    // already cached — enriches the next explanation without delaying this one
+    fetchTeachingContextForVerse(reference, supabaseAdmin).catch(() => {});
+
+    res.json(result);
+  } catch (err) {
+    log.error("explain-verse error:", err.message);
+    res.status(500).json({ error: "Failed to generate explanation" });
+  }
+});
+
+// User can rate an explanation (1-5 stars) — drives the explanation engine's
+// self-learning loop via verseExplainEngine.recordExplanationFeedback.
+app.post("/api/ai/explain-verse/feedback", requireUser, requireFlag("verse_explain"), async (req, res) => {
+  try {
+    const { verseRef, rating } = req.body;
+    if (!verseRef || !rating) return res.status(400).json({ error: "verseRef and rating are required" });
+    const r = parseInt(rating, 10);
+    if (!Number.isInteger(r) || r < 1 || r > 5) return res.status(400).json({ error: "rating must be 1-5" });
+
+    recordExplanationFeedback(verseRef, r);
+
+    // 1. Persist to generation_feedback for the unified audit trail.
+    const { error: feedbackError } = await supabaseAdmin.from("generation_feedback").insert({
+      user_id: req.user.id,
+      entry_type: "explanation",
+      category: "explanation",
+      verse_ref: verseRef,
+      rating: r,
+      source_text: null,
+    });
+    if (feedbackError) {
+      log.warn(`explain-verse feedback insert failed for ${verseRef}:`, feedbackError.message);
+      return res.status(500).json({ error: "Failed to record feedback" });
+    }
+
+    // 2. Increment learning counters in verse_explanations directly via the
+    // service-role client (bypasses RLS — no RPC or SECURITY DEFINER needed).
+    // Read-then-write: Supabase JS v2 doesn't support column expressions in
+    // .update(), so we read the current values first and compute the new ones.
+    // Only updates existing rows; never inserts a placeholder with empty text.
+    const { data: existing } = await supabaseAdmin
+      .from("verse_explanations")
+      .select("total_rating, call_count")
+      .eq("verse_ref", verseRef)
+      .maybeSingle();
+
+    if (existing) {
+      await supabaseAdmin.from("verse_explanations").update({
+        total_rating: (Number(existing.total_rating) || 0) + r,
+        call_count: (Number(existing.call_count) || 0) + 1,
+      }).eq("verse_ref", verseRef);
+    }
+
+    log.info(`explanation feedback recorded — ref=${verseRef} rating=${r}`);
+    res.json({ ok: true });
+  } catch (err) {
+    log.error("explain-verse/feedback error:", err.message);
+    res.status(500).json({ error: "Failed to record feedback" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Rule-based prayer/devotion engine — fully autonomous, no LLM.
+// Every prayer and devotional is built dynamically from four live sources:
+//   1. Full KJV Bible via TF-IDF verse selection (31,102 verses)
+//   2. KJV Markov model — unique biblical-register phrases from verse vocab
+//   3. Free Dictionary API — definitions and synonyms for theological precision
+//   4. Web-crawled teaching snippets (openbible.info — updated daily)
+// Self-improves via lib/scheduler.js without any user feedback required.
+// ──────────────────────────────────────────────
+app.post("/api/prayer-engine/prayer", requireUser, requireFlag("rule_prayer"), async (req, res) => {
+  try {
+    const { desires, count, type } = req.body;
+    if (!desires) return res.status(400).json({ error: "desires is required" });
+
+    const { prayerPoints, detectedCategory, userTypeOverridden, understanding, uncuratedVerses } = await generatePrayerPoints({
+      desires,
+      type,
+      count,
+      weights: getWeights(),
+    });
+
+    sendPushToUser(req.user.id, {
+      title: "Prayer Points Ready 🙏",
+      body: `Your ${detectedCategory} prayer points have been generated`,
+    }).catch((e) => console.warn("push send failed:", e.message));
+
+    // Log uncurated verses used — auto-discovery loop picks them up daily
+    if (uncuratedVerses?.length) {
+      console.info(`[prayer-engine] ${uncuratedVerses.length} uncurated verse(s) used (candidates for auto-discovery):`, uncuratedVerses.map(v => v.ref).join(", "));
+    }
+    if (userTypeOverridden) {
+      console.info(`[prayer-engine] category override: user selected "${type}", engine detected "${detectedCategory}" (confidence ${understanding?.confidence}%)`);
+    }
+
+    res.json({ prayerPoints, detectedCategory, userTypeOverridden, understanding, engine: "rule-based" });
+  } catch (err) {
+    console.error("prayer-engine/prayer error:", err);
+    res.status(500).json({ error: "Failed to generate prayer" });
+  }
+});
+
+app.post("/api/prayer-engine/devotion", requireUser, requireFlag("rule_devotion"), async (req, res) => {
+  try {
+    const { goal, dayNumber } = req.body;
+    if (!goal) return res.status(400).json({ error: "goal is required" });
+
+    const content = await generateDevotional({ goal, dayNumber, weights: getWeights() });
+
+    sendPushToUser(req.user.id, {
+      title: "New Devotion Ready 🌿",
+      body: content.title,
+    }).catch((e) => console.warn("push send failed:", e.message));
+
+    res.json({ ...content, engine: "rule-based" });
+  } catch (err) {
+    console.error("prayer-engine/devotion error:", err);
+    res.status(500).json({ error: "Failed to generate devotion" });
+  }
+});
+
+// Lets the app collect a 1-5 star rating on a generated prayer point or
+// devotional; this is what actually drives the "self-evolving" behavior —
+// see lib/scheduler.js for how it's applied.
+app.post("/api/prayer-engine/feedback", requireUser, requireFlag("rule_prayer"), async (req, res) => {
+  try {
+    const { entryType, category, verseRef, rating, sourceText } = req.body;
+    if (!entryType || !category || !rating) {
+      return res.status(400).json({ error: "entryType, category, and rating are required" });
+    }
+    if (!["prayer", "devotion"].includes(entryType)) {
+      return res.status(400).json({ error: "entryType must be 'prayer' or 'devotion'" });
+    }
+    const r = parseInt(rating, 10);
+    if (!Number.isInteger(r) || r < 1 || r > 5) {
+      return res.status(400).json({ error: "rating must be an integer 1-5" });
+    }
+
+    await recordFeedback(supabaseAdmin, {
+      userId: req.user.id,
+      entryType,
+      category,
+      verseRef,
+      rating: r,
+      sourceText,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("prayer-engine/feedback error:", err);
+    res.status(500).json({ error: "Failed to record feedback" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Sermon recording transcription
+// ──────────────────────────────────────────────
+app.post("/api/ai/transcribe", requireUser, requireFlag("sermon_transcription"), upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "audio file is required" });
+
+    const audioFile = await toFile(req.file.buffer, req.file.originalname || "sermon.m4a");
+    const transcription = await getOpenAI().audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+    });
+
+    const rawText = transcription.text?.trim();
+    if (!rawText) return res.status(422).json({ error: "Couldn't hear any speech in that recording" });
+
+    // Clean up into readable, paragraphed sermon notes rather than a raw
+    // wall of transcript text.
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You format raw sermon transcripts into clean, readable notes: fix obvious transcription errors, break into logical paragraphs, and add a short title. Do not add content that wasn't said. Respond in JSON with keys \"title\" (short, string) and \"formattedText\" (string, paragraphs separated by blank lines).",
+        },
+        { role: "user", content: rawText },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const { title, formattedText } = JSON.parse(completion.choices[0].message.content);
+    res.json({ title: title || "Sermon Recording", formattedText: formattedText || rawText, rawText });
+  } catch (err) {
+    console.error("transcribe error:", err);
+    res.status(500).json({ error: "Failed to transcribe recording" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Push notification token registration
+// ──────────────────────────────────────────────
+app.post("/api/push/register", requireUser, requireFlag("push_notifications"), async (req, res) => {
+  try {
+    const { token, platform } = req.body;
+    if (!token) return res.status(400).json({ error: "token is required" });
+
+    // Validate it looks like an Expo push token or a native FCM/APNs token
+    if (!Expo.isExpoPushToken(token) && !token.startsWith("ExponentPushToken")) {
+      // Still store it — could be a native token for a standalone build
+    }
+
+    const { error } = await supabaseAdmin
+      .from("push_tokens")
+      .upsert(
+        { user_id: req.user.id, token, platform: platform ?? null, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,token" }
+      );
+
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("push/register error:", err);
+    res.status(500).json({ error: "Failed to register push token" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Helper: send push to a single user (all their devices)
+// ──────────────────────────────────────────────
+async function sendPushToUser(userId, { title, body, data }) {
+  if (!supabaseAdmin) return; // no-op when Supabase is unconfigured
+  const { data: rows, error } = await supabaseAdmin
+    .from("push_tokens")
+    .select("token")
+    .eq("user_id", userId);
+  if (error || !rows?.length) return;
+
+  const messages = rows
+    .filter((r) => Expo.isExpoPushToken(r.token))
+    .map((r) => ({ to: r.token, sound: "default", title, body, data: data ?? {} }));
+
+  if (!messages.length) return;
+
+  const chunks = expo.chunkPushNotifications(messages);
+  let chunkFailed = false;
+  for (const chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (err) {
+      console.warn("expo push chunk failed:", err.message);
+      chunkFailed = true;
+    }
+  }
+
+  // Update in-memory push stats and broadcast to the admin dashboard in real time
+  const ps = app.locals.pushStats;
+  if (ps) {
+    if (chunkFailed) {
+      ps.failed++;
+    } else {
+      ps.sent++;
+      ps.recentPushes.unshift({ userId, title, body, ts: Date.now() });
+      if (ps.recentPushes.length > 50) ps.recentPushes.pop();
+    }
+  }
+  adminBus.broadcast({ type: "push", userId, title, body, failed: chunkFailed, ts: Date.now() });
+}
+
+// ──────────────────────────────────────────────
+// Scheduled notification dispatch
+// Called by an external cron service (e.g. cron-job.org, UptimeRobot) every minute.
+// Requires X-Cron-Secret header = CRON_SECRET env var.
+// ──────────────────────────────────────────────
+app.post("/api/push/notify-scheduled", async (req, res) => {
+  if (!adminBus.isEnabled("push_notifications")) {
+    return res.status(503).json({ error: "Push notifications are currently disabled by the system administrator.", disabled: true });
+  }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Database unavailable: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured." });
+  }
+  const secret = process.env.CRON_SECRET;
+  // In production, CRON_SECRET MUST be set — an unconfigured endpoint is open
+  // to anyone and will fire notifications for every user every minute.
+  if (!secret && isProd) {
+    console.error("[FATAL] CRON_SECRET is not set in production. The notify-scheduled endpoint is blocked until it is configured in Railway → Variables.");
+    return res.status(503).json({ error: "Endpoint not available." });
+  }
+  if (secret && req.headers["x-cron-secret"] !== secret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    // Get current UTC time HH:MM
+    const now = new Date();
+    const hh = String(now.getUTCHours()).padStart(2, "0");
+    const mm = String(now.getUTCMinutes()).padStart(2, "0");
+    const timeWindow = `${hh}:${mm}`;
+
+    // Day-of-week check: JS getDay() → 0=Sun … 6=Sat (UTC)
+    const todayDow = now.getUTCDay();
+
+    // Find active devotion plans whose preferred_time matches this minute
+    const { data: devotionPlans } = await supabaseAdmin
+      .from("devotion_plans")
+      .select("id, user_id, goal, duration, day_number, days_count, excluded_days")
+      .eq("active", true)
+      .gte("preferred_time", `${timeWindow}:00`)
+      .lt("preferred_time", `${timeWindow}:59`);
+
+    // Find active prayer plans whose preferred_time matches this minute
+    const { data: prayerPlans } = await supabaseAdmin
+      .from("prayer_plans")
+      .select("id, user_id, desires, prayer_type, point_count, days_count, excluded_days")
+      .eq("active", true)
+      .gte("preferred_time", `${timeWindow}:00`)
+      .lt("preferred_time", `${timeWindow}:59`);
+
+    const sent = [];
+
+    // Auto-generate devotional content and save before sending push,
+    // so the user arrives at the app to find it already done — no "tap to generate".
+    for (const plan of devotionPlans ?? []) {
+      // Skip if today is an excluded day of week
+      if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
+        log.info(`Skipping devotion plan ${plan.id} — day ${todayDow} is excluded`);
+        continue;
+      }
+      // Skip if days_count limit already reached
+      if (plan.days_count != null) {
+        const { count } = await supabaseAdmin
+          .from("devotion_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("plan_id", plan.id);
+        if ((count ?? 0) >= plan.days_count) {
+          log.info(`Devotion plan ${plan.id} reached days_count limit (${plan.days_count}) — marking inactive`);
+          await supabaseAdmin.from("devotion_plans").update({ active: false }).eq("id", plan.id);
+          continue;
+        }
+      }
+      try {
+        const content = await generateDevotional({ goal: plan.goal, dayNumber: plan.day_number ?? 0, weights: getWeights() });
+        const { data: entry } = await supabaseAdmin
+          .from("devotion_entries")
+          .insert({
+            user_id: plan.user_id,
+            plan_id: plan.id,
+            title: content.title,
+            scripture_reference: content.scriptureReference,
+            scripture_text: content.scriptureText,
+            body: content.body,
+            closing_prayer: content.closingPrayer,
+            is_read: false,
+          })
+          .select("id")
+          .single();
+
+        await sendPushToUser(plan.user_id, {
+          title: "Time for your devotion 🌿",
+          body: content.title,
+          data: {
+            type: "devotion",
+            entryId: entry?.id ?? "",
+            goal: plan.goal,
+            previewText: content.body.slice(0, 120).replace(/\n/g, " "),
+          },
+        });
+        sent.push({ type: "devotion", userId: plan.user_id });
+      } catch (e) {
+        log.warn(`scheduled devotion generation failed for user ${plan.user_id}:`, e.message);
+        // Fallback: still send push even if generation failed
+        await sendPushToUser(plan.user_id, {
+          title: "Time for your devotion 🌿",
+          body: `Open Living Olive — your "${plan.goal}" devotion is waiting`,
+          data: { type: "devotion", goal: plan.goal },
+        }).catch(() => {});
+        sent.push({ type: "devotion", userId: plan.user_id, fallback: true });
+      }
+    }
+
+    // Auto-generate prayer points and save before pushing.
+    for (const plan of prayerPlans ?? []) {
+      // Skip if today is an excluded day of week
+      if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
+        log.info(`Skipping prayer plan ${plan.id} — day ${todayDow} is excluded`);
+        continue;
+      }
+      // Skip if days_count limit already reached (count distinct plan-days delivered)
+      if (plan.days_count != null) {
+        const { count } = await supabaseAdmin
+          .from("prayer_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("plan_id", plan.id);
+        // Each scheduled delivery inserts point_count rows; use ceil to get day count
+        const daysDelivered = Math.ceil((count ?? 0) / Math.max(plan.point_count ?? 3, 1));
+        if (daysDelivered >= plan.days_count) {
+          log.info(`Prayer plan ${plan.id} reached days_count limit (${plan.days_count}) — marking inactive`);
+          await supabaseAdmin.from("prayer_plans").update({ active: false }).eq("id", plan.id);
+          continue;
+        }
+      }
+      try {
+        const result = await generatePrayerPoints({
+          desires: plan.desires,
+          type: plan.prayer_type,
+          count: plan.point_count ?? 3,
+          weights: getWeights(),
+        });
+        const rows = result.prayerPoints.map((p) => ({
+          user_id: plan.user_id,
+          plan_id: plan.id,
+          title: p.title,
+          prayer_text: p.prayerText,
+          scripture_reference: p.scriptureReference,
+          is_read: false,
+        }));
+        const { data: entries } = await supabaseAdmin
+          .from("prayer_entries")
+          .insert(rows)
+          .select("id")
+          .limit(1);
+
+        const firstId = entries?.[0]?.id ?? "";
+        const preview = result.prayerPoints[0]?.prayerText?.slice(0, 120).replace(/\n/g, " ") ?? "";
+
+        await sendPushToUser(plan.user_id, {
+          title: "Time to pray 🙏",
+          body: `${result.detectedCategory} prayer points are ready`,
+          data: {
+            type: "prayer",
+            entryId: firstId,
+            desires: plan.desires,
+            prayerType: result.detectedCategory,
+            previewText: preview,
+          },
+        });
+        sent.push({ type: "prayer", userId: plan.user_id });
+      } catch (e) {
+        log.warn(`scheduled prayer generation failed for user ${plan.user_id}:`, e.message);
+        await sendPushToUser(plan.user_id, {
+          title: "Time to pray 🙏",
+          body: `Your ${plan.prayer_type} prayer time`,
+          data: { type: "prayer", desires: plan.desires, prayerType: plan.prayer_type },
+        }).catch(() => {});
+        sent.push({ type: "prayer", userId: plan.user_id, fallback: true });
+      }
+    }
+
+    res.json({ ok: true, sent: sent.length, time: timeWindow });
+  } catch (err) {
+    console.error("notify-scheduled error:", err);
+    res.status(500).json({ error: "Scheduler error" });
+  }
+});
+
+// ── Bulletin & donation API (mobile-facing, Supabase auth required) ──────────
+// All bulletin routes require a signed-in user — the church picker is only
+// reachable after logging in, so there is no public use case.
+app.use("/api/community", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, communityRouter);
+
+app.use("/api/bulletins", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, bulletinsRouter);
+
+app.use("/api/donate", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, donateRouter);
+
+app.use("/api/shop", requireUser, (req, _res, next) => {
+  req.app.locals.supabaseAdmin = supabaseAdmin;
+  next();
+}, shopRouter);
+
+// ──────────────────────────────────────────────
+// JSON-only 404 + error handling for every /api/* route.
+// Without this, an unmatched route or an uncaught exception falls through
+// to Express's default HTML error page, which the mobile app would render
+// as raw markup instead of a clean error message.
+// ──────────────────────────────────────────────
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error" });
+});
+
+// ──────────────────────────────────────────────
+// Server start
+// ──────────────────────────────────────────────
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, "0.0.0.0", () => {
+  log.info(`The Living Olive API listening on port ${PORT}`);
+});
+
+// Starts the rule-based prayer engine's self-learning cron jobs inside this
+// same process — see lib/scheduler.js. Runs regardless of OpenAI key
+// presence since it needs none. All of its activity (web crawl runs,
+// genetic-algorithm generations, keyword learning) logs to stdout the same
+// way, so it's visible in `railway logs` right alongside API traffic.
+startPrayerEngineScheduler(supabaseAdmin).catch((e) =>
+  log.warn("prayer-engine scheduler failed to start:", e.message)
+);

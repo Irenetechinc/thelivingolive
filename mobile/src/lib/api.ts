@@ -1,0 +1,496 @@
+import { supabase } from "./supabase";
+
+// The Living Olive backend — deployed on Railway behind this custom domain.
+// This is the single source of truth for every build (dev, EAS preview,
+// production). The app never depends on a Replit-hosted or localhost URL.
+//
+// EXPO_PUBLIC_API_URL can override this *only* for testing against the local
+// Replit server during development. Leave it unset for all EAS builds so
+// the app always points at the real Railway backend.
+export const PRODUCTION_API_URL = "https://livingolive.adroomai.com";
+
+// Reject any override that points at Replit dev domains or localhost so a
+// stale environment variable can never break a real device in production.
+function resolveApiUrl(): string {
+  const override = process.env.EXPO_PUBLIC_API_URL ?? "";
+  if (
+    override &&
+    !override.includes(".replit.dev") &&
+    !override.includes("localhost") &&
+    !override.includes("127.0.0.1")
+  ) {
+    return override.replace(/\/$/, ""); // strip trailing slash
+  }
+  return PRODUCTION_API_URL;
+}
+
+const API_URL = resolveApiUrl();
+
+function requireApiUrl() {
+  return API_URL;
+}
+
+// Shared request timeout. Railway's free tier can cold-start in ~10 s; 20 s
+// gives enough headroom while still surfacing a clear error if the server is
+// genuinely unreachable rather than leaving the UI in a silent spinner.
+const REQUEST_TIMEOUT_MS = 20_000;
+
+// The server always replies with JSON (including on errors — see the
+// global JSON error handler in server/src/index.js). If we ever get
+// something else back (an HTML error page from a proxy/CDN in front of the
+// backend, a captive portal, etc.) surface a clean message instead of
+// dumping markup into the UI.
+async function parseJsonResponse(res: Response) {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    if (!res.ok) {
+      throw new Error(
+        res.status === 404
+          ? "The server couldn't be reached. Check your connection and try again."
+          : `The server returned an unexpected response (${res.status}). Try again.`
+      );
+    }
+    throw new Error("The server returned an unexpected response. Try again.");
+  }
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.error || `Request failed (${res.status}).`);
+  }
+  return json;
+}
+
+// ─── Silent retry helpers ─────────────────────────────────────────────────────
+const MAX_RETRIES = 3;
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+async function authedFetch(path: string, body: unknown) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in to use this feature.");
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      // Timeout — don't retry, let caller handle silently
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      // Network error — retry silently in background
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      console.warn("[api] network error after retries:", path);
+      throw err;
+    }
+    // 5xx — server may be recovering, retry silently
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
+  }
+  throw lastErr ?? new Error("Request failed");
+}
+
+// ─── Bible ────────────────────────────────────────────────────────────────────
+
+export type BibleBookMeta = { id: number; name: string; chapterCount: number };
+
+export async function fetchBibleBooks(): Promise<BibleBookMeta[]> {
+  const res = await fetch(`${requireApiUrl()}/api/bible/books`);
+  return parseJsonResponse(res);
+}
+
+export async function fetchBibleChapter(
+  bookId: number,
+  chapter: number,
+  version = "KJV"
+): Promise<{
+  bookId: number;
+  bookName: string;
+  chapter: number;
+  version: string;
+  verses: string[];
+  fallback?: boolean;
+  fallbackReason?: string;
+}> {
+  const url = `${requireApiUrl()}/api/bible/${bookId}/${chapter}?version=${encodeURIComponent(version)}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  return parseJsonResponse(res);
+}
+
+// ─── AI features ──────────────────────────────────────────────────────────────
+
+export type VerseExplanation = {
+  explanation: string;
+  supportingScriptures: { reference: string; note: string }[];
+};
+
+export function explainVerse(input: { reference: string; text: string; version: string }) {
+  return authedFetch("/api/ai/explain-verse", input) as Promise<VerseExplanation>;
+}
+
+export function rateVerseExplanation(input: { verseRef: string; rating: number }) {
+  return authedFetch("/api/ai/explain-verse/feedback", input) as Promise<{ ok: boolean }>;
+}
+
+export type DevotionResult = {
+  title: string;
+  scriptureReference: string;
+  scriptureText: string;
+  body: string;
+  closingPrayer: string;
+  detectedCategory?: string;
+};
+
+// Uses the fully autonomous, rule-based engine (no OpenAI/LLM call, runs
+// entirely on curated scripture + keyword matching — see
+// server/src/lib/prayerEngine.js) rather than /api/ai/devotion.
+export function generateDevotion(input: { goal: string; duration: string; dayNumber?: number }) {
+  return authedFetch("/api/prayer-engine/devotion", input) as Promise<DevotionResult>;
+}
+
+export type PrayerResult = {
+  prayerPoints: { title: string; prayerText: string; scriptureReference: string; category?: string }[];
+  detectedCategory?: string;
+  userTypeOverridden?: boolean;
+  understanding?: {
+    detectedCategory: string;
+    confidence: number;
+    selectedCategory: string | null;
+    categoryUsed: string;
+    overridden: boolean;
+    summary: string;
+  };
+  engine?: string;
+};
+
+// Uses the fully autonomous, rule-based engine (no OpenAI/LLM call) rather
+// than /api/ai/prayer.
+export function generatePrayer(input: { desires: string; count: number; type: string }) {
+  return authedFetch("/api/prayer-engine/prayer", input) as Promise<PrayerResult>;
+}
+
+// Records a 1-5 star rating on a generated prayer point or devotional. This
+// is what feeds the engine's self-learning loop (see server/src/lib/scheduler.js):
+// ratings nudge that scripture's weight for future selection, and highly
+// rated free-text requests feed the daily keyword-learning pass.
+export function submitGenerationFeedback(input: {
+  entryType: "prayer" | "devotion";
+  category: string;
+  verseRef?: string;
+  rating: number;
+  sourceText?: string;
+}) {
+  return authedFetch("/api/prayer-engine/feedback", input) as Promise<{ ok: boolean }>;
+}
+
+// ─── Sermon recording transcription ────────────────────────────────────────────
+
+export type TranscribeResult = { title: string; formattedText: string; rawText: string };
+
+// Uploads a locally-recorded sermon clip and gets back cleaned-up, paragraphed
+// notes. Requires connectivity (Whisper runs server-side) — callers are
+// expected to queue this and retry when back online (see sermonRecorder.ts).
+export async function transcribeSermon(fileUri: string, fileName: string): Promise<TranscribeResult> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in to use this feature.");
+
+  const form = new FormData();
+  form.append("audio", {
+    uri: fileUri,
+    name: fileName,
+    type: "audio/m4a",
+  } as any);
+
+  let res: Response;
+  try {
+    res = await fetch(`${requireApiUrl()}/api/ai/transcribe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      // Audio uploads can be large and Whisper can take time on long clips —
+      // allow up to 2 minutes before surfacing a timeout to the user.
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new Error("Transcription timed out. The recording may be too long — try a shorter clip.");
+    }
+    throw new Error(
+      "Couldn't reach the server (livingolive.adroomai.com). Check your internet connection and try again."
+    );
+  }
+  return parseJsonResponse(res);
+}
+
+// ─── Bulletins ────────────────────────────────────────────────────────────────
+
+export type Church = { id: string; name: string; slug: string; description?: string; logo_url?: string };
+export type Bulletin = {
+  id: string; title: string; content?: string; content_preview?: string;
+  frequency: string; publish_at?: string; expires_at?: string;
+  is_paid?: boolean; price_ngn?: number; is_published?: boolean;
+  hasAccess?: boolean; requiresPayment?: boolean;
+  featured_image_url?: string | null;
+};
+
+async function publicFetch(path: string) {
+  const res = await fetch(`${requireApiUrl()}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  return parseJsonResponse(res);
+}
+
+async function authedGet(path: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in.");
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      console.warn("[api] network error after retries:", path);
+      throw err;
+    }
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
+  }
+  throw lastErr ?? new Error("Request failed");
+}
+
+async function authedDelete(path: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in.");
+
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${requireApiUrl()}${path}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") throw err;
+      lastErr = err;
+      if (attempt < MAX_RETRIES - 1) { await sleep(1000 * 2 ** attempt); continue; }
+      throw err;
+    }
+    if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      lastErr = new Error(`server ${res.status}`);
+      await sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    return parseJsonResponse(res);
+  }
+  throw lastErr ?? new Error("Request failed");
+}
+
+export async function fetchChurches(): Promise<Church[]> {
+  const res = await authedGet("/api/bulletins/churches");
+  return res.churches ?? [];
+}
+
+export async function fetchMyChurch(): Promise<{ church_id: string; churches: Church } | null> {
+  const res = await authedGet("/api/bulletins/my-church");
+  return res.membership ?? null;
+}
+
+export async function setMyChurch(churchId: string): Promise<void> {
+  await authedFetch("/api/bulletins/my-church", { churchId });
+}
+
+export async function clearMyChurch(): Promise<void> {
+  await authedDelete("/api/bulletins/my-church");
+}
+
+export async function fetchTodayBulletin(churchId: string): Promise<{ bulletin: Bulletin | null; churchName: string; message?: string }> {
+  return authedGet(`/api/bulletins/${churchId}/today`);
+}
+
+export async function fetchBulletinArchive(churchId: string, page = 1): Promise<{ bulletins: Bulletin[]; total: number }> {
+  return authedGet(`/api/bulletins/${churchId}/archive?page=${page}`);
+}
+
+export async function fetchBulletin(churchId: string, bulletinId: string): Promise<{ bulletin: Bulletin }> {
+  return authedGet(`/api/bulletins/${churchId}/${bulletinId}`);
+}
+
+export async function initiateBulletinPayment(bulletinId: string): Promise<{ paymentLink: string; txRef: string }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/pay`, {});
+}
+
+export async function verifyBulletinPayment(bulletinId: string, txRef: string): Promise<{ paid: boolean; status?: string }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/verify-payment`, { txRef });
+}
+
+// ─── Church extras: announcements, order of service, social links ─────────────
+
+export type ChurchAnnouncement = {
+  id: string;
+  text: string;
+  type: string;
+  created_at: string;
+};
+
+export type OrderOfServiceItem = {
+  time: string;
+  item: string;
+  notes?: string;
+};
+
+export type ChurchSocial = {
+  website?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  twitter?: string | null;
+  youtube?: string | null;
+};
+
+export type ChurchExtras = {
+  announcements: ChurchAnnouncement[];
+  orderOfService: OrderOfServiceItem[];
+  social: ChurchSocial;
+};
+
+export async function fetchChurchExtras(churchId: string): Promise<ChurchExtras> {
+  try {
+    const res = await authedGet(`/api/bulletins/${churchId}/extras`);
+    return {
+      announcements: res.announcements ?? [],
+      orderOfService: res.orderOfService ?? [],
+      social: res.social ?? {},
+    };
+  } catch {
+    return { announcements: [], orderOfService: [], social: {} };
+  }
+}
+
+// ─── Ads ──────────────────────────────────────────────────────────────────────
+
+export type ChurchAd = {
+  id: string;
+  title: string;
+  image_url?: string | null;
+  link_url?: string | null;
+  church_id: string;
+  created_at: string;
+};
+
+export async function fetchChurchAds(churchId: string): Promise<ChurchAd[]> {
+  try {
+    const res = await authedGet(`/api/bulletins/${churchId}/ads`);
+    return res.ads ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── Bulletin social: likes & comments ────────────────────────────────────────
+
+export type BulletinSocial = {
+  likes: number;
+  comments: number;
+  liked: boolean;
+};
+
+export type BulletinComment = {
+  id: string;
+  userId: string;
+  handle: string;
+  body: string;
+  likeCount: number;
+  liked: boolean;
+  createdAt: string;
+  replies: BulletinComment[];
+};
+
+export async function fetchBulletinSocial(bulletinId: string): Promise<BulletinSocial> {
+  try {
+    return await authedGet(`/api/bulletins/${bulletinId}/social`);
+  } catch {
+    return { likes: 0, comments: 0, liked: false };
+  }
+}
+
+export async function toggleBulletinLike(bulletinId: string): Promise<{ liked: boolean; likes: number }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/like`, {});
+}
+
+export async function fetchBulletinComments(bulletinId: string): Promise<BulletinComment[]> {
+  try {
+    const res = await authedGet(`/api/bulletins/${bulletinId}/comments`);
+    return res.comments ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function postBulletinComment(
+  bulletinId: string,
+  body: string,
+  parentId?: string
+): Promise<BulletinComment> {
+  const res = await authedFetch(`/api/bulletins/${bulletinId}/comments`, { body, parentId });
+  return res.comment;
+}
+
+export async function toggleCommentLike(
+  bulletinId: string,
+  commentId: string
+): Promise<{ liked: boolean; likeCount: number }> {
+  return authedFetch(`/api/bulletins/${bulletinId}/comments/${commentId}/like`, {});
+}
+
+// ─── Donations ────────────────────────────────────────────────────────────────
+
+export async function initiateDonation(input: { amount: number; isRecurring: boolean }): Promise<{ paymentLink: string; txRef: string }> {
+  return authedFetch("/api/donate/initiate", input);
+}
+
+export async function verifyDonation(input: { txRef?: string; txId?: string }): Promise<{ paid: boolean; amount?: number }> {
+  return authedFetch("/api/donate/verify", input);
+}
+
+// ─── Push notifications ────────────────────────────────────────────────────────
+
+export async function registerPushToken(token: string, platform?: string): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) return;
+    await fetch(`${API_URL}/api/push/register`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ token, platform }),
+    });
+  } catch {
+    // Non-fatal — local notifications are still active
+  }
+}

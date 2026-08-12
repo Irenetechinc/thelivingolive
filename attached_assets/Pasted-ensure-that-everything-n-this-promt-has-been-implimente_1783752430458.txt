@@ -1,0 +1,107 @@
+ensure that everything n this promt has been implimented to the last and all feture are working 100% no simplified implimentations or problementatic impimentations, meanw hwile fix the errors as well 
+exact error/message shows in Expo Go right now
+somthing went wrong Uncought Error: java.io.IOException: Faild to download remote update
+am getting error in railway deployment this aere the last ~20 lines of the Railway build/deploy log where it fails
+npm warn config production Use `--omit=dev` instead
+Promt :
+update exixting if none to Server-driven push notifications for devotions & prayers
+Expand the hymnbook
+
+The Living Olive - Mobile App Development Prompt
+Application Overview
+Build "The Living Olive" - a native hybrid mobile application with modern UI, scroll animations, and unique design. Create a complete production-ready app with the following features:
+
+Core Features
+1. Home Screen
+Display navigation cards for: Bible, Hymns, Daily Devotions, Prayer Points with smooth animations.
+
+2. Bible Module
+Version Selection: Display KJV, NIV, NLT, ESV, NABRE versions for user selection
+
+Reading Interface: Full Bible text with navigation
+
+Highlight System: Users can highlight verses and switch highlighted text to any available version
+
+Note System:
+
+Attach notes to individual verses
+
+Attach notes to entire chapters
+
+Easy note access interface
+
+AI Explanation: Highlight verses to get contextual explanations using lightweight LLM with supporting scriptures
+
+3. Hymns Module
+Complete digital hymnbook with organized lyrics, browse functionality, and search capability.
+
+4. Devotions Module
+User inputs: spiritual goals and duration (daily/weekly/monthly/yearly)
+
+Set preferred devotion time
+
+AI generates custom devotionals using Bible knowledge and user goals
+
+Real-time notifications at scheduled times
+
+5. Prayer Module
+User inputs: heart desires, prayer points count, prayer type (Warfare/Adoration/Intercession/etc.)
+
+Set preferred prayer time
+
+AI generates powerful, Bible-rooted prayers
+
+Real-time notifications at scheduled times
+
+Technical Requirements
+Authentication
+Email-only signup/login with email verification
+
+No password authentication system
+
+Tech Stack
+Frontend: React Native (mobile-only, NOT web)
+
+Database: Supabase
+
+Backend Hosting: Railway
+
+IDE: Replit (development only)
+
+Critical Requirements
+NO dummy data or demo implementations
+this app must work 100% without replit
+All features fully functional and production-ready
+
+NO hardcoded data
+
+NO duplicate implementations
+
+Real-time functionality with notifications
+
+Optimized for mobile experience
+
+UI/UX Specifications
+Slick, modern mobile design
+
+Recurring scroll animations
+
+Unique design (avoid AI-generated appearance)
+
+Professional mobile application standards
+
+Deployment Requirements
+Deploy to production with all features working at full capacity without errors or bugs. Ensure push-to-deploy functionality to hosting platform.
+
+Success Criteria
+All five modules (Bible, Hymns, Devotions, Prayers, Notes) functional
+
+AI integrations working for explanations, devotions, and prayers
+
+Real-time notifications operational
+
+Production-ready application
+
+Unique and professional UI design
+
+Zero bugs or implementation errors

@@ -11,37 +11,9 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { logger } from '../lib/logger.js';
 import { ensurePublicBucket } from '../lib/storage.js';
-import { sendEmail, shopInvoiceHtml } from '../lib/mail.js';
 
 const log    = logger('shop');
 const router = Router();
-
-const VERIFY_BASE = process.env.PUBLIC_APP_URL || 'https://livingolive.adroomai.com';
-
-function collectionVerifyUrl(code) {
-  return `${VERIFY_BASE}/org-admin/shop/verify?code=${encodeURIComponent(code)}`;
-}
-
-function appendTracking(existing, status, note) {
-  const prev = Array.isArray(existing) ? existing : [];
-  return [...prev, { status, note, at: new Date().toISOString() }];
-}
-
-async function emailShopInvoice({
-  to, invoiceNumber, buyerName, productTitle, quantity, amount, currency,
-  fulfillmentMethod, deliveryAddress, shippingPhone, collectionCode, status, churchName,
-}) {
-  const html = shopInvoiceHtml({
-    invoiceNumber, buyerName, productTitle, quantity, amount, currency,
-    fulfillmentMethod, deliveryAddress, shippingPhone, collectionCode, status, churchName,
-  });
-  await sendEmail({
-    to,
-    subject: `Olive Shop Invoice ${invoiceNumber || ''}`.trim(),
-    html,
-    text: `Invoice ${invoiceNumber} — ${productTitle} — ${amount} ${currency}. Fulfillment: ${fulfillmentMethod}.`,
-  }).catch(() => {});
-}
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 const SHOP_BUCKET = 'shop-assets';

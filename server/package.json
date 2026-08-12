@@ -1,0 +1,30 @@
+{
+  "name": "living-olive-server",
+  "engines": {
+    "node": ">=22"
+  },
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "postinstall": "node scripts/fix-lockfile-urls.cjs && (node ../scripts/install-hooks.cjs 2>/dev/null || echo '[install-hooks] skipped — not in full repo (Railway/CI)')",
+    "fix-lockfile": "node scripts/fix-lockfile-urls.cjs",
+    "check-lockfiles": "node ../scripts/check-lockfiles.cjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "cors": "^2.8.5",
+    "expo-server-sdk": "^6.1.0",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.6.0",
+    "express-session": "^1.19.0",
+    "ffmpeg-static": "^5.3.0",
+    "helmet": "^8.3.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.6.0",
+    "openai": "^4.60.0"
+  }
+}

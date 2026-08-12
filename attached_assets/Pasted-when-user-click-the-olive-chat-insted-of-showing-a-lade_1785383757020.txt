@@ -1,0 +1,18 @@
+when user click the olive chat insted of showing a lader before showing the  main screen replace with the olive chat custom spashscreen
+each time user enter the olive chat they are hit with the error network connection error chech your internet connection and try again mean while post are not loaded fix this the user shouldnt see such mesage or not see time line post insted show a skelloton loader till sver is reach able and very thing can load and display prperly also fi that server not reachable problem 
+replace all icons in the bulleten screen with line icon and remove text labes, 
+also add skeltton loader to all tabs screens that has none, 
+
+when user try upload picrture or video and attepmts to post they are hit with an error "couldnt creat post please try again" but when there is no image or video attached psot is posted sucessfully
+fix this as well  
+also add message seen, and message read indicators to individual user to user chats, and implimement a rigidged smart and securtiy tight user messages chats coment reply and notifccations to be able to work for million of users concurentrly without breaking, or deleay message delevries. fix this prifle page it keeps loading infinitly without showing any thing.
+
+also the past devosion  should be backed just like the prayer screen so the user do infinit scrol and they should be colaps by defualt and only the first on active by defualt same gose for unread section
+
+Bulletten screen:  remove the text "todays bulletin from the todays buleten section , remove the bulletin icon in the buten screen header, put the like comment and  comment icons in the todays bulleten preview that is in the bulleten home screen, remove the order of service feture entirely from org admin and front end, remove the "Announcement and fetured" text in the anouncement section and also remove the slider dots, in the prevous bulleten section move the like comment and shear icon inside the previous bulleten indivual contain that is on the bullet home screen and replace all icon on bulleten screen and the indivual bulletten screens to lince icons, use actual social media icons and not just any random icon aslo remove the "previous bulleten " label text .
+
+enable org-admin add bulleten fetured image, and images to the body of the bulleten contnet, and this images should be preperly displayed and styled in the bulleten indivual screen, the fetured image should be as a thumb nail in rpevisou bulleten section reight before the bulleten prefesionally styled and aligned.
+remove the connect with us label text and background for indivual sections in the bulleten screen is just to dull and dry improve and make bullet screen look vibrant and alive.
+
+ensure that that the alrert icon bage in the olive chat icrement when there is an notifcation alreart for the olive chart should havea counter that auto increment even withour page realoading.
+please note this app must run 100% without replit, no replit hostimng, no replit dependecies must use only supa base for databse, railway for server, livingolive.adroomai.com for backend hosting

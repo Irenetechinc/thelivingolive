@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Church Admin — The Living Olive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#F7F1E3;--surface:#fff;--olive:#3E4A2F;--oliveMid:#5B6B45;--oliveLight:#8A9A6B;
+  --gold:#C9A227;--goldLight:#E2C060;--ink:#2B2A25;--inkSoft:#5C5A4E;--inkFaint:#9A9485;
+  --danger:#B3452C;--parchment:#F0E8D0;--border:#E2D5B5;--radius:12px;--shadow:0 2px 12px rgba(30,42,18,.08);
+}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;min-height:100vh}
+
+/* Sidebar */
+.sidebar{width:240px;background:var(--olive);min-height:100vh;display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:hidden}
+.sidebar-brand{padding:24px 20px 20px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.sidebar-brand .logo{font-size:28px;display:block;margin-bottom:8px}
+.sidebar-brand h1{font-size:16px;font-weight:700;color:#fff;line-height:1.2}
+.sidebar-brand p{font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px}
+.church-badge{margin:16px;background:rgba(255,255,255,0.07);border-radius:10px;padding:12px;border:1px solid rgba(255,255,255,0.1)}
+.church-badge .church-name{font-size:13px;font-weight:600;color:#fff}
+.church-badge .church-meta{font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px}
+nav{flex:1;padding:8px 0}
+nav a{display:flex;align-items:center;gap:10px;padding:11px 20px;color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-weight:500;transition:all .15s;cursor:pointer}
+nav a:hover,nav a.active{background:rgba(255,255,255,0.09);color:#fff}
+nav a.active{border-left:3px solid var(--goldLight)}
+nav a .nav-icon{width:20px;text-align:center;font-size:15px}
+.sidebar-footer{padding:16px 20px;border-top:1px solid rgba(255,255,255,0.08)}
+.sidebar-footer a{color:rgba(255,255,255,0.5);font-size:12px;text-decoration:none;display:block;padding:6px 0}
+.sidebar-footer a:hover{color:#fff}
+
+/* Main */
+.main{flex:1;overflow-x:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.topbar h2{font-size:18px;font-weight:700;color:var(--ink)}
+.topbar .actions{display:flex;gap:10px}
+.btn{padding:9px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s;line-height:1}
+.btn-primary{background:var(--olive);color:#fff}
+.btn-primary:hover{background:var(--oliveMid)}
+.btn-ghost{background:transparent;color:var(--inkSoft);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--parchment)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.page{display:none;padding:28px;animation:fadeIn .2s ease}
+.page.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Stats row */
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:28px}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:20px;border:1px solid var(--border)}
+.stat-card .label{font-size:11px;font-weight:600;color:var(--inkFaint);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700;color:var(--ink)}
+.stat-card .sub{font-size:12px;color:var(--inkFaint);margin-top:4px}
+
+/* Cards / tables */
+.card{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-header h3{font-size:15px;font-weight:600;color:var(--ink)}
+.card-body{padding:20px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:600;color:var(--inkFaint);text-transform:uppercase;letter-spacing:.8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+td{padding:12px 14px;font-size:14px;color:var(--ink);border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg)}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600}
+.badge-green{background:#d4edda;color:#1a5c2c}
+.badge-gold{background:#fef6d6;color:#7a5f0d}
+.badge-gray{background:#f0f0ec;color:#6b6b5c}
+.badge-red{background:#fde8e8;color:#8b1c1c}
+.empty-state{text-align:center;padding:48px 20px;color:var(--inkFaint)}
+.empty-state .empty-icon{font-size:40px;margin-bottom:12px;display:block}
+.empty-state p{font-size:14px;line-height:22px}
+
+/* Bulletin form modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border-radius:16px;width:min(640px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,0.2)}
+.modal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-header h3{font-size:16px;font-weight:700;color:var(--ink)}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--inkFaint);line-height:1;padding:4px}
+.modal-body{padding:24px}
+.form-group{margin-bottom:20px}
+label{display:block;font-size:12px;font-weight:600;color:var(--inkSoft);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+input[type=text],input[type=number],input[type=datetime-local],select,textarea{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--ink);background:var(--bg);outline:none;transition:border-color .15s;font-family:inherit}
+input:focus,select:focus,textarea:focus{border-color:var(--oliveLight);box-shadow:0 0 0 3px rgba(138,154,107,.12)}
+textarea{min-height:200px;resize:vertical;line-height:1.6}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-check{display:flex;align-items:center;gap:10px;cursor:pointer}
+.form-check input[type=checkbox]{width:18px;height:18px;accent-color:var(--olive);cursor:pointer}
+.form-check span{font-size:14px;color:var(--ink)}
+.price-field{display:none}
+.modal-footer{padding:20px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+
+/* Rich text toolbar */
+.toolbar{display:flex;gap:4px;padding:8px;background:var(--parchment);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;flex-wrap:wrap}
+.toolbar button{padding:5px 10px;border:1px solid var(--border);background:var(--surface);border-radius:4px;font-size:13px;cursor:pointer;font-family:inherit}
+.toolbar button:hover{background:var(--parchment)}
+#editor{min-height:200px;padding:12px 14px;border:1px solid var(--border);border-radius:0 0 8px 8px;background:var(--surface);outline:none;font-size:15px;line-height:1.7;color:var(--ink)}
+#editor:focus{border-color:var(--oliveLight)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9999;min-width:220px;text-align:center}
+.toast.show{opacity:1}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .form-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <span class="logo">🫒</span>
+    <h1>The Living Olive</h1>
+    <p>Church Admin Portal</p>
+  </div>
+  <div class="church-badge">
+    <div class="church-name" id="sidebarChurchName">Loading…</div>
+    <div class="church-meta">Organisation Admin</div>
+  </div>
+  <nav>
+    <a class="active" onclick="showPage('dashboard')" id="nav-dashboard"><span class="nav-icon">📊</span> Dashboard</a>
+    <a onclick="showPage('bulletins')" id="nav-bulletins"><span class="nav-icon">📋</span> Bulletins</a>
+    <a onclick="showPage('members')" id="nav-members"><span class="nav-icon">👥</span> Members</a>
+    <a onclick="showPage('announcements')" id="nav-announcements"><span class="nav-icon">📢</span> Announcements</a>
+    <a onclick="showPage('ads')" id="nav-ads"><span class="nav-icon">📣</span> Ads</a>
+    <a onclick="showPage('shop')" id="nav-shop"><span class="nav-icon">🛍</span> Olive Shop</a>
+    <a onclick="showPage('extras')" id="nav-extras"><span class="nav-icon">🔗</span> Links & Service</a>
+    <a onclick="showPage('payments')" id="nav-payments"><span class="nav-icon">💳</span> Payments</a>
+    <a onclick="showPage('profile')" id="nav-profile"><span class="nav-icon">⛪</span> Profile</a>
+  </nav>
+  <div class="sidebar-footer">
+    <a href="/org-admin/logout" onclick="return confirm('Sign out?')">Sign out →</a>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+  <div class="topbar">
+    <h2 id="pageTitle">Dashboard</h2>
+    <div class="actions">
+      <button class="btn btn-primary" id="topbarAction" onclick="openNewBulletin()" style="display:none">+ New Bulletin</button>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="page active" id="page-dashboard">
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="label">Members</div><div class="value" id="statMembers">—</div></div>
+      <div class="stat-card"><div class="label">Bulletins</div><div class="value" id="statBulletins">—</div></div>
+      <div class="stat-card"><div class="label">Revenue</div><div class="value" id="statRevenue">—</div><div class="sub">from paid bulletins</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Recent Bulletins</h3><button class="btn btn-primary btn-sm" onclick="showPage('bulletins')">View all</button></div>
+      <div id="dashRecentBulletins"><div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet. Create your first one!</p></div></div>
+    </div>
+  </div>
+
+  <!-- Bulletins -->
+  <div class="page" id="page-bulletins">
+    <div class="card">
+      <div class="card-header"><h3>All Bulletins</h3><button class="btn btn-primary btn-sm" onclick="openNewBulletin()">+ New Bulletin</button></div>
+      <div id="bulletinList"><div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Members -->
+  <div class="page" id="page-members">
+    <div class="card">
+      <div class="card-header"><h3>Church Members</h3></div>
+      <div id="memberList"><div class="empty-state"><span class="empty-icon">👥</span><p>No members have confirmed your church yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Announcements -->
+  <div class="page" id="page-announcements">
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header">
+        <h3>Post Announcement</h3>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>Announcement Text <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional when a banner image is provided)</span></label>
+          <textarea id="annText" placeholder="Type your announcement here…" style="min-height:80px"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Banner Image <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — recommended 16:9 or 2:1, max 8 MB)</span></label>
+          <input type="file" id="annBannerFile" accept="image/*"
+            style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+          <div id="annBannerStatus" style="font-size:12px;margin-top:6px;color:var(--inkFaint)"></div>
+          <div id="annBannerPreview" style="display:none;margin-top:10px;position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+            <img id="annBannerPreviewImg" style="width:100%;max-height:200px;object-fit:cover;display:block">
+            <button class="btn btn-ghost btn-sm" onclick="clearAnnBanner()"
+              style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,0.9);border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">
+              ✕ Remove
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="annType">
+            <option value="general">General</option>
+            <option value="event">Event</option>
+            <option value="urgent">Urgent</option>
+            <option value="reminder">Reminder</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="annPostBtn" onclick="postAnnouncement()">Post Announcement</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Active Announcements</h3></div>
+      <div id="announcementList"><div class="empty-state"><span class="empty-icon">📢</span><p>No announcements yet.</p></div></div>
+    </div>
+  </div>
+
+  <!-- Ads -->
+  <div class="page" id="page-ads">
+    <div id="adsGateMsg" style="display:none" class="card" style="margin-bottom:24px">
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:14px;line-height:1.7">
+          📣 Ads posting is not yet enabled for your church. Contact
+          <a href="mailto:admin@livingolive.app" style="color:var(--olive)">The Living Olive support</a>
+          to have this feature enabled.
+        </p>
+      </div>
+    </div>
+    <div id="adsContent" style="display:none">
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header"><h3>Post New Ad</h3></div>
+        <div class="card-body">
+          <div class="form-group"><label>Ad Title *</label><input type="text" id="adTitle" placeholder="e.g. Sunday Harvest Service"></div>
+          <div class="form-group">
+            <label>Ad Image <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — recommended 16:9, max 5 MB)</span></label>
+            <input type="file" id="adImageFile" accept="image/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+            <div id="adImagePreview" style="margin-top:10px;display:none">
+              <img id="adImagePreviewImg" style="max-width:100%;max-height:160px;border-radius:8px;object-fit:cover">
+              <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="clearAdImage()">Remove image</button>
+            </div>
+          </div>
+          <div class="form-group"><label>Link URL <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(optional — where ad taps to)</span></label><input type="text" id="adLinkUrl" placeholder="https://yourchurch.org/event"></div>
+          <button class="btn btn-primary" onclick="postAd()">Post Ad</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Active Ads</h3></div>
+        <div id="adsList"><div class="empty-state"><span class="empty-icon">📣</span><p>No ads posted yet.</p></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Olive Shop -->
+  <div class="page" id="page-shop">
+    <!-- Categories card -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header">
+        <h3>Product Categories</h3>
+        <button class="btn btn-primary btn-sm" onclick="openCatModal()">+ Add Category</button>
+      </div>
+      <div id="shopCatList"><div class="empty-state"><span class="empty-icon">🏷</span><p>No categories yet.</p></div></div>
+    </div>
+
+    <!-- Products card -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Products</h3>
+        <button class="btn btn-primary btn-sm" onclick="openProductModal()">+ Add Product</button>
+      </div>
+      <div id="shopProductList"><div class="empty-state"><span class="empty-icon">🛍</span><p>No products yet. Add a category first, then add products.</p></div></div>
+    </div>
+
+    <!-- Category modal -->
+    <div id="catModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center">
+      <div style="background:var(--bg);border-radius:16px;padding:32px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <h3 style="margin-bottom:20px" id="catModalTitle">Add Category</h3>
+        <div class="form-group"><label>Category Name *</label><input type="text" id="catName" placeholder="e.g. Books, Music, Clothing…"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Icon (emoji)</label><input type="text" id="catIcon" placeholder="📚" maxlength="4" style="font-size:20px"></div>
+          <div class="form-group"><label>Sort Order</label><input type="number" id="catSort" value="0" min="0"></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:8px">
+          <button class="btn btn-primary" onclick="saveCat()">Save</button>
+          <button class="btn btn-ghost" onclick="closeCatModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product modal -->
+    <div id="productModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;align-items:flex-start;justify-content:center;overflow-y:auto">
+      <div style="min-height:100%;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px">
+        <div style="background:var(--bg);border-radius:16px;padding:32px;width:520px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+          <h3 style="margin-bottom:20px" id="productModalTitle">Add Product</h3>
+          <div class="form-group"><label>Title *</label><input type="text" id="prodTitle" placeholder="e.g. Study Bible (Leather Cover)"></div>
+          <div class="form-group"><label>Description</label><textarea id="prodDesc" placeholder="Describe this product…" style="min-height:80px"></textarea></div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Category</label>
+              <select id="prodCat"><option value="">— None —</option></select>
+            </div>
+            <div class="form-group">
+              <label>Type</label>
+              <select id="prodType">
+                <option value="physical">📦 Physical</option>
+                <option value="digital">💾 Digital Download</option>
+                <option value="media">🎵 Media / Audio</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Price (₦)</label>
+              <input type="number" id="prodPrice" value="0" min="0" step="0.01">
+            </div>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;margin-top:28px">
+                <input type="checkbox" id="prodFree" onchange="document.getElementById('prodPrice').disabled=this.checked">
+                Free product
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Stock Count <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(leave blank = unlimited)</span></label>
+            <input type="number" id="prodStock" placeholder="e.g. 50" min="0">
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Condition</label><input type="text" id="prodCondition" placeholder="New, used, refurbished…"></div>
+            <div class="form-group"><label>Shipping Cost (₦)</label><input type="number" id="prodShipping" value="0" min="0" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Available Colors <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(comma separated)</span></label><input type="text" id="prodColors" placeholder="Black, White, Olive"></div>
+            <div class="form-group"><label>Available Sizes <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(comma separated)</span></label><input type="text" id="prodSizes" placeholder="S, M, L, XL"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Estimated Delivery</label><input type="text" id="prodEstimatedDelivery" placeholder="3–5 business days"></div>
+            <div class="form-group"><label>Import Fee Information</label><input type="text" id="prodImport" placeholder="No import fees, or explain them"></div>
+          </div>
+          <div class="form-group"><label>Return Policy</label><textarea id="prodReturns" placeholder="Set the return and refund terms for this product…" style="min-height:80px"></textarea></div>
+          <div class="form-group"><label>Specifications <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(JSON object, for example {&quot;Material&quot;:&quot;Cotton&quot;})</span></label><textarea id="prodSpecs" placeholder='{"Material":"Cotton","Weight":"500g"}' style="min-height:75px"></textarea></div>
+          <div class="form-row">
+            <label class="form-check"><input type="checkbox" id="prodPickup" checked><span>Pickup available</span></label>
+            <label class="form-check"><input type="checkbox" id="prodDelivery" checked><span>Delivery available</span></label>
+          </div>
+          <div class="form-group">
+            <label>Thumbnail Image <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(max 5 MB)</span></label>
+            <input type="file" id="prodThumb" accept="image/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+            <div id="prodThumbPreview" style="display:none;margin-top:8px">
+              <img id="prodThumbImg" style="max-width:100%;max-height:140px;border-radius:8px;object-fit:cover">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Additional Product Images <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(select multiple — max 12 images)</span></label>
+            <input type="file" id="prodGallery" accept="image/*" multiple style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+            <div id="prodGalleryPreview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+            <div id="prodGalleryStatus" style="font-size:12px;color:var(--inkFaint);margin-top:4px"></div>
+          </div>
+          <div class="form-group" id="prodMediaWrap">
+            <label>Media / Download File <span style="font-weight:400;text-transform:none;color:var(--inkFaint)">(digital &amp; media — max 49 MB)</span></label>
+            <input type="file" id="prodMedia" accept="*/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+            <div id="prodMediaStatus" style="font-size:12px;color:var(--inkFaint);margin-top:4px"></div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:8px">
+            <button class="btn btn-primary" onclick="saveProduct()">Save Product</button>
+            <button class="btn btn-ghost" onclick="closeProductModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Links & Order of Service -->
+  <div class="page" id="page-extras">
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><h3>Church Website &amp; Social Media</h3></div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:13px;margin-bottom:20px">These links appear on your church's bulletin page in the app.</p>
+        <div class="form-group"><label>Website URL</label><input type="text" id="extWebsite" placeholder="https://yourchurch.org"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Facebook</label><input type="text" id="extFacebook" placeholder="https://facebook.com/yourchurch"></div>
+          <div class="form-group"><label>Instagram</label><input type="text" id="extInstagram" placeholder="https://instagram.com/yourchurch"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Twitter / X</label><input type="text" id="extTwitter" placeholder="https://twitter.com/yourchurch"></div>
+          <div class="form-group"><label>YouTube</label><input type="text" id="extYoutube" placeholder="https://youtube.com/@yourchurch"></div>
+        </div>
+        <button class="btn btn-primary" onclick="saveExtras()">Save Links</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <h3>Order of Service</h3>
+        <button class="btn btn-primary btn-sm" onclick="addOosRow()">+ Add Item</button>
+      </div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:13px;margin-bottom:16px">This appears in the app's bulletin view. Drag to reorder (save when done).</p>
+        <div id="oosList" style="display:flex;flex-direction:column;gap:10px"></div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="saveOos()">Save Order of Service</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Payments -->
+  <div class="page" id="page-payments">
+    <div class="card">
+      <div class="card-header"><h3>Bulletin Payments</h3></div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:14px;line-height:1.7">
+          Payments from paid bulletins are collected via Flutterwave and disbursed to your registered bank account weekly (minus applicable fees).
+          Contact <a href="mailto:admin@livingolive.app" style="color:var(--olive)">admin@livingolive.app</a> for payout enquiries or to update banking details.
+        </p>
+        <div id="paymentStats" style="margin-top:20px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Profile -->
+  <div class="page" id="page-profile">
+    <div class="card">
+      <div class="card-header"><h3>Church Profile</h3></div>
+      <div class="card-body">
+        <form id="profileForm" onsubmit="saveProfile(event)">
+          <div class="form-group"><label>Church Description</label><textarea name="description" id="profileDesc" placeholder="Brief description of your church for the app listing…" style="min-height:100px"></textarea></div>
+          <div style="padding:16px;background:var(--parchment);border:1px solid var(--border);border-radius:10px;margin-bottom:20px">
+            <h4 style="margin-bottom:6px;color:var(--olive)">About this seller</h4>
+            <p style="font-size:12px;color:var(--inkFaint);margin-bottom:16px">This information appears on every Olive Shop product page so buyers can learn about your church before purchasing.</p>
+            <div class="form-group"><label>Seller / Church Story</label><textarea id="profileSellerAbout" placeholder="Tell buyers about your church, ministry, shop, and what their purchase supports…" style="min-height:120px"></textarea></div>
+            <div class="form-group"><label>Seller Address / Pickup Location</label><textarea id="profileSellerAddress" placeholder="Church address, pickup instructions, and opening hours…" style="min-height:80px"></textarea></div>
+            <div class="form-group" style="margin-bottom:0"><label>Seller Policies</label><textarea id="profileSellerPolicies" placeholder="General seller policies, payment notes, and customer support information…" style="min-height:100px"></textarea></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Email</label><input type="text" name="email" id="profileEmail" placeholder="contact@yourchurch.org"></div>
+            <div class="form-group"><label>Phone</label><input type="text" name="phone" id="profilePhone" placeholder="+234 800 000 0000"></div>
+          </div>
+          <div class="form-group">
+            <label>Church Logo <span style="color:var(--inkFaint);font-weight:400;text-transform:none">(shown in the app church picker — max 5 MB)</span></label>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div id="logoPreviewWrap" style="display:none">
+                <img id="logoPreviewImg" style="width:72px;height:72px;object-fit:contain;border-radius:8px;border:1px solid var(--border);background:var(--parchment)">
+              </div>
+              <div style="flex:1;min-width:200px">
+                <input type="file" id="profileLogoFile" accept="image/*" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--ink);font-size:13px">
+                <div id="logoUploadStatus" style="font-size:12px;color:var(--inkFaint);margin-top:6px"></div>
+              </div>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--inkFaint);margin:0 0 20px">For social links and order of service, use the <a href="#" onclick="showPage('extras');return false" style="color:var(--olive)">Links &amp; Service</a> section.</p>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulletin create/edit modal -->
+<div class="modal-overlay" id="bulletinModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">New Bulletin</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="bulletinForm" onsubmit="saveBulletin(event)">
+        <input type="hidden" id="editingId">
+        <div class="form-group"><label>Title *</label><input type="text" id="bTitle" placeholder="e.g. Sunday Service Bulletin — 19 Jan 2025" required></div>
+        <div class="form-group">
+          <label>Content *</label>
+          <div class="toolbar">
+            <button type="button" onclick="fmt('bold')"><b>B</b></button>
+            <button type="button" onclick="fmt('italic')"><i>I</i></button>
+            <button type="button" onclick="fmt('underline')"><u>U</u></button>
+            <button type="button" onclick="fmt('insertUnorderedList')">• List</button>
+            <button type="button" onclick="fmt('insertOrderedList')">1. List</button>
+            <button type="button" onclick="insertHeading()">H2</button>
+            <button type="button" onclick="fmt('formatBlock','<hr>')">Divider</button>
+          </div>
+          <div id="editor" contenteditable="true" placeholder="Type your bulletin content here…"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Frequency</label>
+            <select id="bFrequency">
+              <option value="daily">Daily</option>
+              <option value="weekly" selected>Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="special">Special Edition</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Publish Date & Time</label>
+            <input type="datetime-local" id="bPublishAt">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Expiry (optional — blank = no expiry)</label>
+          <input type="datetime-local" id="bExpiresAt">
+        </div>
+        <div class="form-group">
+          <label class="form-check">
+            <input type="checkbox" id="bIsPaid" onchange="togglePriceField()">
+            <span>This bulletin is paid (members pay to access)</span>
+          </label>
+        </div>
+        <div class="form-group price-field" id="priceField">
+          <label>Price (₦)</label>
+          <input type="number" id="bPrice" placeholder="e.g. 200" min="100">
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBulletin()">Save Draft</button>
+      <button class="btn btn-primary" id="savePublishBtn" onclick="saveBulletin(null, true)" style="background:var(--gold);color:var(--ink)">Save & Publish</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let churchData = null;
+let allBulletins = [];
+let editingBulletinId = null;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    const me = await api('/api/me');
+    churchData = me.church;
+    document.getElementById('sidebarChurchName').textContent = churchData.name;
+
+    const stats = await api('/api/stats');
+    document.getElementById('statMembers').textContent = stats.stats.memberCount ?? '—';
+    document.getElementById('statBulletins').textContent = stats.stats.bulletinCount ?? '—';
+    document.getElementById('statRevenue').textContent = stats.stats.totalRevenue
+      ? '₦' + Number(stats.stats.totalRevenue).toLocaleString() : '₦0';
+
+    // Profile pre-fill
+    document.getElementById('profileDesc').value = churchData.description ?? '';
+    document.getElementById('profileEmail').value = churchData.email ?? '';
+    document.getElementById('profilePhone').value = churchData.phone ?? '';
+    document.getElementById('profileSellerAbout').value = churchData.seller_about ?? '';
+    document.getElementById('profileSellerAddress').value = churchData.seller_address ?? '';
+    document.getElementById('profileSellerPolicies').value = churchData.seller_policies ?? '';
+    // Show existing logo preview
+    if (churchData.logo_url) {
+      document.getElementById('logoPreviewWrap').style.display = 'block';
+      document.getElementById('logoPreviewImg').src = churchData.logo_url;
+    }
+
+    await loadBulletins();
+  } catch(e) { toast('Failed to load: ' + e.message, 'error'); }
+})();
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+
+  const titles = {dashboard:'Dashboard',bulletins:'Bulletins',members:'Members',announcements:'Announcements',ads:'Ads',shop:'Olive Shop',extras:'Links & Order of Service',payments:'Payments',profile:'Church Profile'};
+  document.getElementById('pageTitle').textContent = titles[name] ?? name;
+  document.getElementById('topbarAction').style.display = name === 'bulletins' ? '' : 'none';
+
+  if (name === 'members') loadMembers();
+  if (name === 'announcements') loadAnnouncements();
+  if (name === 'ads') loadAds();
+  if (name === 'shop') loadShop();
+  if (name === 'extras') loadExtras();
+}
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(path, method='GET', body) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch('/org-admin' + path, opts);
+  const json = await res.json();
+  if (!json.ok && json.error) throw new Error(json.error);
+  return json;
+}
+
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = (type==='error'?'✕ ':'✔ ') + msg;
+  el.style.background = type==='error'?'#B3452C':'#3E4A2F';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ── Bulletins ─────────────────────────────────────────────────────────────────
+async function loadBulletins() {
+  const data = await api('/api/bulletins');
+  allBulletins = data.bulletins ?? [];
+  renderBulletins();
+  renderDashRecent();
+}
+
+function renderBulletins() {
+  const el = document.getElementById('bulletinList');
+  if (!allBulletins.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet. Create your first one!</p></div>`;
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Frequency</th><th>Publish Date</th><th>Status</th><th>Price</th><th>Actions</th></tr></thead>
+    <tbody>${allBulletins.map(b => `
+      <tr>
+        <td><strong>${esc(b.title)}</strong></td>
+        <td>${b.frequency}</td>
+        <td>${b.publish_at ? new Date(b.publish_at).toLocaleString() : '—'}</td>
+        <td>${b.is_published ? '<span class="badge badge-green">Published</span>' : '<span class="badge badge-gray">Draft</span>'}</td>
+        <td>${b.is_paid ? '<span class="badge badge-gold">₦'+Number(b.price_ngn).toLocaleString()+'</span>' : '<span class="badge badge-green">Free</span>'}</td>
+        <td style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost btn-sm" onclick="editBulletin('${b.id}')">Edit</button>
+          ${b.is_published
+            ? `<button class="btn btn-ghost btn-sm" onclick="togglePublish('${b.id}',false)">Unpublish</button>`
+            : `<button class="btn btn-sm" style="background:var(--gold);color:var(--ink)" onclick="togglePublish('${b.id}',true)">Publish</button>`}
+          <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteBulletin('${b.id}','${esc(b.title)}')">Delete</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderDashRecent() {
+  const el = document.getElementById('dashRecentBulletins');
+  const recent = allBulletins.slice(0,5);
+  if (!recent.length) { el.innerHTML = `<div class="empty-state"><span class="empty-icon">📋</span><p>No bulletins yet.</p></div>`; return; }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Date</th><th>Status</th></tr></thead>
+    <tbody>${recent.map(b=>`<tr>
+      <td>${esc(b.title)}</td>
+      <td>${b.publish_at?new Date(b.publish_at).toLocaleDateString():'—'}</td>
+      <td>${b.is_published?'<span class="badge badge-green">Published</span>':'<span class="badge badge-gray">Draft</span>'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ── Bulletin form ──────────────────────────────────────────────────────────────
+function openNewBulletin() {
+  editingBulletinId = null;
+  document.getElementById('modalTitle').textContent = 'New Bulletin';
+  document.getElementById('bTitle').value = '';
+  document.getElementById('editor').innerHTML = '';
+  document.getElementById('bFrequency').value = 'weekly';
+  document.getElementById('bPublishAt').value = '';
+  document.getElementById('bExpiresAt').value = '';
+  document.getElementById('bIsPaid').checked = false;
+  document.getElementById('bPrice').value = '';
+  document.getElementById('priceField').style.display = 'none';
+  document.getElementById('bulletinModal').classList.add('open');
+}
+
+async function editBulletin(id) {
+  try {
+    const data = await api('/api/bulletins/' + id);
+    const b = data.bulletin;
+    editingBulletinId = id;
+    document.getElementById('modalTitle').textContent = 'Edit Bulletin';
+    document.getElementById('bTitle').value = b.title;
+    document.getElementById('editor').innerHTML = b.content ?? '';
+    document.getElementById('bFrequency').value = b.frequency;
+    document.getElementById('bPublishAt').value = b.publish_at ? b.publish_at.slice(0,16) : '';
+    document.getElementById('bExpiresAt').value = b.expires_at ? b.expires_at.slice(0,16) : '';
+    document.getElementById('bIsPaid').checked = b.is_paid;
+    document.getElementById('bPrice').value = b.price_ngn || '';
+    document.getElementById('priceField').style.display = b.is_paid ? 'block' : 'none';
+    document.getElementById('bulletinModal').classList.add('open');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function closeModal() { document.getElementById('bulletinModal').classList.remove('open'); }
+
+function togglePriceField() {
+  document.getElementById('priceField').style.display = document.getElementById('bIsPaid').checked ? 'block' : 'none';
+}
+
+async function saveBulletin(ev, andPublish=false) {
+  if(ev) ev.preventDefault();
+  const title = document.getElementById('bTitle').value.trim();
+  const content = document.getElementById('editor').innerHTML.trim();
+  if (!title || !content) { toast('Title and content are required', 'error'); return; }
+
+  const payload = {
+    title,
+    content,
+    frequency: document.getElementById('bFrequency').value,
+    publishAt: document.getElementById('bPublishAt').value || null,
+    expiresAt: document.getElementById('bExpiresAt').value || null,
+    isPaid: document.getElementById('bIsPaid').checked,
+    priceNgn: document.getElementById('bPrice').value || 0,
+  };
+
+  try {
+    let bulletinId = editingBulletinId;
+    if (editingBulletinId) {
+      await api('/api/bulletins/' + editingBulletinId, 'PUT', payload);
+    } else {
+      const res = await api('/api/bulletins', 'POST', payload);
+      bulletinId = res.bulletinId;
+    }
+
+    if (andPublish && bulletinId) {
+      await api('/api/bulletins/' + bulletinId + '/publish', 'POST', { publish: true });
+      toast('Bulletin saved and published!');
+    } else {
+      toast('Bulletin saved as draft');
+    }
+
+    closeModal();
+    await loadBulletins();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function togglePublish(id, publish) {
+  try {
+    await api('/api/bulletins/' + id + '/publish', 'POST', { publish });
+    toast(publish ? 'Bulletin published — members notified!' : 'Bulletin unpublished');
+    await loadBulletins();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteBulletin(id, title) {
+  if (!confirm(`Delete bulletin "${title}"? This cannot be undone.`)) return;
+  try {
+    await api('/api/bulletins/' + id, 'DELETE');
+    toast('Bulletin deleted');
+    await loadBulletins();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Members ────────────────────────────────────────────────────────────────────
+async function loadMembers() {
+  try {
+    const data = await api('/api/members');
+    const el = document.getElementById('memberList');
+    if (!data.members.length) {
+      el.innerHTML = `<div class="empty-state"><span class="empty-icon">👥</span><p>No members have confirmed your church in the app yet.<br>When users select your church and answer "Yes, this is my church", they'll appear here.</p></div>`;
+      return;
+    }
+    el.innerHTML = `<table>
+      <thead><tr><th>User ID</th><th>Joined</th></tr></thead>
+      <tbody>${data.members.map(m=>`<tr>
+        <td style="font-family:monospace;font-size:12px">${m.user_id}</td>
+        <td>${new Date(m.confirmed_at||m.created_at).toLocaleDateString()}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Profile & logo upload ──────────────────────────────────────────────────────
+document.getElementById('profileLogoFile').addEventListener('change', async function() {
+  const file = this.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('logoUploadStatus');
+  statusEl.textContent = 'Uploading…';
+  statusEl.style.color = 'var(--inkFaint)';
+  try {
+    const fd = new FormData();
+    fd.append('logo', file);
+    const res = await fetch('/org-admin/api/upload-logo', { method: 'POST', body: fd });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Upload failed');
+    document.getElementById('logoPreviewWrap').style.display = 'flex';
+    document.getElementById('logoPreviewImg').src = json.url;
+    if (churchData) churchData.logo_url = json.url;
+    statusEl.textContent = '✔ Logo uploaded successfully';
+    statusEl.style.color = 'var(--olive)';
+    toast('Church logo updated!');
+  } catch(err) {
+    statusEl.textContent = '✕ ' + err.message;
+    statusEl.style.color = 'var(--danger)';
+    toast(err.message, 'error');
+  }
+});
+
+async function saveProfile(ev) {
+  ev.preventDefault();
+  try {
+    await api('/api/profile', 'PUT', {
+      description: document.getElementById('profileDesc').value,
+      email: document.getElementById('profileEmail').value,
+      phone: document.getElementById('profilePhone').value,
+      sellerAbout: document.getElementById('profileSellerAbout').value,
+      sellerAddress: document.getElementById('profileSellerAddress').value,
+      sellerPolicies: document.getElementById('profileSellerPolicies').value,
+    });
+    toast('Profile saved');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Ads ─────────────────────────────────────────────────────────────────────
+let allAds = [];
+let _uploadedAdImageUrl = null;
+
+async function loadAds() {
+  // Check if ads are enabled for this church
+  const canPost = churchData?.can_post_ads;
+  document.getElementById('adsGateMsg').style.display = canPost ? 'none' : 'block';
+  document.getElementById('adsContent').style.display = canPost ? 'block' : 'none';
+  if (!canPost) return;
+
+  // Show image preview when file selected
+  document.getElementById('adImageFile').onchange = async function() {
+    const file = this.files[0];
+    if (!file) { _uploadedAdImageUrl = null; document.getElementById('adImagePreview').style.display = 'none'; return; }
+    const preview = document.getElementById('adImagePreview');
+    const previewImg = document.getElementById('adImagePreviewImg');
+    try {
+      // Upload immediately
+      const fd = new FormData();
+      fd.append('image', file);
+      const res = await fetch('/org-admin/api/ads/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      _uploadedAdImageUrl = json.url;
+      previewImg.src = json.url;
+      preview.style.display = 'block';
+    } catch(e) { toast('Image upload failed: ' + e.message, 'error'); }
+  };
+
+  try {
+    const data = await api('/api/ads');
+    allAds = data.ads ?? [];
+    renderAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function clearAdImage() {
+  _uploadedAdImageUrl = null;
+  document.getElementById('adImageFile').value = '';
+  document.getElementById('adImagePreview').style.display = 'none';
+}
+
+function renderAds() {
+  const el = document.getElementById('adsList');
+  if (!allAds.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📣</span><p>No ads posted yet. Create one above — it will appear in all church bulletin screens.</p></div>`;
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Image</th><th>Link</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${allAds.map(ad=>`<tr>
+      <td><strong>${esc(ad.title)}</strong></td>
+      <td>${ad.image_url?`<img src="${esc(ad.image_url)}" style="width:60px;height:40px;object-fit:cover;border-radius:4px">`:'-'}</td>
+      <td>${ad.link_url?`<a href="${esc(ad.link_url)}" target="_blank" style="color:var(--olive);font-size:12px">Link ↗</a>`:'-'}</td>
+      <td>${ad.is_active?'<span class="badge badge-green">Active</span>':'<span class="badge badge-gray">Hidden</span>'}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAd('${ad.id}',${!ad.is_active})">${ad.is_active?'Hide':'Show'}</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteAd('${ad.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function postAd() {
+  const title = document.getElementById('adTitle').value.trim();
+  if (!title) { toast('Ad title is required','error'); return; }
+  try {
+    await api('/api/ads','POST',{
+      title,
+      imageUrl: _uploadedAdImageUrl || null,
+      linkUrl: document.getElementById('adLinkUrl').value.trim() || null,
+    });
+    document.getElementById('adTitle').value = '';
+    document.getElementById('adLinkUrl').value = '';
+    clearAdImage();
+    toast('Ad posted — it will appear in church bulletin screens!');
+    await loadAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleAd(id, isActive) {
+  try {
+    await api('/api/ads/'+id,'PUT',{is_active:isActive});
+    await loadAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteAd(id) {
+  if (!confirm('Delete this ad?')) return;
+  try {
+    await api('/api/ads/'+id,'DELETE');
+    toast('Ad deleted');
+    await loadAds();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Announcements ─────────────────────────────────────────────────────────────
+let allAnnouncements = [];
+let _uploadedAnnBannerUrl = null;
+
+// Wire up banner file input once DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('annBannerFile').addEventListener('change', async function() {
+    const file = this.files[0];
+    if (!file) { clearAnnBanner(); return; }
+    const statusEl = document.getElementById('annBannerStatus');
+    const postBtn  = document.getElementById('annPostBtn');
+    statusEl.textContent = 'Uploading image…';
+    statusEl.style.color = 'var(--inkFaint)';
+    postBtn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append('banner', file);
+      const res  = await fetch('/org-admin/api/announcements/upload-banner', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Upload failed');
+      _uploadedAnnBannerUrl = json.url;
+      document.getElementById('annBannerPreviewImg').src = json.url;
+      document.getElementById('annBannerPreview').style.display = 'block';
+      statusEl.textContent = '✔ Banner uploaded';
+      statusEl.style.color = 'var(--olive)';
+    } catch(err) {
+      statusEl.textContent = '✕ ' + err.message;
+      statusEl.style.color = 'var(--danger)';
+      toast('Banner upload failed: ' + err.message, 'error');
+    } finally {
+      postBtn.disabled = false;
+    }
+  });
+});
+
+function clearAnnBanner() {
+  _uploadedAnnBannerUrl = null;
+  document.getElementById('annBannerFile').value = '';
+  document.getElementById('annBannerPreview').style.display = 'none';
+  document.getElementById('annBannerStatus').textContent = '';
+}
+
+async function loadAnnouncements() {
+  try {
+    const data = await api('/api/announcements');
+    allAnnouncements = data.announcements ?? [];
+    renderAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderAnnouncements() {
+  const el = document.getElementById('announcementList');
+  if (!allAnnouncements.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">📢</span><p>No announcements yet. Post one above to show it on the bulletin page in the app.</p></div>`;
+    return;
+  }
+  const typeColors = {general:'badge-green',event:'badge-gold',urgent:'badge-red',reminder:'badge-gray'};
+  el.innerHTML = `<table>
+    <thead><tr><th>Banner</th><th>Message</th><th>Type</th><th>Posted</th><th>Status</th><th>Action</th></tr></thead>
+    <tbody>${allAnnouncements.map(a=>`<tr>
+      <td style="width:72px">${a.banner_url
+        ? `<img src="${esc(a.banner_url)}" style="width:64px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`
+        : `<span style="color:var(--inkFaint);font-size:12px">—</span>`}</td>
+      <td style="max-width:300px">${a.text ? esc(a.text) : '<em style="color:var(--inkFaint)">Image only</em>'}</td>
+      <td><span class="badge ${typeColors[a.type]??'badge-gray'}">${a.type??'general'}</span></td>
+      <td>${new Date(a.created_at).toLocaleDateString()}</td>
+      <td>${a.is_active!==false?'<span class="badge badge-green">Active</span>':'<span class="badge badge-gray">Hidden</span>'}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAnn('${a.id}',${!a.is_active})">${a.is_active!==false?'Hide':'Show'}</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteAnn('${a.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function postAnnouncement() {
+  const text = document.getElementById('annText').value.trim();
+  const type = document.getElementById('annType').value;
+  if (!text && !_uploadedAnnBannerUrl) {
+    toast('Add announcement text or upload a banner image', 'error');
+    return;
+  }
+  try {
+    await api('/api/announcements', 'POST', {
+      text: text || null,
+      type,
+      bannerUrl: _uploadedAnnBannerUrl || null,
+    });
+    document.getElementById('annText').value = '';
+    clearAnnBanner();
+    toast('Announcement posted — it now appears in the app!');
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleAnn(id, isActive) {
+  try {
+    await api('/api/announcements/'+id,'PUT',{is_active:isActive});
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteAnn(id) {
+  if (!confirm('Remove this announcement?')) return;
+  try {
+    await api('/api/announcements/'+id,'DELETE');
+    toast('Announcement removed');
+    await loadAnnouncements();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Extras (social links + order of service) ──────────────────────────────────
+let oosItems = [];
+
+async function loadExtras() {
+  try {
+    const data = await api('/api/extras');
+    const ex = data.extras ?? {};
+    document.getElementById('extWebsite').value  = ex.website   ?? '';
+    document.getElementById('extFacebook').value  = ex.facebook_url  ?? '';
+    document.getElementById('extInstagram').value = ex.instagram_url ?? '';
+    document.getElementById('extTwitter').value   = ex.twitter_url   ?? '';
+    document.getElementById('extYoutube').value   = ex.youtube_url   ?? '';
+    oosItems = Array.isArray(ex.order_of_service) ? ex.order_of_service : [];
+    renderOos();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function saveExtras() {
+  try {
+    await api('/api/extras','PUT',{
+      website:      document.getElementById('extWebsite').value.trim()||null,
+      facebook_url: document.getElementById('extFacebook').value.trim()||null,
+      instagram_url:document.getElementById('extInstagram').value.trim()||null,
+      twitter_url:  document.getElementById('extTwitter').value.trim()||null,
+      youtube_url:  document.getElementById('extYoutube').value.trim()||null,
+    });
+    toast('Social links saved!');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderOos() {
+  const el = document.getElementById('oosList');
+  if (!oosItems.length) {
+    el.innerHTML = `<p style="color:var(--inkFaint);font-size:13px">No items yet. Click "+ Add Item" to add your first order of service entry.</p>`;
+    return;
+  }
+  el.innerHTML = oosItems.map((item,i)=>`
+    <div style="display:grid;grid-template-columns:90px 1fr 1fr auto;gap:10px;align-items:center;background:var(--bg);padding:10px 12px;border-radius:8px;border:1px solid var(--border)">
+      <input type="text" value="${esc(item.time??'')}" placeholder="9:00 AM" oninput="oosItems[${i}].time=this.value" style="padding:8px 10px">
+      <input type="text" value="${esc(item.item??'')}" placeholder="Order item…" oninput="oosItems[${i}].item=this.value">
+      <input type="text" value="${esc(item.notes??'')}" placeholder="Notes (optional)" oninput="oosItems[${i}].notes=this.value">
+      <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="removeOos(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addOosRow() {
+  oosItems.push({time:'',item:'',notes:''});
+  renderOos();
+}
+
+function removeOos(i) {
+  oosItems.splice(i,1);
+  renderOos();
+}
+
+async function saveOos() {
+  try {
+    await api('/api/extras','PUT',{orderOfService:oosItems});
+    toast('Order of service saved!');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Olive Shop ────────────────────────────────────────────────────────────────
+let shopCategories = [];
+let shopProducts   = [];
+let editingCatId   = null;
+let editingProdId  = null;
+let _prodGalleryUrls = [];
+let _prodThumbUrl  = null;
+let _prodMediaUrl  = null;
+
+async function loadShop() {
+  await Promise.all([loadShopCategories(), loadShopProducts()]);
+}
+
+async function loadShopCategories() {
+  try {
+    const d = await api('/api/shop/categories');
+    shopCategories = d.categories ?? [];
+    renderShopCategories();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function loadShopProducts() {
+  try {
+    const d = await api('/api/shop/products');
+    shopProducts = d.products ?? [];
+    renderShopProducts();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function renderShopCategories() {
+  const el = document.getElementById('shopCatList');
+  if (!shopCategories.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">🏷</span><p>No categories yet. Add one to start organising products.</p></div>`;
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr><th>Icon</th><th>Name</th><th>Sort</th><th>Actions</th></tr></thead>
+    <tbody>${shopCategories.map(c=>`<tr>
+      <td style="font-size:20px">${esc(c.icon??'🛍')}</td>
+      <td><strong>${esc(c.name)}</strong></td>
+      <td>${c.sort_order??0}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="openCatModal('${c.id}')">Edit</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteCat('${c.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function renderShopProducts() {
+  const el = document.getElementById('shopProductList');
+  if (!shopProducts.length) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">🛍</span><p>No products yet.</p></div>`;
+    return;
+  }
+  const typeIcon = {physical:'📦',digital:'💾',media:'🎵'};
+  el.innerHTML = `<table>
+    <thead><tr><th>Image</th><th>Title</th><th>Type</th><th>Price</th><th>Category</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${shopProducts.map(p=>`<tr>
+      <td>${p.thumbnail_url?`<img src="${esc(p.thumbnail_url)}" style="width:50px;height:50px;object-fit:cover;border-radius:6px">`:'-'}</td>
+      <td><strong>${esc(p.title)}</strong></td>
+      <td>${typeIcon[p.product_type]??'📦'} ${p.product_type}</td>
+      <td>${p.is_free?'<span class="badge badge-green">FREE</span>':`₦${Number(p.price).toLocaleString()}`}</td>
+      <td>${p.shop_categories?.name??'—'}</td>
+      <td>${p.stock_count??'∞'}</td>
+      <td>${p.is_published?'<span class="badge badge-green">Live</span>':'<span class="badge badge-gray">Draft</span>'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="openProductModal('${p.id}')">Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleProduct('${p.id}',${!p.is_published})">${p.is_published?'Unpublish':'Publish'}</button>
+        <button class="btn btn-sm" style="background:#fde8e8;color:var(--danger)" onclick="deleteProduct('${p.id}')">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// Category modal
+function openCatModal(id) {
+  editingCatId = id || null;
+  const c = id ? shopCategories.find(x=>x.id===id) : null;
+  document.getElementById('catModalTitle').textContent = c ? 'Edit Category' : 'Add Category';
+  document.getElementById('catName').value = c?.name ?? '';
+  document.getElementById('catIcon').value = c?.icon ?? '🛍';
+  document.getElementById('catSort').value = c?.sort_order ?? 0;
+  document.getElementById('catModal').style.display = 'flex';
+}
+function closeCatModal() { document.getElementById('catModal').style.display = 'none'; }
+
+async function saveCat() {
+  const name = document.getElementById('catName').value.trim();
+  if (!name) { toast('Category name is required','error'); return; }
+  const body = { name, icon: document.getElementById('catIcon').value.trim()||'🛍', sortOrder: parseInt(document.getElementById('catSort').value)||0 };
+  try {
+    if (editingCatId) await api('/api/shop/categories/'+editingCatId,'PUT',body);
+    else              await api('/api/shop/categories','POST',body);
+    closeCatModal();
+    toast(editingCatId?'Category updated':'Category created');
+    await loadShopCategories();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteCat(id) {
+  if (!confirm('Delete this category? Products will become uncategorised.')) return;
+  try { await api('/api/shop/categories/'+id,'DELETE'); toast('Category deleted'); await loadShopCategories(); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+// Product modal
+function openProductModal(id) {
+  editingProdId = id || null;
+  _prodThumbUrl = null; _prodMediaUrl = null;
+  _prodGalleryUrls = [];
+  const p = id ? shopProducts.find(x=>x.id===id) : null;
+  document.getElementById('productModalTitle').textContent = p ? 'Edit Product' : 'Add Product';
+  document.getElementById('prodTitle').value = p?.title ?? '';
+  document.getElementById('prodDesc').value  = p?.description ?? '';
+  document.getElementById('prodType').value  = p?.product_type ?? 'physical';
+  document.getElementById('prodPrice').value = p?.price ?? 0;
+  document.getElementById('prodFree').checked = p?.is_free ?? false;
+  document.getElementById('prodPrice').disabled = p?.is_free ?? false;
+  document.getElementById('prodStock').value = p?.stock_count ?? '';
+  document.getElementById('prodCondition').value = p?.condition ?? '';
+  document.getElementById('prodShipping').value = p?.shipping_cost ?? 0;
+  document.getElementById('prodEstimatedDelivery').value = p?.estimated_delivery ?? '';
+  document.getElementById('prodImport').value = p?.import_fee_info ?? '';
+  document.getElementById('prodReturns').value = p?.return_policy ?? '';
+  document.getElementById('prodSpecs').value = p?.specifications ? JSON.stringify(p.specifications, null, 2) : '';
+  document.getElementById('prodColors').value = Array.isArray(p?.available_colors) ? p.available_colors.join(', ') : '';
+  document.getElementById('prodSizes').value = Array.isArray(p?.available_sizes) ? p.available_sizes.join(', ') : '';
+  document.getElementById('prodPickup').checked = p?.pickup_available !== false;
+  document.getElementById('prodDelivery').checked = p?.delivery_available !== false;
+  document.getElementById('prodThumbPreview').style.display = 'none';
+  document.getElementById('prodGallery').value = '';
+  document.getElementById('prodGalleryStatus').textContent = '';
+  _prodGalleryUrls = Array.isArray(p?.image_urls) ? p.image_urls.filter(Boolean).slice(0, 12) : [];
+  renderProductGalleryPreview();
+  document.getElementById('prodMediaStatus').textContent = '';
+  if (p?.thumbnail_url) { _prodThumbUrl = p.thumbnail_url; document.getElementById('prodThumbImg').src = p.thumbnail_url; document.getElementById('prodThumbPreview').style.display='block'; }
+  if (p?.media_url) { _prodMediaUrl = p.media_url; document.getElementById('prodMediaStatus').textContent = '✔ Media file already uploaded'; }
+  // Populate category select
+  const sel = document.getElementById('prodCat');
+  sel.innerHTML = '<option value="">— None —</option>' + shopCategories.map(c=>`<option value="${c.id}"${p?.category_id===c.id?' selected':''}>${esc(c.name)}</option>`).join('');
+  // Show/hide media field
+  updateProdTypeUI();
+  document.getElementById('productModal').style.display = 'flex';
+}
+function closeProductModal() { document.getElementById('productModal').style.display = 'none'; }
+function updateProdTypeUI() {
+  const t = document.getElementById('prodType').value;
+  document.getElementById('prodMediaWrap').style.display = ['digital','media'].includes(t) ? '' : 'none';
+}
+document.getElementById('prodType').addEventListener('change', updateProdTypeUI);
+
+// Product image / media upload
+document.getElementById('prodThumb').addEventListener('change', async function() {
+  const file = this.files[0]; if (!file) return;
+  const preview = document.getElementById('prodThumbPreview');
+  try {
+    const fd = new FormData(); fd.append('file', file); fd.append('kind', 'thumbnail');
+    const res = await fetch('/org-admin/api/shop/upload', { method:'POST', body:fd });
+    const json = await res.json(); if (!json.ok) throw new Error(json.error);
+    _prodThumbUrl = json.url;
+    document.getElementById('prodThumbImg').src = json.url;
+    preview.style.display = 'block';
+  } catch(e) { toast('Thumbnail upload failed: '+e.message,'error'); }
+});
+
+document.getElementById('prodMedia').addEventListener('change', async function() {
+  const file = this.files[0]; if (!file) return;
+  const statusEl = document.getElementById('prodMediaStatus');
+  statusEl.textContent = 'Uploading…'; statusEl.style.color = 'var(--inkFaint)';
+  try {
+    const fd = new FormData(); fd.append('file', file); fd.append('kind', 'media');
+    const res = await fetch('/org-admin/api/shop/upload', { method:'POST', body:fd });
+    const json = await res.json(); if (!json.ok) throw new Error(json.error);
+    _prodMediaUrl = json.url;
+    statusEl.textContent = '✔ Media file uploaded'; statusEl.style.color = 'var(--olive)';
+  } catch(e) { statusEl.textContent = '✕ '+e.message; statusEl.style.color='var(--danger)'; toast(e.message,'error'); }
+});
+
+function renderProductGalleryPreview() {
+  const el = document.getElementById('prodGalleryPreview');
+  el.innerHTML = _prodGalleryUrls.map((url, index) => `
+    <div style="position:relative">
+      <img src="${esc(url)}" style="width:76px;height:64px;object-fit:cover;border-radius:7px;border:1px solid var(--border)">
+      <button type="button" onclick="removeProductGalleryImage(${index})" aria-label="Remove image"
+        style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:0;border-radius:50%;background:var(--danger);color:#fff;cursor:pointer;font-size:12px;line-height:20px;padding:0">×</button>
+    </div>`).join('');
+}
+
+function removeProductGalleryImage(index) {
+  _prodGalleryUrls.splice(index, 1);
+  renderProductGalleryPreview();
+}
+
+document.getElementById('prodGallery').addEventListener('change', async function() {
+  const files = Array.from(this.files || []);
+  if (!files.length) return;
+  const statusEl = document.getElementById('prodGalleryStatus');
+  statusEl.textContent = `Uploading ${files.length} image${files.length === 1 ? '' : 's'}…`;
+  statusEl.style.color = 'var(--inkFaint)';
+  try {
+    for (const file of files) {
+      if (_prodGalleryUrls.length >= 12) break;
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('kind', 'gallery');
+      const res = await fetch('/org-admin/api/shop/upload', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Upload failed');
+      _prodGalleryUrls.push(json.url);
+    }
+    renderProductGalleryPreview();
+    statusEl.textContent = `${_prodGalleryUrls.length}/12 gallery image${_prodGalleryUrls.length === 1 ? '' : 's'} ready`;
+    statusEl.style.color = 'var(--olive)';
+  } catch (e) {
+    statusEl.textContent = '✕ ' + e.message;
+    statusEl.style.color = 'var(--danger)';
+    toast('Gallery upload failed: ' + e.message, 'error');
+  } finally {
+    this.value = '';
+  }
+});
+
+async function saveProduct() {
+  const title = document.getElementById('prodTitle').value.trim();
+  if (!title) { toast('Product title is required','error'); return; }
+  const isFree = document.getElementById('prodFree').checked;
+  const price  = parseFloat(document.getElementById('prodPrice').value) || 0;
+  if (!isFree && price <= 0) { toast('Set a price or mark as free','error'); return; }
+  let specifications = {};
+  const specificationsText = document.getElementById('prodSpecs').value.trim();
+  if (specificationsText) {
+    try {
+      specifications = JSON.parse(specificationsText);
+      if (!specifications || Array.isArray(specifications) || typeof specifications !== 'object') throw new Error();
+    } catch {
+      toast('Specifications must be a valid JSON object, for example {"Material":"Cotton"}', 'error');
+      return;
+    }
+  }
+  const body = {
+    title, description: document.getElementById('prodDesc').value.trim()||null,
+    categoryId: document.getElementById('prodCat').value||null,
+    productType: document.getElementById('prodType').value,
+    price, isFree, currency:'NGN',
+    stockCount: document.getElementById('prodStock').value ? parseInt(document.getElementById('prodStock').value) : null,
+    thumbnailUrl: _prodThumbUrl||null, mediaUrl: _prodMediaUrl||null,
+    condition: document.getElementById('prodCondition').value.trim() || null,
+    shippingCost: parseFloat(document.getElementById('prodShipping').value) || 0,
+    returnPolicy: document.getElementById('prodReturns').value.trim() || null,
+    estimatedDelivery: document.getElementById('prodEstimatedDelivery').value.trim() || null,
+    importFeeInfo: document.getElementById('prodImport').value.trim() || null,
+    specifications,
+    availableColors: document.getElementById('prodColors').value.split(',').map(x=>x.trim()).filter(Boolean),
+    availableSizes: document.getElementById('prodSizes').value.split(',').map(x=>x.trim()).filter(Boolean),
+    pickupAvailable: document.getElementById('prodPickup').checked,
+    deliveryAvailable: document.getElementById('prodDelivery').checked,
+    imageUrls: _prodGalleryUrls,
+    isPublished: true,
+  };
+  try {
+    if (editingProdId) await api('/api/shop/products/'+editingProdId,'PUT',body);
+    else               await api('/api/shop/products','POST',body);
+    closeProductModal(); toast(editingProdId?'Product updated':'Product added');
+    await loadShopProducts();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleProduct(id, published) {
+  try { await api('/api/shop/products/'+id,'PUT',{isPublished:published}); await loadShopProducts(); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteProduct(id) {
+  if (!confirm('Delete this product?')) return;
+  try { await api('/api/shop/products/'+id,'DELETE'); toast('Product deleted'); await loadShopProducts(); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+// ── Rich text editor ──────────────────────────────────────────────────────────
+function fmt(cmd, val) {
+  document.getElementById('editor').focus();
+  document.execCommand(cmd, false, val ?? null);
+}
+function insertHeading() {
+  document.getElementById('editor').focus();
+  document.execCommand('formatBlock', false, 'h2');
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+Implement a separate User Admin Dashboard where user Admins (churches) with the correct credentials can upload their church bulletins—whether Sunday, daily, weekly, or monthly. These bulletins can be set either for sale or offered for free. Once uploaded, the bulletins will be displayed on the front end, where members (users) can view and read them.
+
+On the home screen, there should be a "Bulletin" option. When clicked, a pop-up dropdown should appear showing available churches (churches that have uploaded and published bulletins). When a user selects their church, they will be able to view that church's bulletin.
+
+After selecting a church, the user should be asked if that church is their actual place of worship. If the user answers "Yes," they should not be prompted with the church selection pop-up again on subsequent visits; instead, they should be taken directly to their church's bulletin. If the user answers "No," they should be prompted to select a church again the next time they return.
+
+In cases where a user's church is not available in the list, they should be shown a message: "No bulletin available for your place of worship (the church name)."
+
+---
+
+Front-End User Viewing Restrictions:
+
+· Users should only be able to view the bulletin for the current day (e.g., today's Sunday bulletin if it's Sunday).
+· There should also be an option to view previous bulletins (past Sundays, past daily/weekly/monthly editions) through an archive or history section.
+
+---
+
+For bulletins set for sale:
+Implement a payment system using Flutterwave that supports card, bank transfer, USSD, and mobile money. Additionally, include a form to collect the church's main bank account details during onboarding. The Flutterwave integration will be used to collect payments from church members, and the funds (minus any applicable fees) should be sent to the church's provided bank account on a weekly basis.
+
+---
+
+Scheduling and Notifications:
+
+· The org-admin should be able to schedule a bulletin upload in advance (e.g., set a future date and time for the bulletin to go live).
+· Whenever a bulletin is uploaded or goes live, all users of that church should receive a notification (in-app and/or push notification) informing them that a new bulletin is available.
+
+---
+
+Donation Feature for Platform Sustainability:
+
+· A "Donate" button should be prominently placed on the app (e.g., in the navigation bar, footer, or a dedicated section on the home screen).
+· The purpose of this donation is to support the Living Olive app's infrastructure, including but not limited to:
+  · Staff salaries and operations
+  · API maintenance and third-party service costs
+  · Database hosting and management
+  · AI model training and continuous improvement
+  · General infrastructure and cloud computing costs
+· The donation button should be positioned conspicuously so that it is clearly visible and not hidden, as donations are a primary goal for sustaining the platform.
+· However, the design should not feel aggressive, scammy, or overly pushy. It should be presented with transparency, warmth, and a sense of community contribution—for example, using messaging like:
+  · "Help keep Living Olive running—support our infrastructure and team."
+  · "Your donations fuel our mission. Every contribution goes toward maintaining and improving the app for everyone."
+· The donation flow should include:
+  · A brief explanation of where the funds go (with a breakdown or visual)
+  · A simple, secure payment process (Flutterwave integration)
+  · Options for one-time or recurring donations
+· The goal is to build trust and make users feel they are partners in the mission, not just targets for fundraising.
+
+---
+
+Admin Access:
+The backend admin dashboard for churches should be accessible at:
+livingolive.adroomai.com/org-admin
+
+The Super Admin (which already exists) should be able to onboard churches and provide them with login credentials to access the org-admin dashboard. Through this dashboard, church admins can manage their bulletins, format content, schedule uploads, view members, and track payments.

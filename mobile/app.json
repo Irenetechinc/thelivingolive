@@ -1,0 +1,83 @@
+{
+  "expo": {
+    "name": "The Living Olive",
+    "slug": "the-living-olive",
+    "scheme": "livingolive",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "updates": {
+      "enabled": false
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.livingolive.app",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.livingolive.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F4EFE6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#5B7553"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#3E4A2F"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow The Living Olive to record so you can capture sermon notes to be transcribed."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow The Living Olive to record your voice for real-time note transcription.",
+          "speechRecognitionPermission": "Allow The Living Olive to transcribe your speech into notes."
+        }
+      ],
+      "expo-asset",
+      "expo-status-bar",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "089219c7-2b7a-4bf0-803c-dae68a06df33"
+      }
+    },
+    "owner": "iamwavelord"
+  }
+}

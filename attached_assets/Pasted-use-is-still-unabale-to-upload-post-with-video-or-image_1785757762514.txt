@@ -1,0 +1,32 @@
+use is still unabale to upload post with video or image htey hit with couldnt upload post pleas try again later error fix this from root couse.
+
+when user is in the olive chat app all screens and tab from the profile screen or tab, comment screen or tab, post screen or tab, notificastion screen or tab should all be laoded and redy for diplay in backgroud so when user navigate to any screen or tabe it dsiplayed with out a second delay.
+
+comment count in the olive chat should be displayed in the feed on home screen and should update in realtime without the user relaoeding the page or screen same as in app shear count.
+
+in the chat screen the when user record a voice it should be comresed optikmized and send . in the home screen where the post input is form is remove the border solid color there that is useauly an ai flag in the sence that it tells pepple app was built by ai.
+
+the profile screen dosnt load when the olive chat loads becouse when user navigates to the profile screen or tabe the are hit wioth couldnt laod profile chak internet connection, mean while the internet connection is fine becouse when user clicks on retry imadialy the profile loads, fix this the profile screen is to load in background be redy for display soon as user is in the olive chat even if they have not navigated to the profile screen yet, do same for the notifcation screen. user cant oploud or change profile picture becouse they hit with the error "upload faild pleas try again " fix this from the root couse.
+
+the home feed shouldnt relaod each time user navigate back to it insted if they are recent updates it should show a counter of current update ab=avaible count and if the are more that 15 should have the plus example(15+) when user click on this that is when the user feed should update the latest feed which should reload the page still becouse this recent update before user click on the feed icon to updfate them should be loaded already in background and ready to display so when user clicks on it they are displayed pefectly without the a page realoed .
+
+when user ets pin in the profile screen and leaves the olive app and comes back the pin is gone and the user is asked to set a new pin as if there where no pin ever set fix this becouse also the screen the pin set dosnt take effect when user whant tries to access the olive chat again .
+
+new users should be promted to complet profile set up in the olive chat.
+
+in the profile user should be able to add user names which to can be found through by any user using the olive chat, church, date of birth, first name last name(which is already gostten through email so here they should be able to edit it), state, country, curent location, education, gender, bio, websit if any, in the profile screen also should all this infomation vible and user can chose which to make public for now only date of birth, and in the profile screen should show all the user pesonal post, and post in which the user was taged in. this profile should also show the user frends/connections. please not avaoid using border colors for every conter button or object.
+
+the user profile set up hould insted be an onboarding phase for new user and option to skip so part that should be enforce later on when user using the olive chat.
+
+enable user to be able send request to other users here they are colled connect(connections) user can search for user by name of user name.
+
+in the the coment screeninput and send icon is been coverd by andriod defult navigation menue fix this.
+
+user should be bale to post and view stories and and see other users that they have connected with stories as well just as it is on facebook .
+
+in the bulleten screen likes and comments count should be updated in realtime not only when user realods the page and also i noticed the when user leave the bulletin screen and comes back the comment and like count dosnt load with it except the user opens the indivdual bulleten and navigate back then user see all the comment and like count becouse visle in the bulleten home screen fix the comment and likes counts are leaded with the scren and increment and dicrement in realtime when rewuired with out a page reaload.
+
+the prayer point history shouldnt be more that five after which user will have to load more with the load more butten. move the manual prayer point to the top right below the prayer points genrator tab.
+
+add other advance prayer day and scredul options just like in the prayer genrator form and make sure that this alrms are effective in realtime and work as intended in realtime
+

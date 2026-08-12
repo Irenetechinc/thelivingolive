@@ -1,0 +1,859 @@
+/**
+ * orgAdmin.js — Church (org) admin router for /org-admin
+ * Access: livingolive.adroomai.com/org-admin
+ * Church credentials are created by the Super Admin via /admin/api/churches.
+ */
+
+import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import multer from 'multer';
+import { logger } from '../lib/logger.js';
+import { adminBus } from '../lib/adminBus.js';
+import { ensurePublicBucket, MAX_STORAGE_BYTES } from '../lib/storage.js';
+
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+const ALLOWED_SHOP_TYPES = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  'image/heic', 'image/heif',
+  'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg',
+  'video/mp4', 'video/quicktime', 'video/webm',
+  'application/pdf', 'application/epub+zip', 'application/octet-stream',
+]);
+function imageOnlyFilter(_req, file, cb) {
+  if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) return cb(null, true);
+  cb(Object.assign(new Error('Only image files are allowed (JPEG, PNG, WebP, GIF).'), { status: 400 }), false);
+}
+const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const adImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const bulletinImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+const shopAssetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_STORAGE_BYTES },
+  fileFilter: (_req, file, cb) => ALLOWED_SHOP_TYPES.has(file.mimetype)
+    ? cb(null, true)
+    : cb(Object.assign(new Error('Unsupported shop file type.'), { status: 400 }), false),
+});
+
+function withJsonUpload(middleware) {
+  return (req, res, next) => middleware(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ ok: false, error: 'File too large. Maximum size is 49 MB.' });
+    return res.status(400).json({ ok: false, error: err.message || 'Upload failed.' });
+  });
+}
+
+const log = logger('org-admin');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const router = Router();
+
+// ── Auth helpers ───────────────────────────────────────────────────────────────
+export function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100_000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password, stored) {
+  try {
+    const [salt, hash] = stored.split(':');
+    const attempt = crypto.pbkdf2Sync(password, salt, 100_000, 64, 'sha512').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(attempt, 'hex'), Buffer.from(hash, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.send(orgLoginPage('Too many login attempts. Wait 15 minutes.')),
+});
+
+function requireOrgAdmin(req, res, next) {
+  if (req.session?.orgAdmin) return next();
+  res.redirect('/org-admin/login');
+}
+
+// ── Routes ─────────────────────────────────────────────────────────────────────
+
+router.get('/', (req, res) =>
+  req.session?.orgAdmin ? res.redirect('/org-admin/dashboard') : res.redirect('/org-admin/login')
+);
+
+router.get('/login', (req, res) => {
+  if (req.session?.orgAdmin) return res.redirect('/org-admin/dashboard');
+  res.send(orgLoginPage());
+});
+
+router.post('/login', loginLimiter, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.send(orgLoginPage('Database unavailable. Contact support.'));
+
+  const { username, password } = req.body;
+  if (!username || !password) return res.send(orgLoginPage('Username and password are required.'));
+
+  const { data: church, error } = await supabase
+    .from('churches')
+    .select('id, name, slug, admin_username, password_hash, active')
+    .eq('admin_username', username.trim())
+    .maybeSingle();
+
+  if (error || !church) {
+    log.warn(`Failed login attempt for username: ${username}`);
+    return res.send(orgLoginPage('Invalid credentials.'));
+  }
+  if (!church.active) {
+    return res.send(orgLoginPage('This church account has been deactivated. Contact support.'));
+  }
+  if (!verifyPassword(password, church.password_hash)) {
+    log.warn(`Bad password for church: ${church.name}`);
+    return res.send(orgLoginPage('Invalid credentials.'));
+  }
+
+  req.session.orgAdmin = { churchId: church.id, churchName: church.name, slug: church.slug };
+  log.info(`Church admin login: ${church.name} (${church.id})`);
+  res.redirect('/org-admin/dashboard');
+});
+
+router.post('/logout', (req, res) => {
+  const name = req.session?.orgAdmin?.churchName ?? 'unknown';
+  req.session.destroy(() => {
+    log.info(`Church admin logout: ${name}`);
+    res.redirect('/org-admin/login');
+  });
+});
+
+// ── Dashboard HTML ─────────────────────────────────────────────────────────────
+router.get('/dashboard', requireOrgAdmin, (_req, res) => {
+  res.sendFile(path.join(__dirname, '../admin/org-dashboard.html'));
+});
+
+// ── Session info ───────────────────────────────────────────────────────────────
+router.get('/api/me', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId, churchName, slug } = req.session.orgAdmin;
+  let church = { id: churchId, name: churchName, slug };
+
+  if (supabase) {
+    const { data } = await supabase
+      .from('churches')
+      .select('id, name, slug, email, phone, description, logo_url, seller_about, seller_address, seller_policies, website, bank_name, account_number, account_name, can_post_ads')
+      .eq('id', churchId)
+      .maybeSingle();
+    if (data) church = data;
+  }
+  res.json({ ok: true, church });
+});
+
+// ── Bulletin CRUD ──────────────────────────────────────────────────────────────
+router.get('/api/bulletins', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.json({ ok: true, bulletins: [] });
+
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await supabase
+    .from('bulletins')
+    .select('id, title, frequency, publish_at, expires_at, is_paid, price_ngn, is_published, created_at, content_preview')
+    .eq('church_id', churchId)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, bulletins: data ?? [] });
+});
+
+router.get('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await supabase
+    .from('bulletins')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('church_id', churchId)
+    .maybeSingle();
+
+  if (error || !data) return res.status(404).json({ ok: false, error: 'Bulletin not found' });
+  res.json({ ok: true, bulletin: data });
+});
+
+router.post('/api/bulletins', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.status(503).json({ ok: false, error: 'Database unavailable' });
+
+  const { churchId } = req.session.orgAdmin;
+  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn, featuredImageUrl } = req.body;
+
+  if (!title?.trim() || !content?.trim()) {
+    return res.status(400).json({ ok: false, error: 'title and content are required' });
+  }
+
+  const preview = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const { data, error } = await supabase.from('bulletins').insert({
+    church_id: churchId,
+    title: title.trim(),
+    content,
+    content_preview: preview,
+    frequency: frequency ?? 'weekly',
+    publish_at: publishAt ?? null,
+    expires_at: expiresAt ?? null,
+    is_paid: !!isPaid,
+    price_ngn: isPaid ? (parseInt(priceNgn, 10) || 0) : 0,
+    is_published: false,
+    featured_image_url: featuredImageUrl ?? null,
+  }).select('id').single();
+
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  log.info(`Bulletin created: "${title}" for church ${churchId}`);
+  res.json({ ok: true, bulletinId: data.id });
+});
+
+router.put('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { title, content, frequency, publishAt, expiresAt, isPaid, priceNgn, featuredImageUrl } = req.body;
+
+  const preview = content ? content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) : undefined;
+  const updates = {};
+  if (title !== undefined) updates.title = title.trim();
+  if (content !== undefined) { updates.content = content; updates.content_preview = preview; }
+  if (frequency !== undefined) updates.frequency = frequency;
+  if (publishAt !== undefined) updates.publish_at = publishAt;
+  if (expiresAt !== undefined) updates.expires_at = expiresAt;
+  if (isPaid !== undefined) { updates.is_paid = !!isPaid; updates.price_ngn = isPaid ? (parseInt(priceNgn, 10) || 0) : 0; }
+  if (featuredImageUrl !== undefined) updates.featured_image_url = featuredImageUrl;
+  updates.updated_at = new Date().toISOString();
+
+  const { error } = await supabase.from('bulletins').update(updates).eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+// ── Bulletin featured image upload ─────────────────────────────────────────────
+router.post('/api/bulletins/:id/upload-featured-image', requireOrgAdmin, bulletinImageUpload.single('image'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No image file provided' });
+
+  // Verify bulletin belongs to this church
+  const { data: bulletin } = await supabase.from('bulletins').select('id').eq('id', req.params.id).eq('church_id', churchId).maybeSingle();
+  if (!bulletin) return res.status(404).json({ ok: false, error: 'Bulletin not found' });
+
+  const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const storagePath = `bulletins/${churchId}/${req.params.id}/featured.${ext}`;
+
+  await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
+  const { error } = await supabase.storage.from('church-assets').upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (error) { log.error('bulletin image upload error:', error.message); return res.status(500).json({ ok: false, error: 'Upload failed' }); }
+
+  const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+  const featuredImageUrl = data.publicUrl;
+
+  // Save URL to bulletin record
+  await supabase.from('bulletins').update({ featured_image_url: featuredImageUrl, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('church_id', churchId);
+
+  res.json({ ok: true, featuredImageUrl });
+});
+
+router.delete('/api/bulletins/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { error } = await supabase.from('bulletins').delete().eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  log.info(`Bulletin ${req.params.id} deleted by church ${churchId}`);
+  res.json({ ok: true });
+});
+
+// Publish or unpublish immediately — sends push to all church members
+router.post('/api/bulletins/:id/publish', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId, churchName } = req.session.orgAdmin;
+  const { publish } = req.body; // true = publish, false = unpublish
+
+  const { data: bulletin, error: fetchErr } = await supabase
+    .from('bulletins')
+    .select('id, title, is_published')
+    .eq('id', req.params.id)
+    .eq('church_id', churchId)
+    .maybeSingle();
+
+  if (fetchErr || !bulletin) return res.status(404).json({ ok: false, error: 'Bulletin not found' });
+
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('bulletins').update({
+    is_published: !!publish,
+    publish_at: publish ? now : null,
+    updated_at: now,
+  }).eq('id', req.params.id).eq('church_id', churchId);
+
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+
+  if (publish) {
+    // Fire-and-forget: push notification to all church members
+    notifyChurchMembers(supabase, churchId, {
+      title: `📋 New Bulletin from ${churchName}`,
+      body: bulletin.title,
+      data: { type: 'bulletin', bulletinId: bulletin.id, churchId },
+    }).catch((e) => log.warn('Push to church members failed:', e.message));
+    log.info(`Bulletin "${bulletin.title}" published for church ${churchId}`);
+  }
+
+  res.json({ ok: true, published: !!publish });
+});
+
+// ── Members ────────────────────────────────────────────────────────────────────
+router.get('/api/members', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.json({ ok: true, members: [], total: 0 });
+
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await supabase
+    .from('church_members')
+    .select('id, user_id, confirmed_at, created_at')
+    .eq('church_id', churchId)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, members: data ?? [], total: data?.length ?? 0 });
+});
+
+// ── Stats ──────────────────────────────────────────────────────────────────────
+router.get('/api/stats', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!supabase) return res.json({ ok: true, stats: {} });
+
+  const { churchId } = req.session.orgAdmin;
+  const [members, bulletins, payments] = await Promise.allSettled([
+    supabase.from('church_members').select('id', { count: 'exact', head: true }).eq('church_id', churchId),
+    supabase.from('bulletins').select('id', { count: 'exact', head: true }).eq('church_id', churchId),
+    supabase.from('bulletin_access').select('amount_ngn').eq('church_id', churchId).eq('status', 'success'),
+  ]);
+
+  const totalRevenue = (payments.value?.data ?? []).reduce((s, r) => s + (r.amount_ngn || 0), 0);
+  res.json({
+    ok: true,
+    stats: {
+      memberCount: members.value?.count ?? 0,
+      bulletinCount: bulletins.value?.count ?? 0,
+      totalRevenue,
+    },
+  });
+});
+
+// ── Church profile update ──────────────────────────────────────────────────────
+router.put('/api/profile', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { description, email, phone, logoUrl, sellerAbout, sellerAddress, sellerPolicies } = req.body;
+
+  const updates = { updated_at: new Date().toISOString() };
+  if (description !== undefined) updates.description = description;
+  if (email !== undefined) updates.email = email;
+  if (phone !== undefined) updates.phone = phone;
+  if (logoUrl !== undefined) updates.logo_url = logoUrl;
+  if (sellerAbout !== undefined) updates.seller_about = sellerAbout;
+  if (sellerAddress !== undefined) updates.seller_address = sellerAddress;
+  if (sellerPolicies !== undefined) updates.seller_policies = sellerPolicies;
+
+  const { error } = await supabase.from('churches').update(updates).eq('id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+// ── Announcements CRUD ────────────────────────────────────────────────────────
+router.get('/api/announcements', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data, error } = await supabase
+      .from('church_announcements')
+      .select('id, text, type, is_active, created_at')
+      .eq('church_id', churchId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ ok: true, announcements: data ?? [] });
+  } catch (e) {
+    // Table may not exist yet — return empty list, not an error
+    res.json({ ok: true, announcements: [], warning: e.message });
+  }
+});
+
+router.post('/api/announcements', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId, churchName } = req.session.orgAdmin;
+  const { text, type, bannerUrl } = req.body;
+  // Allow banner-only announcements (no text required when banner is provided)
+  if (!text?.trim() && !bannerUrl?.trim()) {
+    return res.status(400).json({ ok: false, error: 'text or bannerUrl is required' });
+  }
+  try {
+    const { data, error } = await supabase
+      .from('church_announcements')
+      .insert({
+        church_id: churchId,
+        text: text?.trim() ?? '',
+        type: type ?? 'general',
+        banner_url: bannerUrl?.trim() ?? null,
+        is_active: true,
+      })
+      .select('id').single();
+    if (error) throw error;
+    log.info(`Announcement created for church ${churchId}`);
+    // Fire-and-forget push to all church members
+    notifyChurchMembers(supabase, churchId, {
+      title: `📢 New Announcement — ${churchName}`,
+      body: (text?.trim() ?? 'New announcement').slice(0, 100),
+      data: { type: 'announcement', churchId },
+    }).catch((e) => log.warn('Push for announcement failed:', e.message));
+    res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Upload announcement banner image
+const announcementBannerUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: imageOnlyFilter });
+router.post('/api/announcements/upload-banner', requireOrgAdmin, announcementBannerUpload.single('banner'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `announcements/${churchId}/banner_${Date.now()}.${ext}`;
+  try {
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
+    const { error } = await supabase.storage.from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.put('/api/announcements/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { is_active } = req.body;
+  try {
+    const { error } = await supabase
+      .from('church_announcements')
+      .update({ is_active: !!is_active })
+      .eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/api/announcements/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { error } = await supabase
+      .from('church_announcements')
+      .delete()
+      .eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Logo file upload ──────────────────────────────────────────────────────────
+router.post('/api/upload-logo', requireOrgAdmin, logoUpload.single('logo'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `logos/${churchId}/logo_${Date.now()}.${ext}`;
+
+  try {
+    // Ensure bucket exists (no-op if already present)
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
+
+    const { error: uploadError } = await supabase.storage
+      .from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (uploadError) throw uploadError;
+
+    const { data: urlData } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    const publicUrl = urlData.publicUrl;
+
+    // Persist immediately to the churches row
+    await supabase.from('churches').update({ logo_url: publicUrl, updated_at: new Date().toISOString() }).eq('id', churchId);
+    log.info(`Logo uploaded for church ${churchId}: ${publicUrl}`);
+    res.json({ ok: true, url: publicUrl });
+  } catch (e) {
+    log.error('Logo upload error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Ads CRUD ───────────────────────────────────────────────────────────────────
+router.get('/api/ads', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data, error } = await supabase
+      .from('church_ads')
+      .select('id, title, image_url, link_url, is_active, created_at')
+      .eq('church_id', churchId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ ok: true, ads: data ?? [] });
+  } catch (e) {
+    res.json({ ok: true, ads: [], warning: e.message });
+  }
+});
+
+router.post('/api/ads', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+
+  // Gate: super-admin must grant can_post_ads before org-admin can post
+  const { data: church } = await supabase.from('churches').select('can_post_ads').eq('id', churchId).maybeSingle();
+  if (!church?.can_post_ads) {
+    return res.status(403).json({ ok: false, error: 'Ads posting is not enabled for your church. Contact The Living Olive support to enable this feature.' });
+  }
+
+  const { title, imageUrl, linkUrl } = req.body;
+  if (!title?.trim()) return res.status(400).json({ ok: false, error: 'title is required' });
+  try {
+    const { data, error } = await supabase
+      .from('church_ads')
+      .insert({ church_id: churchId, title: title.trim(), image_url: imageUrl || null, link_url: linkUrl || null, is_active: true })
+      .select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/api/ads/upload-image', requireOrgAdmin, adImageUpload.single('image'), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+
+  const ext = (req.file.originalname.split('.').pop() ?? 'jpg').toLowerCase();
+  const storagePath = `ads/${churchId}/ad_${Date.now()}.${ext}`;
+  try {
+    await ensurePublicBucket(supabase, 'church-assets', { allowedMimeTypes: ['image/*'] });
+    const { error } = await supabase.storage.from('church-assets')
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('church-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.put('/api/ads/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { is_active } = req.body;
+  try {
+    const { error } = await supabase.from('church_ads').update({ is_active: !!is_active }).eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/api/ads/:id', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { error } = await supabase.from('church_ads').delete().eq('id', req.params.id).eq('church_id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Extras: order of service + social links ────────────────────────────────────
+router.get('/api/extras', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  try {
+    const { data } = await supabase
+      .from('churches')
+      .select('website, facebook_url, instagram_url, twitter_url, youtube_url, order_of_service')
+      .eq('id', churchId)
+      .maybeSingle();
+    res.json({ ok: true, extras: data ?? {} });
+  } catch (e) {
+    res.json({ ok: true, extras: {}, warning: e.message });
+  }
+});
+
+router.put('/api/extras', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId } = req.session.orgAdmin;
+  const { orderOfService, website, facebook_url, instagram_url, twitter_url, youtube_url } = req.body;
+  const updates = { updated_at: new Date().toISOString() };
+  if (orderOfService !== undefined) updates.order_of_service = orderOfService;
+  if (website !== undefined)      updates.website = website || null;
+  if (facebook_url !== undefined) updates.facebook_url = facebook_url || null;
+  if (instagram_url !== undefined) updates.instagram_url = instagram_url || null;
+  if (twitter_url !== undefined)  updates.twitter_url = twitter_url || null;
+  if (youtube_url !== undefined)  updates.youtube_url = youtube_url || null;
+  try {
+    const { error } = await supabase.from('churches').update(updates).eq('id', churchId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Olive Shop management ─────────────────────────────────────────────────────
+// Products and categories are always scoped to the church in the signed-in
+// organisation-admin session. The mobile API never receives unpublished rows.
+router.get('/api/shop/categories', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await req.app.locals.supabaseAdmin
+    .from('shop_categories').select('*').eq('church_id', churchId)
+    .order('sort_order').order('name');
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, categories: data ?? [] });
+});
+
+router.post('/api/shop/categories', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { name, icon, color, sortOrder } = req.body;
+  if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Category name is required' });
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_categories').insert({
+    church_id: churchId, name: name.trim().slice(0, 80), icon: icon?.trim() || '🛍',
+    color: color?.trim() || '#5B6B45', sort_order: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+  }).select().single();
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, category: data });
+});
+
+router.put('/api/shop/categories/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const updates = {};
+  if (req.body.name !== undefined) updates.name = String(req.body.name).trim().slice(0, 80);
+  if (req.body.icon !== undefined) updates.icon = String(req.body.icon).trim().slice(0, 8) || '🛍';
+  if (req.body.color !== undefined) updates.color = String(req.body.color).trim().slice(0, 20) || '#5B6B45';
+  if (req.body.sortOrder !== undefined) updates.sort_order = Number(req.body.sortOrder) || 0;
+  if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_categories').update(updates)
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.delete('/api/shop/categories/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_categories').delete()
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.get('/api/shop/products', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { data, error } = await req.app.locals.supabaseAdmin.from('shop_products')
+    .select('*, shop_categories(name, icon)').eq('church_id', churchId)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true, products: data ?? [] });
+});
+
+router.post('/api/shop/products', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const {
+    title, description, categoryId, price, currency, isFree, productType,
+    thumbnailUrl, mediaUrl, imageUrls, stockCount, isPublished,
+    condition, shippingCost, returnPolicy, estimatedDelivery, importFeeInfo,
+    specifications, availableColors, availableSizes, pickupAvailable, deliveryAvailable,
+  } = req.body;
+  if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Product title is required' });
+  if (!['physical', 'digital', 'media'].includes(productType)) {
+    return res.status(400).json({ ok: false, error: 'Product type must be physical, digital, or media' });
+  }
+  const amount = isFree ? 0 : Math.max(0, Number(price) || 0);
+  if (!isFree && amount <= 0) return res.status(400).json({ ok: false, error: 'Paid products need a price' });
+  const supabase = req.app.locals.supabaseAdmin;
+  if (categoryId) {
+    const { data: category } = await supabase.from('shop_categories').select('id')
+      .eq('id', categoryId).eq('church_id', churchId).maybeSingle();
+    if (!category) return res.status(400).json({ ok: false, error: 'Category does not belong to this church' });
+  }
+  const { data, error } = await supabase.from('shop_products').insert({
+    church_id: churchId, category_id: categoryId || null, title: title.trim().slice(0, 160),
+    description: description === undefined || description === null ? null : String(description),
+    price: amount, currency: currency || 'NGN',
+    is_free: !!isFree, product_type: productType, thumbnail_url: thumbnailUrl || null,
+    media_url: mediaUrl || null, stock_count: stockCount === '' || stockCount === null || stockCount === undefined
+      ? null : Math.max(0, parseInt(stockCount, 10) || 0),
+    image_urls: Array.isArray(imageUrls) ? imageUrls.filter(Boolean).slice(0, 12) : [],
+    condition: condition ? String(condition).slice(0, 80) : null,
+    shipping_cost: Math.max(0, Number(shippingCost) || 0),
+    return_policy: returnPolicy === undefined || returnPolicy === null ? null : String(returnPolicy),
+    estimated_delivery: estimatedDelivery ? String(estimatedDelivery).slice(0, 120) : null,
+    import_fee_info: importFeeInfo === undefined || importFeeInfo === null ? null : String(importFeeInfo),
+    specifications: specifications && typeof specifications === 'object' ? specifications : {},
+    available_colors: Array.isArray(availableColors) ? availableColors.filter(Boolean).slice(0, 30) : [],
+    available_sizes: Array.isArray(availableSizes) ? availableSizes.filter(Boolean).slice(0, 30) : [],
+    pickup_available: pickupAvailable !== false,
+    delivery_available: deliveryAvailable !== false,
+    is_published: !!isPublished, updated_at: new Date().toISOString(),
+  }).select().single();
+  if (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+  res.json({ ok: true, product: data });
+});
+
+router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const supabase = req.app.locals.supabaseAdmin;
+  const updates = {};
+  const body = req.body;
+  if (body.title !== undefined) updates.title = String(body.title).trim().slice(0, 160);
+  if (body.description !== undefined) updates.description = String(body.description).trim() || null;
+  if (body.categoryId !== undefined) updates.category_id = body.categoryId || null;
+  if (body.price !== undefined) updates.price = Math.max(0, Number(body.price) || 0);
+  if (body.currency !== undefined) updates.currency = String(body.currency).slice(0, 8);
+  if (body.isFree !== undefined) { updates.is_free = !!body.isFree; if (body.isFree) updates.price = 0; }
+  if (body.productType !== undefined) updates.product_type = body.productType;
+  if (body.thumbnailUrl !== undefined) updates.thumbnail_url = body.thumbnailUrl || null;
+  if (body.mediaUrl !== undefined) updates.media_url = body.mediaUrl || null;
+  if (body.imageUrls !== undefined) updates.image_urls = Array.isArray(body.imageUrls) ? body.imageUrls.filter(Boolean).slice(0, 12) : [];
+  if (body.stockCount !== undefined) updates.stock_count = body.stockCount === '' || body.stockCount === null ? null : Math.max(0, parseInt(body.stockCount, 10) || 0);
+  if (body.condition !== undefined) updates.condition = body.condition ? String(body.condition).slice(0, 80) : null;
+  if (body.shippingCost !== undefined) updates.shipping_cost = Math.max(0, Number(body.shippingCost) || 0);
+  if (body.returnPolicy !== undefined) updates.return_policy = body.returnPolicy === null ? null : String(body.returnPolicy);
+  if (body.estimatedDelivery !== undefined) updates.estimated_delivery = body.estimatedDelivery ? String(body.estimatedDelivery).slice(0, 120) : null;
+  if (body.importFeeInfo !== undefined) updates.import_fee_info = body.importFeeInfo === null ? null : String(body.importFeeInfo);
+  if (body.specifications !== undefined) updates.specifications = body.specifications && typeof body.specifications === 'object' ? body.specifications : {};
+  if (body.availableColors !== undefined) updates.available_colors = Array.isArray(body.availableColors) ? body.availableColors.filter(Boolean).slice(0, 30) : [];
+  if (body.availableSizes !== undefined) updates.available_sizes = Array.isArray(body.availableSizes) ? body.availableSizes.filter(Boolean).slice(0, 30) : [];
+  if (body.pickupAvailable !== undefined) updates.pickup_available = body.pickupAvailable !== false;
+  if (body.deliveryAvailable !== undefined) updates.delivery_available = body.deliveryAvailable !== false;
+  if (body.isPublished !== undefined) updates.is_published = !!body.isPublished;
+  updates.updated_at = new Date().toISOString();
+  if (updates.category_id) {
+    const { data: category } = await supabase.from('shop_categories').select('id').eq('id', updates.category_id).eq('church_id', churchId).maybeSingle();
+    if (!category) return res.status(400).json({ ok: false, error: 'Category does not belong to this church' });
+  }
+  if (!Object.keys(updates).length) return res.status(400).json({ ok: false, error: 'No changes supplied' });
+  const { error } = await supabase.from('shop_products').update(updates).eq('id', req.params.id).eq('church_id', churchId);
+  if (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+router.delete('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  const { error } = await req.app.locals.supabaseAdmin.from('shop_products').delete()
+    .eq('id', req.params.id).eq('church_id', churchId);
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json({ ok: true });
+});
+
+router.post('/api/shop/upload', requireOrgAdmin, withJsonUpload(shopAssetUpload.single('file')), async (req, res) => {
+  const { churchId } = req.session.orgAdmin;
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
+  try {
+    const supabase = req.app.locals.supabaseAdmin;
+    await ensurePublicBucket(supabase, 'shop-assets', {
+      allowedMimeTypes: ['image/*', 'video/*', 'audio/*', 'application/pdf', 'application/epub+zip', 'application/octet-stream'],
+    });
+    const kind = ['media', 'gallery'].includes(req.body.kind) ? req.body.kind : 'thumbnail';
+    const ext = (req.file.originalname.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const storagePath = `shop/${churchId}/${kind}_${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('shop-assets').upload(storagePath, req.file.buffer, {
+      contentType: req.file.mimetype, upsert: true,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('shop-assets').getPublicUrl(storagePath);
+    res.json({ ok: true, url: data.publicUrl });
+  } catch (e) {
+    log.error('shop asset upload error:', e.message);
+    res.status(500).json({ ok: false, error: 'Shop asset upload failed' });
+  }
+});
+
+// ── Helper: push to all church members ────────────────────────────────────────
+async function notifyChurchMembers(supabase, churchId, { title, body, data }) {
+  const { data: members } = await supabase
+    .from('church_members')
+    .select('user_id')
+    .eq('church_id', churchId);
+  if (!members?.length) return;
+
+  const { Expo } = await import('expo-server-sdk');
+  const expo = new Expo();
+
+  for (const m of members) {
+    const { data: tokens } = await supabase
+      .from('push_tokens')
+      .select('token')
+      .eq('user_id', m.user_id);
+
+    const messages = (tokens ?? [])
+      .filter((r) => Expo.isExpoPushToken(r.token))
+      .map((r) => ({ to: r.token, sound: 'default', title, body, data: data ?? {} }));
+
+    if (!messages.length) continue;
+    const chunks = expo.chunkPushNotifications(messages);
+    for (const chunk of chunks) {
+      expo.sendPushNotificationsAsync(chunk).catch(() => {});
+    }
+  }
+}
+
+export { router as orgAdminRouter };
+
+// ── Login page HTML ────────────────────────────────────────────────────────────
+function orgLoginPage(errorMsg = '') {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Church Admin — The Living Olive</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1C2712;color:#e8ead4;font-family:Georgia,serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background-image:radial-gradient(ellipse at 50% 0%,rgba(90,110,60,0.25) 0%,transparent 70%)}
+  .card{background:rgba(30,40,18,0.95);border:1px solid rgba(138,154,107,0.2);border-radius:20px;padding:52px 44px;width:420px;box-shadow:0 24px 80px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.04)}
+  .logo{text-align:center;margin-bottom:36px}
+  .logo-icon{font-size:52px;display:block;margin-bottom:12px}
+  .logo h1{font-size:22px;font-weight:400;color:#c9a227;letter-spacing:1px}
+  .logo p{font-size:12px;color:rgba(200,205,160,0.5);margin-top:8px;letter-spacing:2px;text-transform:uppercase}
+  .divider{height:1px;background:linear-gradient(90deg,transparent,rgba(201,162,39,0.2),transparent);margin-bottom:28px}
+  label{display:block;font-size:11px;letter-spacing:2px;color:rgba(200,205,160,0.55);text-transform:uppercase;margin-bottom:8px;font-family:'Courier New',monospace}
+  input{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(138,154,107,0.2);border-radius:10px;padding:13px 16px;color:#e8ead4;font-family:Georgia,serif;font-size:15px;outline:none;transition:all .2s}
+  input:focus{border-color:rgba(201,162,39,0.5);box-shadow:0 0 0 3px rgba(201,162,39,0.08)}
+  .field{margin-bottom:20px}
+  button{width:100%;background:linear-gradient(135deg,#3E4A2F,#5B6B45);border:1px solid rgba(138,154,107,0.4);border-radius:10px;padding:15px;color:#e2c060;font-family:Georgia,serif;font-size:14px;letter-spacing:2px;cursor:pointer;transition:all .2s;margin-top:8px}
+  button:hover{background:linear-gradient(135deg,#4A5A36,#6B8055);box-shadow:0 0 30px rgba(201,162,39,0.12)}
+  .error{background:rgba(179,69,44,0.1);border:1px solid rgba(179,69,44,0.3);border-radius:10px;padding:12px 16px;text-align:center;color:#e07060;font-size:13px;margin-bottom:20px}
+  .back{text-align:center;margin-top:20px;font-size:12px;color:rgba(200,205,160,0.4)}
+  .back a{color:rgba(201,162,39,0.6);text-decoration:none}
+  .back a:hover{color:#c9a227}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <span class="logo-icon">🫒</span>
+    <h1>Church Admin Portal</h1>
+    <p>The Living Olive — Organisation Access</p>
+  </div>
+  <div class="divider"></div>
+  ${errorMsg ? `<div class="error">${errorMsg}</div>` : ''}
+  <form method="POST" action="/org-admin/login">
+    <div class="field">
+      <label>Church Username</label>
+      <input type="text" name="username" autocomplete="username" required placeholder="Your assigned username">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password" required placeholder="••••••••••••••••">
+    </div>
+    <button type="submit">Sign In →</button>
+  </form>
+  <div class="back">
+    Need access? <a href="mailto:admin@livingolive.app">Contact The Living Olive support</a>
+  </div>
+</div>
+</body>
+</html>`;
+}

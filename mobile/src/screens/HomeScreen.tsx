@@ -1,0 +1,386 @@
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  Animated,
+  ScrollView,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import type { RootStackParamList } from "../navigation/AppNavigator";
+import { useAuth } from "../context/AuthContext";
+import { supabase } from "../lib/supabase";
+import { colors, radii, spacing, typography, shadows } from "../theme/theme";
+
+type Props = NativeStackScreenProps<RootStackParamList, "Home">;
+
+type CardDef = {
+  key: keyof RootStackParamList;
+  title: string;
+  description: string;
+  symbol: string;
+  gradient: [string, string];
+  accent: string;
+  unreadKey?: "devotion" | "prayer" | "oliveChat";
+};
+
+const CARDS: CardDef[] = [
+  {
+    key: "BibleHome",
+    title: "Bible",
+    description: "Read, highlight & study scripture",
+    symbol: "✦",
+    gradient: ["#3E4A2F", "#5B6B45"],
+    accent: "#8A9A6B",
+  },
+  {
+    key: "HymnsList",
+    title: "Hymns",
+    description: "55 public-domain hymns with full lyrics",
+    symbol: "♩",
+    gradient: ["#9A3F1F", "#C1693A"],
+    accent: "#D4845A",
+  },
+  {
+    key: "Devotions",
+    title: "Daily Devotions",
+    description: "Spirit-guided devotionals rooted in scripture",
+    symbol: "◎",
+    gradient: ["#8A6A10", "#C9A227"],
+    accent: "#E2C060",
+    unreadKey: "devotion",
+  },
+  {
+    key: "Prayer",
+    title: "Prayer Points",
+    description: "Bible-rooted prayers for your heart's desires",
+    symbol: "✿",
+    gradient: ["#2A3820", "#3E4A2F"],
+    accent: "#6B8055",
+    unreadKey: "prayer",
+  },
+  {
+    key: "Bulletin",
+    title: "Church Bulletin",
+    description: "View your church's weekly bulletin & announcements",
+    symbol: "📋",
+    gradient: ["#1C3A4A", "#2E5C70"],
+    accent: "#6BAEC9",
+  },
+  {
+    key: "OliveChat",
+    title: "Olive Chat",
+    description: "Community feed, group chat & direct messages",
+    symbol: "🫒",
+    gradient: ["#3B1F4A", "#6B3FA0"],
+    accent: "#B07ADF",
+    unreadKey: "oliveChat",
+  },
+  {
+    key: "OliveShop",
+    title: "Olive Shop",
+    description: "Browse & buy products from your church community",
+    symbol: "🛍",
+    gradient: ["#2B1800", "#5C3A1E"],
+    accent: "#C4860A",
+  },
+];
+
+export default function HomeScreen({ navigation }: Props) {
+  const { signOut } = useAuth();
+  const insets = useSafeAreaInsets();
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const cardAnims = useRef(CARDS.map(() => new Animated.Value(0))).current;
+
+  const [unreadCounts, setUnreadCounts] = useState<{ devotion: number; prayer: number; oliveChat: number }>({
+    devotion: 0,
+    prayer: 0,
+    oliveChat: 0,
+  });
+  const [newOliveChatPosts, setNewOliveChatPosts] = useState(0);
+  const [newOliveChatComments, setNewOliveChatComments] = useState(0);
+
+  useEffect(() => {
+    Animated.spring(headerAnim, { toValue: 1, tension: 55, friction: 9, useNativeDriver: true }).start();
+    Animated.stagger(
+      70,
+      cardAnims.map((a) => Animated.spring(a, { toValue: 1, tension: 60, friction: 9, useNativeDriver: true }))
+    ).start();
+  }, []);
+
+  // Refresh unread counts every time the screen comes into focus; reset live post counter
+  useFocusEffect(
+    useCallback(() => {
+      loadUnreadCounts();
+      setNewOliveChatPosts(0);    // reset when returning from OliveChat
+      setNewOliveChatComments(0); // reset comment counter too
+    }, [])
+  );
+
+  async function loadUnreadCounts() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const [devotionRes, prayerRes, oliveChatRes] = await Promise.allSettled([
+        supabase
+          .from("devotion_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("is_read", false),
+        supabase
+          .from("prayer_entries")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("is_read", false),
+        supabase
+          .from("community_notifications")
+          .select("*", { count: "exact", head: true })
+          .eq("recipient_id", user.id)
+          .eq("is_read", false),
+      ]);
+
+      setUnreadCounts({
+        devotion:  devotionRes.status  === "fulfilled" ? (devotionRes.value.count  ?? 0) : 0,
+        prayer:    prayerRes.status    === "fulfilled" ? (prayerRes.value.count    ?? 0) : 0,
+        oliveChat: oliveChatRes.status === "fulfilled" ? (oliveChatRes.value.count ?? 0) : 0,
+      });
+
+      // Wire up realtime for Olive Chat badge — keep alive as long as the
+      // navigator is mounted (not just while HomeScreen is focused).
+      const channelName = `home:notifs:${user.id}`;
+      const feedChannelName = `home:feed:${user.id}`;
+      // Avoid duplicate subscriptions if loadUnreadCounts is called again
+      if (!supabase.getChannels().find(c => c.topic === `realtime:${channelName}`)) {
+        supabase
+          .channel(channelName)
+          .on("postgres_changes", {
+            event: "INSERT",
+            schema: "public",
+            table: "community_notifications",
+            filter: `recipient_id=eq.${user.id}`,
+          }, () => {
+            setUnreadCounts(prev => ({ ...prev, oliveChat: prev.oliveChat + 1 }));
+          })
+          .subscribe();
+      }
+      // Live feed activity counter — increments when anyone posts or comments
+      if (!supabase.getChannels().find(c => c.topic === `realtime:${feedChannelName}`)) {
+        supabase
+          .channel(feedChannelName)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_posts" }, () => {
+            setNewOliveChatPosts(prev => prev + 1);
+          })
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "post_comments" }, () => {
+            setNewOliveChatComments(prev => prev + 1);
+          })
+          .subscribe();
+      }
+    } catch {
+      // Non-fatal — counters stay at 0
+    }
+  }
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting =
+    hour < 5 ? "Still night" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  return (
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Gradient Header */}
+      <Animated.View
+        style={{
+          opacity: headerAnim,
+          transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
+        }}
+      >
+        <LinearGradient
+          colors={["#1C2712", "#2E3A1F", "#3E4A2F", "#4A5A36"]}
+          locations={[0, 0.3, 0.65, 1]}
+          style={[styles.header, { paddingTop: 60 + insets.top }]}
+        >
+          <View style={styles.arcWrap} pointerEvents="none">
+            <View style={[styles.arc, { width: 260, height: 260, borderRadius: 130 }]} />
+            <View style={[styles.arc, { width: 380, height: 380, borderRadius: 190 }]} />
+          </View>
+
+          <View style={styles.headerTop}>
+            <View>
+              <Text style={styles.eyebrow}>{greeting}</Text>
+              <Text style={styles.headerTitle}>The Living Olive</Text>
+            </View>
+            <Pressable
+              style={({ pressed }) => [styles.signOutBtn, pressed && { opacity: 0.6 }]}
+              onPress={signOut}
+              hitSlop={12}
+            >
+              <Text style={styles.signOutText}>Sign out</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.headerDivider} />
+
+          <View style={styles.mottoRow}>
+            <View style={styles.mottoDot} />
+            <Text style={styles.motto}>Rooted in the Word, growing every day</Text>
+            <View style={styles.mottoDot} />
+          </View>
+
+          {/* Total unread count in header */}
+          {(unreadCounts.devotion + unreadCounts.prayer) > 0 && (
+            <View style={styles.headerUnreadRow}>
+              <Text style={styles.headerUnreadText}>
+                {unreadCounts.devotion + unreadCounts.prayer} unread{" "}
+                {unreadCounts.devotion > 0 && unreadCounts.prayer > 0
+                  ? "devotions & prayers"
+                  : unreadCounts.devotion > 0 ? "devotions" : "prayers"}
+              </Text>
+            </View>
+          )}
+        </LinearGradient>
+      </Animated.View>
+
+      {/* Cards */}
+      <View style={styles.cardsSection}>
+        {CARDS.map((card, i) => {
+          const unreadCount = card.unreadKey ? unreadCounts[card.unreadKey] : 0;
+          return (
+            <Animated.View
+              key={card.key}
+              style={{
+                opacity: cardAnims[i],
+                transform: [{ translateY: cardAnims[i].interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+              }}
+            >
+              <Pressable
+                style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+                onPress={() => navigation.navigate(card.key as any)}
+              >
+                <LinearGradient
+                  colors={card.gradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.cardIconWrap}
+                >
+                  <Text style={[styles.cardSymbol, { color: card.accent }]}>{card.symbol}</Text>
+                </LinearGradient>
+
+                <View style={styles.cardBody}>
+                  <Text style={styles.cardTitle}>{card.title}</Text>
+                  <Text style={styles.cardDesc}>
+                    {card.key === "OliveChat" && (newOliveChatPosts > 0 || newOliveChatComments > 0)
+                      ? (() => {
+                          const parts: string[] = [];
+                          if (newOliveChatPosts > 0) parts.push(`${newOliveChatPosts} new post${newOliveChatPosts > 1 ? 's' : ''}`);
+                          if (newOliveChatComments > 0) parts.push(`${newOliveChatComments} comment${newOliveChatComments > 1 ? 's' : ''}`);
+                          return parts.join(' · ') + ' · ';
+                        })()
+                      : ""}
+                    {card.description}
+                  </Text>
+                </View>
+
+                <View style={styles.cardRight}>
+                  {unreadCount > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+                    </View>
+                  )}
+                  <Text style={styles.cardArrowText}>›</Text>
+                </View>
+              </Pressable>
+            </Animated.View>
+          );
+        })}
+      </View>
+
+      {/* Donate CTA */}
+      <View style={styles.donateCta}>
+        <View style={styles.donateDivider} />
+        <Text style={styles.donateEyebrow}>KEEP THE OLIVE GROWING</Text>
+        <Text style={styles.donateMsg}>
+          The Living Olive is free for everyone. If it's been a blessing to you, consider supporting the mission.
+        </Text>
+        <Pressable
+          style={({ pressed }) => [styles.donateBtn, pressed && { opacity: 0.8 }]}
+          onPress={() => navigation.navigate("Donate")}
+        >
+          <Text style={styles.donateBtnText}>Give a gift</Text>
+        </Pressable>
+      </View>
+
+      {/* Footer */}
+      <View style={[styles.footer, { paddingBottom: spacing.lg + insets.bottom }]}>
+        <View style={styles.footerLine} />
+        <Text style={styles.footerText}>POWERED BY SYNTAX</Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.parchment },
+  content: {},
+  header: {
+    paddingBottom: 28,
+    paddingHorizontal: spacing.lg,
+    overflow: "hidden",
+  },
+  arcWrap: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
+  arc: { position: "absolute", borderWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
+  headerTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
+  eyebrow: { ...typography.caption, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", marginBottom: 4 },
+  headerTitle: { fontSize: 30, fontWeight: "700", color: colors.white, letterSpacing: -0.6 },
+  signOutBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: radii.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", marginTop: 4 },
+  signOutText: { color: "rgba(255,255,255,0.65)", fontSize: 13, fontWeight: "500" },
+  headerDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 14 },
+  mottoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mottoDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.gold },
+  motto: { ...typography.caption, color: "rgba(255,255,255,0.5)", fontStyle: "italic", flex: 1 },
+  headerUnreadRow: { marginTop: 12, alignSelf: "flex-start" },
+  headerUnreadText: {
+    fontSize: 12, fontWeight: "600", color: colors.goldLight,
+    backgroundColor: "rgba(201,162,39,0.15)",
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1, borderColor: "rgba(201,162,39,0.3)",
+  },
+
+  cardsSection: { padding: spacing.lg, paddingTop: spacing.lg, gap: spacing.md },
+  card: { flexDirection: "row", alignItems: "center", backgroundColor: colors.white, borderRadius: radii.xl, overflow: "hidden", ...shadows.card },
+  cardPressed: { transform: [{ scale: 0.975 }], opacity: 0.92 },
+  cardIconWrap: { width: 72, height: 80, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  cardSymbol: { fontSize: 26, fontWeight: "700" },
+  cardBody: { flex: 1, paddingVertical: spacing.md, paddingHorizontal: spacing.md },
+  cardTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 3 },
+  cardDesc: { ...typography.bodySmall, color: colors.inkSoft, lineHeight: 20 },
+  cardRight: { flexDirection: "row", alignItems: "center", paddingRight: spacing.md, gap: 6 },
+  cardArrowText: { fontSize: 26, color: colors.oliveFaint, fontWeight: "300" },
+  badge: {
+    minWidth: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.gold,
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  badgeText: { fontSize: 11, fontWeight: "800", color: colors.white },
+
+  donateCta: { marginHorizontal: spacing.lg, marginBottom: spacing.xl, alignItems: "center" },
+  donateDivider: { width: 32, height: 1, backgroundColor: colors.parchmentDark, marginBottom: spacing.lg },
+  donateEyebrow: { ...typography.micro, color: colors.gold, letterSpacing: 2, marginBottom: spacing.sm },
+  donateMsg: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22, marginBottom: spacing.lg, paddingHorizontal: spacing.md },
+  donateBtn: { paddingVertical: 11, paddingHorizontal: spacing.xl, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.gold, backgroundColor: "rgba(201,162,39,0.08)" },
+  donateBtnText: { color: colors.gold, fontSize: 14, fontWeight: "600", letterSpacing: 0.5 },
+
+  footer: { alignItems: "center", paddingTop: spacing.md, paddingBottom: spacing.sm },
+  footerLine: { width: 32, height: 1, backgroundColor: colors.parchmentDark, marginBottom: spacing.sm },
+  footerText: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2 },
+});
