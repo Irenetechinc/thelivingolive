@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "postinstall": "node scripts/fix-lockfile-urls.cjs && (node ../scripts/install-hooks.cjs 2>/dev/null || echo '[install-hooks] skipped — not in full repo (Railway/CI)')",
+    "postinstall": "node scripts/fix-lockfile-urls.cjs && node ../scripts/install-hooks.cjs 2>/dev/null || echo '[install-hooks] skipped — not in full repo (Railway/CI)'",
     "fix-lockfile": "node scripts/fix-lockfile-urls.cjs",
     "check-lockfiles": "node ../scripts/check-lockfiles.cjs"
   },
