@@ -654,21 +654,19 @@ export async function getConnectionStatus(userId: string): Promise<Connection | 
 
 export async function getUserPosts(userId: string): Promise<CommunityPost[]> {
   const r = await apiCall<any>(`/api/community/profile/${userId}/posts`);
-  return (r.posts ?? []).map((p: any): CommunityPost => ({
-    id: p.id, body: p.body ?? null, imageUrl: p.image_url ?? null,
-    videoUrl: p.video_url ?? null, videoThumbnailUrl: p.video_thumbnail_url ?? null,
-    likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
-    liked: false, createdAt: p.created_at,
-    taggedUsers: (p.taggedUsers ?? p.tagged_users ?? []).map((u: any) => ({
-      userId: u.userId ?? u.user_id,
-      name: u.name ?? 'Member',
-      avatarUrl: u.avatarUrl ?? u.avatar_url ?? null,
-    })), author: {
-      userId: p.author?.userId ?? p.user_id ?? userId,
-      name: p.author?.name ?? 'Member',
-      avatarUrl: p.author?.avatarUrl ?? null,
-    },
-  }));
+  // Normalize posts using the shared `mapPost` mapper so author/tagged
+  // fields (name/avatar) are consistent with timeline mapping.
+  return (r.posts ?? []).map((p: any) => {
+    const mapped = mapPost(p);
+    // Ensure comment/like counts and liked flag are present
+    return {
+      ...mapped,
+      likeCount: p.like_count ?? mapped.likeCount ?? 0,
+      commentCount: p.comment_count ?? mapped.commentCount ?? 0,
+      liked: mapped.liked ?? false,
+      createdAt: p.created_at ?? mapped.createdAt,
+    } as CommunityPost;
+  });
 }
 
 // ── Internal mapper ───────────────────────────────────────────────────────────
@@ -679,6 +677,10 @@ function mapPost(p: any): CommunityPost {
     likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
     liked: p.liked ?? false, createdAt: p.created_at,
     taggedUsers: p.taggedUsers ?? [],
-    author: { userId: p.author?.userId ?? p.user_id, name: p.author?.name ?? 'Member', avatarUrl: p.author?.avatarUrl ?? null },
+    author: {
+      userId: p.author?.userId ?? p.user_id,
+      name: p.author?.name ?? p.author?.display_name ?? p.author?.displayName ?? p.display_name ?? 'Member',
+      avatarUrl: p.author?.avatarUrl ?? p.author?.avatar_url ?? null,
+    },
   };
 }

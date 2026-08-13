@@ -273,6 +273,21 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
       <div id="shopProductList"><div class="empty-state"><span class="empty-icon">🛍</span><p>No products yet. Add a category first, then add products.</p></div></div>
     </div>
 
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><h3>Verify Pickup / Collection</h3></div>
+      <div class="card-body">
+        <p style="color:var(--inkSoft);font-size:13px;margin-bottom:12px">Enter a collection code or invoice number and tap Verify to mark as collected.</p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="verifyCode" type="text" placeholder="Enter code or invoice" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="verifyShopCode()">Verify</button>
+            <button class="btn btn-ghost btn-sm" onclick="openScanner()">Scan</button>
+          </div>
+        </div>
+        <div id="verifyResult" style="margin-top:10px;font-size:13px;color:var(--inkFaint)"></div>
+      </div>
+    </div>
+
     <!-- Category modal -->
     <div id="catModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center">
       <div style="background:var(--bg);border-radius:16px;padding:32px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
@@ -280,6 +295,7 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
         <div class="form-group"><label>Category Name *</label><input type="text" id="catName" placeholder="e.g. Books, Music, Clothing…"></div>
         <div class="form-row">
           <div class="form-group"><label>Icon (emoji)</label><input type="text" id="catIcon" placeholder="📚" maxlength="4" style="font-size:20px"></div>
+        <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="openIconPicker()">Choose icon…</button></div>
           <div class="form-group"><label>Sort Order</label><input type="number" id="catSort" value="0" min="0"></div>
         </div>
         <div style="display:flex;gap:10px;margin-top:8px">
@@ -1324,6 +1340,32 @@ async function saveProduct() {
   } catch(e) { toast(e.message,'error'); }
 }
 
+async function verifyShopCode() {
+  const code = document.getElementById('verifyCode').value.trim();
+  const resEl = document.getElementById('verifyResult');
+  resEl.textContent = '';
+  if (!code) { resEl.textContent = 'Please enter a code'; return; }
+  try {
+    const r = await fetch('/org-admin/api/shop/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const json = await r.json();
+    if (!json.ok) {
+      resEl.style.color = 'var(--danger)';
+      resEl.textContent = json.error || 'Verification failed';
+      toast('Verification failed: ' + (json.error || 'unknown'), 'error');
+      return;
+    }
+    resEl.style.color = 'var(--olive)';
+    resEl.textContent = 'Order marked collected: ' + (json.orderId || '');
+    toast('Order marked collected', 'success');
+    // Refresh product/orders list if available
+    if (typeof loadShopProducts === 'function') loadShopProducts();
+  } catch (e) {
+    resEl.style.color = 'var(--danger)';
+    resEl.textContent = e.message || 'Error';
+    toast('Verification error: ' + (e.message || 'unknown'), 'error');
+  }
+}
+
 async function toggleProduct(id, published) {
   try { await api('/api/shop/products/'+id,'PUT',{isPublished:published}); await loadShopProducts(); }
   catch(e) { toast(e.message,'error'); }
@@ -1348,5 +1390,130 @@ function insertHeading() {
 // ── Utility ───────────────────────────────────────────────────────────────────
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 </script>
+
+<!-- Icon picker modal -->
+<div id="iconPicker" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:250;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:12px;padding:16px;width:min(680px,96vw);max-height:80vh;overflow:auto">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input id="iconSearch" placeholder="Search icons or emojis…" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px" oninput="renderIconGrid()">
+      <button class="btn btn-ghost btn-sm" onclick="closeIconPicker()">Close</button>
+    </div>
+    <div id="iconGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:8px"></div>
+  </div>
+</div>
+
+<!-- QR Scanner modal -->
+<div id="qrScanner" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:260;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:12px;padding:12px;width:min(720px,96vw);max-height:90vh;overflow:auto;display:flex;flex-direction:column;gap:8px;align-items:stretch">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>Scan collection QR / barcode</strong>
+      <button class="btn btn-ghost btn-sm" onclick="closeScanner()">Close</button>
+    </div>
+    <video id="qrVideo" autoplay playsinline muted style="width:100%;height:360px;object-fit:cover;background:#000;border-radius:8px"></video>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <input id="qrFile" type="file" accept="image/*" style="display:none" onchange="onQrFile(event)">
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('qrFile').click()">Upload image</button>
+    </div>
+    <div id="qrScanMsg" style="color:var(--inkFaint);font-size:13px"></div>
+  </div>
+</div>
+
+<script>
+// Simple curated icon set (emoji + common symbols) — searchable
+const ICONS = ['📚','🛍','🎵','🎧','📦','👕','👟','👜','📗','📘','📖','✝️','⛪','🕊️','🎁','🧥','👗','🛒','📱','💾','🎶','🖼️','🧸','🍞','☕','⚒️','🛠️','🏺','🧾','🔖','📎','🔔','⭐','❤️','🔑','📌','🧾','🧭','🧭','📦'];
+
+function openIconPicker() {
+  document.getElementById('iconPicker').style.display = 'flex';
+  renderIconGrid();
+}
+function closeIconPicker() { document.getElementById('iconPicker').style.display = 'none'; }
+function renderIconGrid() {
+  const q = (document.getElementById('iconSearch').value || '').toLowerCase().trim();
+  const grid = document.getElementById('iconGrid'); grid.innerHTML = '';
+  const list = ICONS.filter(i => !q || i.includes(q) || i.toLowerCase().includes(q));
+  for (const ic of list) {
+    const btn = document.createElement('button'); btn.className = 'btn btn-ghost'; btn.style.padding='10px'; btn.style.fontSize='20px'; btn.textContent = ic;
+    btn.onclick = () => { document.getElementById('catIcon').value = ic; closeIconPicker(); };
+    grid.appendChild(btn);
+  }
+}
+
+// QR scanner using BarcodeDetector API with file-upload fallback
+let _scannerStream = null; let _scannerDetector = null; let _scannerAnim = null;
+async function openScanner() {
+  document.getElementById('qrScanner').style.display = 'flex';
+  const vid = document.getElementById('qrVideo');
+  document.getElementById('qrScanMsg').textContent = 'Initializing camera…';
+  try {
+    // Prefer BarcodeDetector if available
+    if ('BarcodeDetector' in window) {
+      _scannerDetector = new BarcodeDetector({ formats: ['qr_code','code_128','ean_13','ean_8','code_39'] });
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    _scannerStream = stream; vid.srcObject = stream; await vid.play();
+    document.getElementById('qrScanMsg').textContent = 'Point the camera at the code.';
+    scanLoop();
+  } catch (e) {
+    document.getElementById('qrScanMsg').textContent = 'Camera not available. Use Upload image.';
+  }
+}
+
+async function scanLoop() {
+  const vid = document.getElementById('qrVideo');
+  if (!vid || vid.paused || vid.ended) { _scannerAnim = requestAnimationFrame(scanLoop); return; }
+  try {
+    if (_scannerDetector) {
+      const bitmap = await createImageBitmap(vid);
+      const codes = await _scannerDetector.detect(bitmap);
+      bitmap.close();
+      if (codes && codes.length) {
+        onCodeFound(codes[0].rawValue || codes[0].rawText || ''); return;
+      }
+    } else {
+      // Fallback: draw to canvas and try to decode using a tiny JS library is not available — ask user to upload
+    }
+  } catch (e) {
+    // ignore
+  }
+  _scannerAnim = requestAnimationFrame(scanLoop);
+}
+
+function closeScanner() {
+  document.getElementById('qrScanner').style.display = 'none';
+  document.getElementById('qrScanMsg').textContent = '';
+  if (_scannerAnim) cancelAnimationFrame(_scannerAnim);
+  if (_scannerStream) { _scannerStream.getTracks().forEach(t=>t.stop()); _scannerStream = null; }
+  _scannerDetector = null;
+}
+
+function onQrFile(ev) {
+  const f = ev.target.files && ev.target.files[0]; if (!f) return;
+  const reader = new FileReader(); reader.onload = async () => {
+    try {
+      const img = new Image(); img.src = reader.result;
+      img.onload = async () => {
+        if ('BarcodeDetector' in window) {
+          const detector = new BarcodeDetector({ formats: ['qr_code','code_128','ean_13','ean_8','code_39'] });
+          const canvas = document.createElement('canvas'); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight; const ctx = canvas.getContext('2d'); ctx.drawImage(img,0,0);
+          const imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+          const codes = await detector.detect(imgData);
+          if (codes && codes.length) { onCodeFound(codes[0].rawValue || codes[0].rawText || ''); return; }
+        }
+        document.getElementById('qrScanMsg').textContent = 'No code found in image.';
+      };
+    } catch (e) { document.getElementById('qrScanMsg').textContent = 'Could not decode image.'; }
+  };
+  reader.readAsDataURL(f);
+}
+
+async function onCodeFound(code) {
+  document.getElementById('verifyCode').value = code;
+  closeScanner();
+  document.getElementById('verifyResult').textContent = 'Scanned: ' + code;
+  // Optionally auto-verify
+  // verifyShopCode();
+}
+</script>
+
 </body>
 </html>

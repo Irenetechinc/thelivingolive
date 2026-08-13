@@ -51,6 +51,9 @@ import StoryViewer from './StoryViewer';
 import UserProfileModal from './UserProfileModal';
 import PeopleSearch from './PeopleSearch';
 
+// Cache key for PIN active state (moved to module scope so nested components can access it)
+const PIN_CACHE_KEY = 'olivechat.pinActive.v1';
+
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
 
@@ -523,7 +526,14 @@ function CommentsSheet({
           <Text style={cs.title}>Comments</Text>
           <Pressable onPress={onClose} hitSlop={12}><Text style={cs.closeBtn}>✕</Text></Pressable>
         </View>
-        {loading ? <ActivityIndicator color={colors.gold} style={{ marginTop: 32 }} /> : (
+        {loading ? (
+          <View style={{ padding: spacing.lg }}>
+            <SkeletonBox height={18} style={{ marginBottom: 12 }} />
+            <SkeletonBox height={14} style={{ marginBottom: 10 }} />
+            <SkeletonBox height={60} style={{ marginBottom: 10 }} borderRadius={radii.lg} />
+            <SkeletonBox height={14} style={{ marginBottom: 10 }} />
+          </View>
+        ) : (
           <FlatList
             ref={listRef}
             data={comments}
@@ -986,7 +996,7 @@ function ProfileTab({
       try {
         await setPin(null);
         setPinSet(false);
-        await AsyncStorage.setItem('olivechat.pinActive.v1', 'false');
+        await AsyncStorage.setItem(PIN_CACHE_KEY, JSON.stringify(false));
         setPinModal(false);
         setNewPin('');
       } catch { Alert.alert('Error', 'Could not remove PIN. Please try again.'); }
@@ -996,9 +1006,9 @@ function ProfileTab({
     if (!/^\d{4,8}$/.test(newPin)) { Alert.alert('Invalid PIN', 'PIN must be 4–8 digits'); return; }
     setSettingPin(true);
      try {
-       await setPin(newPin);
-       await AsyncStorage.setItem('olivechat.pinActive.v1', 'true');
-       setPinSet(true); setPinModal(false); setNewPin('');
+      await setPin(newPin);
+      await AsyncStorage.setItem(PIN_CACHE_KEY, JSON.stringify(true));
+      setPinSet(true); setPinModal(false); setNewPin('');
        Alert.alert('PIN set', 'Your Olive Chat PIN has been saved.');
      }
     catch { Alert.alert('Error', 'Could not save PIN. Please try again.'); }
@@ -1456,7 +1466,6 @@ export default function OliveChatScreen() {
   // subsequent focuses. Real-time subscriptions keep the feed/rooms fresh.
   const hasLoadedRef = useRef(false);
   const PROFILE_CACHE_KEY = 'olivechat.profile.v1';
-  const PIN_CACHE_KEY = 'olivechat.pinActive.v1';
   const previousAppState = useRef(AppState.currentState);
 
   useFocusEffect(useCallback(() => {

@@ -10,6 +10,8 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { logger } from '../lib/logger.js';
+import { sendInvoiceMail } from '../lib/mailer.js';
+import QRCode from 'qrcode';
 import { ensurePublicBucket } from '../lib/storage.js';
 
 const log    = logger('shop');
@@ -373,12 +375,25 @@ router.post('/orders/initiate', async (req, res) => {
 
   // Free product — create order immediately, no payment needed
   if (product.is_free || product.price <= 0) {
+    const code = makeCollectionCode();
     const paidFields = fulfillmentMethod === 'pickup'
-      ? { status: 'paid', paid_at: new Date().toISOString(), collection_code: makeCollectionCode(), collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${invoiceNumber}` }
+      ? { status: 'paid', paid_at: new Date().toISOString(), collection_code: code, collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${code}` }
       : { status: 'paid', paid_at: new Date().toISOString() };
     const { data: order, error: oErr } = await supabase.from('shop_orders').insert({ ...commonOrder, ...paidFields }).select().single();
     if (oErr) return res.status(500).json({ error: oErr.message });
     await decrementStockForOrder(supabase, order.id);
+    // Generate QR image for collection_qr if not present and send invoice email
+    try {
+      if (order.collection_qr) {
+        // attempt to create a data URL QR and store it in the order record as collection_qr if needed
+        const qrDataUrl = await QRCode.toDataURL(order.collection_qr);
+        await supabase.from('shop_orders').update({ collection_qr: qrDataUrl }).eq('id', order.id);
+      }
+      // send invoice email
+      const html = `<p>Thank you for your order</p><p>Invoice: <strong>${order.invoice_number}</strong></p>` +
+        (order.collection_code ? `<p>Collection code: <strong>${order.collection_code}</strong></p>` : '');
+      await sendInvoiceMail(order.buyer_email, `Your Olive Shop Invoice ${order.invoice_number}`, html);
+    } catch (e) { log.info('Invoice email/QR generation failed', e.message ?? e); }
     return res.json({ ok: true, free: true, orderId: order.id, invoiceNumber, collectionCode: order.collection_code });
   }
 
@@ -464,10 +479,10 @@ router.post('/orders/verify', async (req, res) => {
     .select('id, fulfillment_method, collection_code, collection_qr, payment_group_ref')
     .or(`flw_tx_ref.eq.${txRef ?? ''},payment_group_ref.eq.${txRef ?? ''}`)
     .eq('user_id', req.user.id).limit(1).maybeSingle();
-  const paidFields = {
+    const paidFields = {
     status: 'paid', flw_tx_id: String(verifyId), paid_at: new Date().toISOString(),
     ...(existingOrder?.fulfillment_method === 'pickup' && !existingOrder.collection_code
-      ? { collection_code: makeCollectionCode(), collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${existingOrder.id}` }
+      ? (function(){ const c = makeCollectionCode(); return { collection_code: c, collection_qr: `https://livingolive.adroomai.com/org-admin/shop/verify?code=${c}` }; })()
       : {}),
   };
   const groupRef = existingOrder?.payment_group_ref;
@@ -489,6 +504,16 @@ router.post('/orders/verify', async (req, res) => {
   } else if (order?.id) {
     await decrementStockForOrder(supabase, order.id);
   }
+  // Generate QR data URL for collection_qr and send invoice email for the paid order
+  try {
+    if (order?.collection_qr) {
+      const qrDataUrl = await QRCode.toDataURL(order.collection_qr);
+      await supabase.from('shop_orders').update({ collection_qr: qrDataUrl }).eq('id', order.id);
+    }
+    const html = `<p>Payment received — thank you!</p><p>Invoice: <strong>${order?.invoice_number}</strong></p>` +
+      (order?.collection_code ? `<p>Collection code: <strong>${order.collection_code}</strong></p>` : '');
+    await sendInvoiceMail(order?.buyer_email, `Your Olive Shop Invoice ${order?.invoice_number}`, html);
+  } catch (e) { log.info('Invoice email/QR generation failed', e.message ?? e); }
   log.info(`Shop order paid: ${tx.tx_ref}`);
   res.json({ ok: true, order });
 });

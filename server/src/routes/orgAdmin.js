@@ -740,6 +740,33 @@ router.put('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /org-admin/api/shop/verify — verify a pickup collection code or invoice
+router.post('/api/shop/verify', requireOrgAdmin, async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { churchId, churchName } = req.session.orgAdmin;
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ ok: false, error: 'code is required' });
+
+  // Try matching collection_code, invoice_number, or uuid id
+  const { data: order, error: oErr } = await supabase.from('shop_orders')
+    .select('*')
+    .or(`collection_code.eq.${code},invoice_number.eq.${code},id.eq.${code}`)
+    .eq('church_id', churchId)
+    .maybeSingle();
+  if (oErr) return res.status(500).json({ ok: false, error: oErr.message });
+  if (!order) return res.status(404).json({ ok: false, error: 'Order not found' });
+
+  // Append tracking event and mark collected
+  const existingEvents = Array.isArray(order.tracking_events) ? order.tracking_events : [];
+  const newEvent = { status: 'collected', note: `Collected by ${churchName}`, at: new Date().toISOString() };
+  const updatedEvents = [...existingEvents, newEvent];
+
+  const { error: uErr } = await supabase.from('shop_orders').update({ tracking_status: 'collected', tracking_events: updatedEvents }).eq('id', order.id);
+  if (uErr) return res.status(500).json({ ok: false, error: uErr.message });
+
+  res.json({ ok: true, orderId: order.id, collected: true });
+});
+
 router.delete('/api/shop/products/:id', requireOrgAdmin, async (req, res) => {
   const { churchId } = req.session.orgAdmin;
   const { error } = await req.app.locals.supabaseAdmin.from('shop_products').delete()

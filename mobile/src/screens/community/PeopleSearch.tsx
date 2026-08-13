@@ -120,7 +120,11 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
                       </Text>
                     ) : null}
                   </View>
-                  {!isConnected && !isPending ? (
+                  {u.id === myUserId ? (
+                    <View style={ps.youChip}>
+                      <Text style={ps.youText}>You</Text>
+                    </View>
+                  ) : !isConnected && !isPending ? (
                     <Pressable style={ps.connectBtn} onPress={() => handleConnect(u.id)}>
                       <Ionicons name="person-add-outline" size={14} color={colors.olive} />
                       <Text style={ps.connectBtnText}>Connect</Text>
@@ -183,4 +187,6 @@ const ps = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: spacing.xl, gap: 8 },
   emptyTitle: { ...typography.subtitle, color: colors.ink },
   emptySub: { fontSize: 14, color: colors.inkSoft, textAlign: 'center' },
+  youChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: radii.pill, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center' },
+  youText: { fontSize: 12, color: colors.inkFaint, fontWeight: '600' },
 });

@@ -199,6 +199,23 @@ export async function getMyOrders(): Promise<ShopOrder[]> {
   return r.orders ?? [];
 }
 
+// Subscribe to realtime updates for the current user's orders.
+// Handler receives a payload object { eventType, new, old }
+export async function subscribeToMyOrders(handler: (payload: any) => void) {
+  const { data } = await supabase.auth.getUser();
+  const userId = data?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
+  const channel = supabase.channel(`user-orders-${userId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_orders', filter: `user_id=eq.${userId}` }, (payload) => {
+      handler(payload);
+    })
+    .subscribe();
+  return {
+    unsubscribe: () => { try { channel.unsubscribe(); } catch {} },
+    channel,
+  };
+}
+
 export async function initiateShopOrder(opts: {
   productId: string; buyerName?: string; deliveryAddress?: string; shippingName?: string;
   shippingPhone?: string; fulfillmentMethod?: 'pickup' | 'delivery'; quantity?: number;

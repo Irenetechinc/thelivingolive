@@ -233,6 +233,25 @@ function SocialBar({
     setSocial(initialSocial);
   }, [initialSocial.likes, initialSocial.comments, initialSocial.liked]);
 
+  // If the parent didn't hydrate counts (common on slow networks), fetch
+  // them once on mount so list items show accurate numbers without
+  // needing to open each bulletin.
+  useEffect(() => {
+    let cancelled = false;
+    const isEmpty = (initialSocial.likes === 0 && initialSocial.comments === 0 && initialSocial.liked === false);
+    if (isEmpty) {
+      (async () => {
+        try {
+          const fresh = await fetchBulletinSocial(bulletinId);
+          if (!cancelled) setSocial(fresh);
+        } catch {
+          // ignore — keep fallback zeroes
+        }
+      })();
+    }
+    return () => { cancelled = true; };
+  }, [bulletinId]);
+
   async function handleLike() {
     // Optimistic
     const wasLiked = social.liked;

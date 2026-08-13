@@ -536,6 +536,9 @@ function MyOrdersSheet({ orders, loading, onClose, onDownload, onVerify }: {
                 <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink, marginBottom: 2 }} numberOfLines={1}>
                   {o.shop_products?.title ?? 'Product'}
                 </Text>
+                {o.invoice_number ? (
+                  <Text style={{ fontSize: 12, color: colors.inkFaint, marginBottom: 4 }}>Invoice: {o.invoice_number}</Text>
+                ) : null}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <Text style={{ fontSize: 12, color: statusColor(o.status), fontWeight: '700' }}>
                     {statusLabel(o.status)}
@@ -556,6 +559,16 @@ function MyOrdersSheet({ orders, loading, onClose, onDownload, onVerify }: {
                     <Pressable onPress={() => onDownload(o)} style={{ backgroundColor: colors.olive, borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 4 }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>⬇ Download</Text>
                     </Pressable>
+                  )}
+                  {/* Pickup collection code / QR */}
+                  {o.status === 'paid' && o.fulfillment_method === 'pickup' && o.collection_code && (
+                    <View style={{ marginLeft: 6, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 11, color: colors.inkFaint }}>Collect code</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '800' }}>{o.collection_code}</Text>
+                    </View>
+                  )}
+                  {o.status === 'paid' && o.collection_qr && (
+                    <Image source={{ uri: o.collection_qr }} style={{ width: 54, height: 54, marginLeft: 8, borderRadius: 6 }} />
                   )}
                 </View>
               </View>
@@ -635,6 +648,7 @@ export default function OliveShopScreen() {
   const [showOrders, setShowOrders]     = useState(false);
   const [orders, setOrders]             = useState<ShopOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersSub, setOrdersSub] = useState<any | null>(null);
   const [purchasing, setPurchasing]     = useState(false);
   // Physical product delivery
   const [showDelivery, setShowDelivery] = useState(false);
@@ -753,11 +767,33 @@ export default function OliveShopScreen() {
         setPendingTxRef(result.txRef ?? null);
         setShowDetail(false); setShowDelivery(false);
         await Linking.openURL(result.paymentLink);
-        Alert.alert(
-          'Payment Opened',
-          'Complete the payment in your browser. Return here and check My Orders to verify.',
-          [{ text: 'OK' }]
-        );
+        // Start background poll to auto-verify the payment until it succeeds or times out
+        (async function pollVerify(txRef) {
+          const maxAttempts = 30; // ~2 minutes
+          let attempts = 0;
+          const interval = 4000;
+          const tid = setInterval(async () => {
+            attempts += 1;
+            try {
+              const res = await verifyShopOrder(txRef);
+              if (res?.ok && res.order?.status === 'paid') {
+                clearInterval(tid);
+                setPendingTxRef(null);
+                setOrders(prev => prev.map(x => x.id === res.order.id ? { ...x, status: 'paid' } : x));
+                Alert.alert('✓ Payment confirmed', 'Your payment has been verified.');
+                return;
+              }
+            } catch (e) {
+              // ignore transient errors
+            }
+            if (attempts >= maxAttempts) {
+              clearInterval(tid);
+              setPendingTxRef(null);
+              Alert.alert('Payment pending', 'Payment not confirmed yet. Check My Orders later.');
+            }
+          }, interval);
+        })(result.txRef ?? '');
+        Alert.alert('Payment Opened', 'Complete the payment in your browser. We will verify it automatically and notify you when confirmed.', [{ text: 'OK' }]);
       }
     } catch (e: any) { Alert.alert('Purchase Error', e.message ?? 'Could not start purchase'); }
     finally { setPurchasing(false); }
@@ -845,6 +881,16 @@ export default function OliveShopScreen() {
     setOrdersLoading(true);
     try { setOrders(await getMyOrders()); } catch {}
     finally { setOrdersLoading(false); }
+    // subscribe to realtime order updates
+    try {
+      const sub = await import('../../lib/shopApi').then(m => m.subscribeToMyOrders((payload: any) => {
+        const ev = payload.eventType ?? payload.event;
+        const newRow = payload.new ?? payload.record ?? null;
+        if (!newRow) return;
+        setOrders(prev => prev.map(x => x.id === newRow.id ? { ...x, ...newRow } : x));
+      }));
+      setOrdersSub(sub);
+    } catch {}
   }
 
   async function handleVerify(o: ShopOrder) {
@@ -858,6 +904,14 @@ export default function OliveShopScreen() {
         Alert.alert('Not confirmed', 'Payment not found yet. Try again after completing payment.');
       }
     } catch (e: any) { Alert.alert('Error', e.message); }
+  }
+
+  function closeOrdersSheet() {
+    setShowOrders(false);
+    if (ordersSub?.unsubscribe) {
+      try { ordersSub.unsubscribe(); } catch {};
+      setOrdersSub(null);
+    }
   }
 
   async function handleDownload(o: ShopOrder) {
@@ -1100,10 +1154,10 @@ export default function OliveShopScreen() {
       </Modal>
 
       {/* My Orders modal */}
-      <Modal visible={showOrders} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowOrders(false)}>
+      <Modal visible={showOrders} animationType="slide" presentationStyle="pageSheet" onRequestClose={closeOrdersSheet}>
         <MyOrdersSheet
           orders={orders} loading={ordersLoading}
-          onClose={() => setShowOrders(false)}
+          onClose={closeOrdersSheet}
           onDownload={handleDownload}
           onVerify={handleVerify}
         />
