@@ -12,6 +12,8 @@ import {
   UIManager,
   Platform,
   Animated,
+  Alert,
+  Keyboard,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -20,8 +22,10 @@ import type { BibleVersion } from "./BibleHomeScreen";
 import { loadChapterVerses } from "../../data/bibleLoader";
 import { supabase } from "../../lib/supabase";
 import { explainVerse, rateVerseExplanation } from "../../lib/api";
+import { applyLocalSpeechCorrections } from "../../lib/localSpeechCorrector";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import FloatingNotesWidget from "../../components/FloatingNotesWidget";
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 
 if (Platform.OS === "android") {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -136,6 +140,8 @@ export default function ChapterReaderScreen({ route }: Props) {
   const [selectedVerse, setSelectedVerse] = useState<number | null>(null);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
+  const [interimText, setInterimText] = useState("");
   const [explanation, setExplanation] = useState<string | null>(null);
   const [supportingScriptures, setSupportingScriptures] = useState<{ reference: string; note: string }[]>([]);
   const [loadingExplanation, setLoadingExplanation] = useState(false);
@@ -144,6 +150,8 @@ export default function ChapterReaderScreen({ route }: Props) {
   const [userRating, setUserRating] = useState<number | null>(null);
   const [submittingRating, setSubmittingRating] = useState(false);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const recognitionRetryRef = useRef(0);
+  const interimBufferRef = useRef<string>("");
 
   // ── Study mode state ─────────────────────────────────────────────────────────
   const [studyMode, setStudyMode] = useState(false);
@@ -172,6 +180,69 @@ export default function ChapterReaderScreen({ route }: Props) {
     anim.start();
     return () => anim.stop();
   }, [studyMode]);
+
+  // ── Speech recognition for verse notes ────────────────────────────────────────
+
+  useSpeechRecognitionEvent("start", () => {
+    setRecognizing(true);
+    recognitionRetryRef.current = 0;
+  });
+
+  useSpeechRecognitionEvent("end", () => {
+    setRecognizing(false);
+    setInterimText("");
+    interimBufferRef.current = "";
+  });
+
+  useSpeechRecognitionEvent("result", (event) => {
+    let fullTranscript = "";
+    for (let i = 0; i < event.results.length; i++) {
+      fullTranscript += event.results[i]?.transcript ?? "";
+    }
+
+    const correctedTranscript = applyLocalSpeechCorrections(fullTranscript);
+
+    if (event.isFinal && correctedTranscript.trim()) {
+      setNoteText((prev) => {
+        const trimmed = correctedTranscript.trim();
+        if (!trimmed) return prev;
+        const needsSpace = prev.length > 0 && !prev.endsWith(" ") && !prev.endsWith("\n");
+        const needsPeriod = !trimmed.match(/[.!?]$/);
+        const withPunctuation = needsPeriod ? trimmed + "." : trimmed;
+        return prev + (needsSpace ? " " : "") + withPunctuation;
+      });
+      setInterimText("");
+      interimBufferRef.current = "";
+    } else if (!event.isFinal) {
+      interimBufferRef.current = correctedTranscript;
+      setInterimText(correctedTranscript);
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+    console.warn("Speech recognition error:", event);
+    setInterimText("");
+    interimBufferRef.current = "";
+    
+    const isPermissionError = event && typeof event === "object" && 
+      ((event as any).error === "not-allowed" || (event as any).message?.includes("permission"));
+    
+    if (!isPermissionError && recognitionRetryRef.current < 3) {
+      recognitionRetryRef.current += 1;
+      setTimeout(() => {
+        if (recognizing) {
+          ExpoSpeechRecognitionModule.start({
+            lang: "en-US",
+            interimResults: true,
+            continuous: true,
+            maxAlternatives: 1,
+          });
+        }
+      }, 500);
+    } else {
+      setRecognizing(false);
+    }
+  });
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
@@ -287,12 +358,51 @@ export default function ChapterReaderScreen({ route }: Props) {
     setModalMode(null);
   }
 
+  async function toggleVoiceNote() {
+    if (recognizing) {
+      ExpoSpeechRecognitionModule.stop();
+      setRecognizing(false);
+    } else {
+      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!granted) {
+        Alert.alert(
+          "Microphone access needed",
+          "Go to Settings → The Living Olive and enable the microphone to use voice notes."
+        );
+        return;
+      }
+      try {
+        ExpoSpeechRecognitionModule.start({
+          lang: "en-US",
+          interimResults: true,
+          continuous: true,
+          maxAlternatives: 1,
+        });
+      } catch (err) {
+        console.error("Failed to start speech recognition:", err);
+      }
+    }
+  }
+
+  function formatNoteText(text: string): string {
+    if (!text.trim()) return "";
+    return text
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/([.!?])\s+(?=[A-Z])/g, "$1 ")
+      .replace(/([.!?])([A-Z])/g, "$1 $2");
+  }
+
   async function saveNote() {
     if (selectedVerse == null || !noteText.trim()) return;
     setSavingNote(true);
+    if (recognizing) ExpoSpeechRecognitionModule.stop();
     try {
       const { data } = await supabase.auth.getUser();
       if (!data.user) throw new Error("Not signed in");
+      
+      const formattedContent = formatNoteText(applyLocalSpeechCorrections(noteText));
+      
       await supabase.from("notes").insert({
         user_id: data.user.id,
         version: activeVersion,
@@ -300,14 +410,17 @@ export default function ChapterReaderScreen({ route }: Props) {
         book_name: bookName,
         chapter,
         verse: selectedVerse,
-        content: noteText.trim(),
+        content: formattedContent,
       });
       // Show indicator on the saved verse immediately without needing a reload
       setNoteVerses((prev) => ({
         ...prev,
-        [selectedVerse]: { content: noteText.trim(), title: null },
+        [selectedVerse]: { content: formattedContent, title: null },
       }));
+      setNoteText("");
+      setInterimText("");
       setModalMode(null);
+      Keyboard.dismiss();
     } finally {
       setSavingNote(false);
     }
@@ -626,23 +739,70 @@ export default function ChapterReaderScreen({ route }: Props) {
               <TextInput
                 style={styles.noteInput}
                 multiline
-                placeholder="Write your note…"
+                placeholder={
+                  recognizing
+                    ? "Listening… speak your note"
+                    : "Write your note or tap the mic to speak"
+                }
                 placeholderTextColor={colors.inkSoft}
                 value={noteText}
-                onChangeText={setNoteText}
-                autoFocus
+                onChangeText={recognizing ? undefined : setNoteText}
+                editable={!recognizing}
+                textAlignVertical="top"
               />
-              <Pressable
-                style={[styles.primaryButton, savingNote && { opacity: 0.6 }]}
-                onPress={saveNote}
-                disabled={savingNote}
-              >
-                {savingNote ? (
-                  <ActivityIndicator color={colors.white} />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Save note</Text>
-                )}
-              </Pressable>
+
+              {/* Live interim speech preview */}
+              {interimText !== "" && (
+                <View style={{ flexDirection: "row", alignItems: "flex-start", marginVertical: spacing.sm }}>
+                  <Text style={{ marginRight: spacing.sm }}>🎤</Text>
+                  <Text style={{ flex: 1, fontStyle: "italic", color: colors.inkSoft, fontSize: 14 }} numberOfLines={3}>
+                    {interimText}
+                  </Text>
+                </View>
+              )}
+
+              {recognizing && interimText === "" && (
+                <View style={{ flexDirection: "row", alignItems: "center", marginVertical: spacing.sm }}>
+                  <ActivityIndicator color={colors.olive} size="small" style={{ marginRight: 6 }} />
+                  <Text style={{ color: colors.olive, fontSize: 13 }}>Listening…</Text>
+                </View>
+              )}
+
+              <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md }}>
+                <Pressable
+                  style={[styles.primaryButton, { flex: 1 }]}
+                  onPress={toggleVoiceNote}
+                >
+                  <Ionicons
+                    name={recognizing ? "mic-outline" : "mic-off-outline"}
+                    size={16}
+                    color={colors.white}
+                    style={{ marginRight: spacing.sm }}
+                  />
+                  <Text style={styles.primaryButtonText}>
+                    {recognizing ? "Stop" : "Record"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.primaryButton, { flex: 1 }, savingNote && { opacity: 0.6 }]}
+                  onPress={saveNote}
+                  disabled={savingNote}
+                >
+                  {savingNote ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="checkmark-outline"
+                        size={16}
+                        color={colors.white}
+                        style={{ marginRight: spacing.sm }}
+                      />
+                      <Text style={styles.primaryButtonText}>Save</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
             </>
           )}
 

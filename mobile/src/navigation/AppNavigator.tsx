@@ -26,6 +26,7 @@ import NotificationAlarmScreen from "../screens/NotificationAlarmScreen";
 import BulletinScreen from "../screens/bulletins/BulletinScreen";
 import DonateScreen from "../screens/donate/DonateScreen";
 import OliveChatScreen from "../screens/community/OliveChatScreen";
+import ConnectionRequestsScreen from "../screens/community/ConnectionRequestsScreen";
 import OliveShopScreen from "../screens/shop/OliveShopScreen";
 import ChatRoomScreen from "../screens/community/ChatRoomScreen";
 import MembersScreen from "../screens/community/MembersScreen";
@@ -43,6 +44,7 @@ export type RootStackParamList = {
   Bulletin: undefined;
   Donate: undefined;
   OliveChat: undefined;
+  ConnectionRequests: undefined;
   OliveShop: undefined;
   ChatRoom: { roomId: string; roomName: string };
   CommunityMembers: undefined;
@@ -72,6 +74,10 @@ export default function AppNavigator() {
         desires?: string;
         prayerType?: string;
         previewText?: string;
+        roomId?: string;
+        postId?: string;
+        commentId?: string;
+        messageId?: string;
       };
 
       if (data.type === "devotion" || data.type === "prayer") {
@@ -109,6 +115,15 @@ export default function AppNavigator() {
           } else {
             navigate("Prayer");
           }
+        }
+        return;
+      }
+
+      if (data.type === "dm_message" || data.type === "message_request" || data.type === "comment" || data.type === "reply" || data.type === "post_like" || data.type === "new_post" || data.type === "tag") {
+        if (data.roomId) {
+          navigate("ChatRoom", { roomId: data.roomId, roomName: "Message" });
+        } else {
+          navigate("OliveChat");
         }
       }
     });
@@ -169,6 +184,11 @@ export default function AppNavigator() {
                 name="OliveChat"
                 component={OliveChatScreen}
                 options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="ConnectionRequests"
+                component={ConnectionRequestsScreen}
+                options={{ title: "Connection Requests" }}
               />
               <Stack.Screen
                 name="ChatRoom"

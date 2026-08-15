@@ -24,6 +24,7 @@ import { supabase } from "../../lib/supabase";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import { useRecording } from "../../context/RecordingContext";
 import type { SermonRecording } from "../../lib/sermonRecorder";
+import { applyLocalSpeechCorrections } from "../../lib/localSpeechCorrector";
 
 // General (non-verse) notes use these sentinels for the NOT NULL schema columns.
 const GENERAL_NOTE_BOOK_ID = 0;
@@ -269,35 +270,84 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
   const [recognizing, setRecognizing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoSavePending, setAutoSavePending] = useState(false);
+  const recognitionRetryRef = useRef(0);
+  const interimBufferRef = useRef<string>("");
+  const lastRecognitionTimeRef = useRef<number>(Date.now());
 
   // ── Speech recognition event handlers ─────────────────────────────────────
-  // useSpeechRecognitionEvent registers listeners as long as this component
-  // is mounted, so we check `open` inside the handlers to avoid side-effects
-  // when the composer is collapsed.
+  // Improved handlers with error recovery and continuous mode support
 
-  useSpeechRecognitionEvent("start", () => setRecognizing(true));
+  useSpeechRecognitionEvent("start", () => {
+    setRecognizing(true);
+    recognitionRetryRef.current = 0;
+    lastRecognitionTimeRef.current = Date.now();
+  });
 
   useSpeechRecognitionEvent("end", () => {
     setRecognizing(false);
     setInterimText("");
+    interimBufferRef.current = "";
   });
 
   useSpeechRecognitionEvent("result", (event) => {
-    const transcript = event.results[0]?.transcript ?? "";
-    if (event.isFinal) {
+    lastRecognitionTimeRef.current = Date.now();
+    
+    // Collect all results (interim + final)
+    let fullTranscript = "";
+    for (let i = 0; i < event.results.length; i++) {
+      fullTranscript += event.results[i]?.transcript ?? "";
+    }
+
+    const correctedTranscript = applyLocalSpeechCorrections(fullTranscript);
+
+    if (event.isFinal && correctedTranscript.trim()) {
+      // Format and add final result with proper spacing
       setNoteContent((prev) => {
+        const trimmed = correctedTranscript.trim();
+        if (!trimmed) return prev;
         const needsSpace = prev.length > 0 && !prev.endsWith(" ") && !prev.endsWith("\n");
-        return prev + (needsSpace ? " " : "") + transcript;
+        const needsPeriod = !trimmed.match(/[.!?]$/);
+        const withPunctuation = needsPeriod ? trimmed + "." : trimmed;
+        return prev + (needsSpace ? " " : "") + withPunctuation;
       });
       setInterimText("");
-    } else {
-      setInterimText(transcript);
+      interimBufferRef.current = "";
+    } else if (!event.isFinal) {
+      // Show live interim results with debounce
+      interimBufferRef.current = correctedTranscript;
+      setInterimText(correctedTranscript);
     }
   });
 
-  useSpeechRecognitionEvent("error", (_event) => {
-    setRecognizing(false);
+  useSpeechRecognitionEvent("error", (event) => {
+    console.warn("Speech recognition error:", event);
     setInterimText("");
+    interimBufferRef.current = "";
+    
+    // Auto-retry on recoverable errors (not permissions)
+    const isPermissionError = event && typeof event === "object" && 
+      ((event as any).error === "not-allowed" || (event as any).message?.includes("permission"));
+    
+    if (!isPermissionError && recognitionRetryRef.current < 3) {
+      recognitionRetryRef.current += 1;
+      setTimeout(() => {
+        if (recognizing) {
+          // Restart speech recognition to continue capturing
+          ExpoSpeechRecognitionModule.start({
+            lang: "en-US",
+            interimResults: true,
+            continuous: true,
+            maxAlternatives: 1,
+          });
+        }
+      }, 500);
+    } else {
+      setRecognizing(false);
+      if (isPermissionError) {
+        setError("Microphone permission denied. Check app settings.");
+      }
+    }
   });
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -305,6 +355,7 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
   async function toggleVoice() {
     if (recognizing) {
       ExpoSpeechRecognitionModule.stop();
+      setRecognizing(false);
     } else {
       const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!granted) {
@@ -314,12 +365,43 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
         );
         return;
       }
-      ExpoSpeechRecognitionModule.start({
-        lang: "en-US",
-        interimResults: true,
-        continuous: true,
-      });
+      try {
+        // Start continuous speech recognition with error recovery enabled
+        ExpoSpeechRecognitionModule.start({
+          lang: "en-US",
+          interimResults: true,
+          continuous: true,
+          maxAlternatives: 1,
+        });
+      } catch (err) {
+        console.error("Failed to start speech recognition:", err);
+        setError("Failed to start microphone. Please try again.");
+      }
     }
+  }
+
+  // Format and cleanup transcribed text
+  function formatTranscriptedText(text: string): string {
+    if (!text.trim()) return "";
+    
+    // Split into sentences
+    let formatted = text
+      .trim()
+      .replace(/\s+/g, " ") // Normalize whitespace
+      .replace(/([.!?])\s+(?=[A-Z])/g, "$1\n") // New paragraph on sentence end
+      .replace(/([.!?])([A-Z])/g, "$1 $2"); // Ensure space after punctuation
+    
+    // Ensure starts with capital
+    if (formatted.length > 0) {
+      formatted = formatted.charAt(0).toUpperCase() + formatted.slice(1);
+    }
+    
+    // Ensure ends with punctuation
+    if (!formatted.match(/[.!?]$/)) {
+      formatted += ".";
+    }
+    
+    return formatted;
   }
 
   async function save() {
@@ -327,9 +409,14 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
     setSaving(true);
     setError(null);
     if (recognizing) ExpoSpeechRecognitionModule.stop();
+    
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not signed in");
+      
+      // Format the transcribed text
+      const formattedContent = formatTranscriptedText(applyLocalSpeechCorrections(noteContent));
+      
       const { data, error: insertError } = await supabase
         .from("notes")
         .insert({
@@ -339,7 +426,7 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
           book_name: GENERAL_NOTE_BOOK_NAME,
           chapter: 0,
           verse: null,
-          content: noteContent.trim(),
+          content: formattedContent,
           title: noteTitle.trim() || null,
           verse_ref: noteVerseRef.trim() || null,
         })
@@ -353,8 +440,8 @@ function NoteComposer({ onSaved }: { onSaved: (note: NoteRow) => void }) {
       setInterimText("");
       setOpen(false);
       Keyboard.dismiss();
-    } catch {
-      setError("Couldn't save note. Please try again.");
+    } catch (err: any) {
+      setError(err?.message || "Couldn't save note. Please try again.");
     } finally {
       setSaving(false);
     }

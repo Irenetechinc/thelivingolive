@@ -23,6 +23,7 @@ import {
   type ChatMessage,
 } from '../../lib/communityApi';
 import { supabase } from '../../lib/supabase';
+import { MessageSkeleton } from '../../components/SkeletonCard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatRoom'>;
 
@@ -83,40 +84,48 @@ const vp = StyleSheet.create({
 });
 
 // ── Message bubble ─────────────────────────────────────────────────────────────
-function Bubble({ msg, isMine, showAvatar, seenByPartner }: { msg: ChatMessage; isMine: boolean; showAvatar: boolean; seenByPartner?: boolean }) {
+function Bubble({ msg, isMine, showAvatar, seenByPartner, onReply }: { msg: ChatMessage; isMine: boolean; showAvatar: boolean; seenByPartner?: boolean; onReply?: (message: ChatMessage) => void }) {
   const timeStr = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return (
-    <View style={[bb.row, isMine && bb.rowMine]}>
-      {!isMine && showAvatar
-        ? <View style={bb.avatarSlot}><Avatar url={msg.sender.avatarUrl} name={msg.sender.name} size={28} /></View>
-        : <View style={bb.avatarSlot} />}
-      <View style={[bb.bubble, isMine ? bb.bubbleMine : bb.bubbleOther, msg.type === 'image' && bb.imageBubble]}>
-        {!isMine && showAvatar && <Text style={bb.senderName}>{msg.sender.name}</Text>}
-        {msg.type === 'text' && <Text style={[bb.bodyText, isMine && bb.bodyTextMine]}>{msg.body}</Text>}
-        {msg.type === 'image' && msg.mediaUrl && (
-          <Image source={{ uri: msg.mediaUrl }} style={bb.image} resizeMode="cover" />
-        )}
-        {msg.type === 'voice' && msg.mediaUrl && (
-          <VoicePlayer uri={msg.mediaUrl} duration={msg.durationSeconds} />
-        )}
-        {msg.type === 'post_share' && (
-          <View style={bb.shareCard}>
-            <Text style={bb.shareLabel}>Shared a post</Text>
-            {msg.body && <Text style={[bb.bodyText, { marginTop: 4 }]} numberOfLines={3}>{msg.body}</Text>}
-          </View>
-        )}
-        <View style={bb.timeRow}>
-          <Text style={[bb.time, isMine && bb.timeMine]}>{timeStr}</Text>
-          {isMine && (
-            <View style={bb.seenIndicator}>
-              {seenByPartner
-                ? <Ionicons name="checkmark-done" size={13} color="#7EC8E3" />
-                : <Ionicons name="checkmark-done" size={13} color="rgba(255,255,255,0.45)" />}
+    <Pressable onLongPress={() => onReply?.(msg)}>
+      <View style={[bb.row, isMine && bb.rowMine]}>
+        {!isMine && showAvatar
+          ? <View style={bb.avatarSlot}><Avatar url={msg.sender.avatarUrl} name={msg.sender.name} size={28} /></View>
+          : <View style={bb.avatarSlot} />}
+        <View style={[bb.bubble, isMine ? bb.bubbleMine : bb.bubbleOther, msg.type === 'image' && bb.imageBubble]}>
+          {!isMine && showAvatar && <Text style={bb.senderName}>{msg.sender.name}</Text>}
+          {msg.replyTo && (
+            <View style={[bb.replyChip, isMine && bb.replyChipMine]}>
+              <Text style={[bb.replyLabel, isMine && bb.replyLabelMine]}>Replying to {msg.replyTo.sender.name}</Text>
+              <Text style={[bb.replyText, isMine && bb.replyTextMine]} numberOfLines={1}>{msg.replyTo.body ?? (msg.replyTo.type === 'image' ? 'Image' : msg.replyTo.type === 'voice' ? 'Voice note' : 'Message')}</Text>
             </View>
           )}
+          {msg.type === 'text' && <Text style={[bb.bodyText, isMine && bb.bodyTextMine]}>{msg.body}</Text>}
+          {msg.type === 'image' && msg.mediaUrl && (
+            <Image source={{ uri: msg.mediaUrl }} style={bb.image} resizeMode="cover" />
+          )}
+          {msg.type === 'voice' && msg.mediaUrl && (
+            <VoicePlayer uri={msg.mediaUrl} duration={msg.durationSeconds} />
+          )}
+          {msg.type === 'post_share' && (
+            <View style={bb.shareCard}>
+              <Text style={bb.shareLabel}>Shared a post</Text>
+              {msg.body && <Text style={[bb.bodyText, { marginTop: 4 }]} numberOfLines={3}>{msg.body}</Text>}
+            </View>
+          )}
+          <View style={bb.timeRow}>
+            <Text style={[bb.time, isMine && bb.timeMine]}>{timeStr}</Text>
+            {isMine && (
+              <View style={bb.seenIndicator}>
+                {seenByPartner
+                  ? <Ionicons name="checkmark-done" size={13} color="#7EC8E3" />
+                  : <Ionicons name="checkmark-done" size={13} color="rgba(255,255,255,0.45)" />}
+              </View>
+            )}
+          </View>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 const bb = StyleSheet.create({
@@ -135,6 +144,12 @@ const bb = StyleSheet.create({
   time: { fontSize: 10, color: colors.inkFaint },
   timeMine: { color: 'rgba(255,255,255,0.55)' },
   seenIndicator: { justifyContent: 'center' },
+  replyChip: { backgroundColor: 'rgba(24, 68, 42, 0.08)', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 6, marginBottom: 6 },
+  replyChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  replyLabel: { fontSize: 9, color: colors.olive, fontWeight: '700', marginBottom: 2 },
+  replyLabelMine: { color: 'rgba(255,255,255,0.8)' },
+  replyText: { fontSize: 11, color: colors.inkSoft },
+  replyTextMine: { color: 'rgba(255,255,255,0.8)' },
   shareCard: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: radii.sm, padding: spacing.sm, marginBottom: 4 },
   shareLabel: { fontSize: 11, fontWeight: '700', color: colors.goldLight, marginBottom: 2 },
 });
@@ -209,6 +224,7 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [sending, setSending] = useState(false);
   const [myId, setMyId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -273,14 +289,52 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
     setLoadingMore(false);
   }
 
+  function upsertMessage(next: ChatMessage) {
+    setMessages(prev => {
+      const withoutDup = prev.filter(m => m.id !== next.id);
+      if (withoutDup.some(m => m.id === next.id)) return withoutDup;
+      return [...withoutDup, next];
+    });
+  }
+
   async function send() {
     const body = text.trim();
     if (!body) return;
+    const tempId = `temp:${Date.now()}:${Math.random()}`;
+    const optimistic: ChatMessage = {
+      id: tempId,
+      sender: {
+        userId: myId ?? 'me',
+        name: 'You',
+        avatarUrl: null,
+      },
+      type: 'text',
+      body,
+      mediaUrl: null,
+      durationSeconds: null,
+      sharedPostId: null,
+      sharedPost: null,
+      replyToId: replyTo?.id ?? null,
+      replyTo: replyTo ? {
+        id: replyTo.id,
+        sender: replyTo.sender,
+        body: replyTo.body,
+        type: replyTo.type,
+        mediaUrl: replyTo.mediaUrl,
+      } : null,
+      createdAt: new Date().toISOString(),
+      seenByPartner: false,
+    };
+    setMessages(prev => [...prev, optimistic]);
     setText('');
+    setReplyTo(null);
     setSending(true);
     try {
-      const msg = await sendMessage(roomId, { type: 'text', body });
-      setMessages(prev => [...prev, msg]);
+      const msg = await sendMessage(roomId, { type: 'text', body, replyToId: replyTo?.id ?? null });
+      setMessages(prev => {
+        const withoutTemp = prev.filter(m => m.id !== tempId);
+        return prev.some(m => m.id === msg.id) ? withoutTemp : [...withoutTemp, msg];
+      });
       flatRef.current?.scrollToEnd({ animated: true });
     } catch { Alert.alert('Error', 'Message could not be sent. Please try again.'); setText(body); }
     finally { setSending(false); }
@@ -289,28 +343,79 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
   async function sendImage() {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
     if (res.canceled || !res.assets[0]) return;
+    const tempId = `temp:${Date.now()}:${Math.random()}`;
+    const optimistic: ChatMessage = {
+      id: tempId,
+      sender: { userId: myId ?? 'me', name: 'You', avatarUrl: null },
+      type: 'image',
+      body: null,
+      mediaUrl: res.assets[0].uri,
+      durationSeconds: null,
+      sharedPostId: null,
+      sharedPost: null,
+      replyToId: replyTo?.id ?? null,
+      replyTo: replyTo ? { id: replyTo.id, sender: replyTo.sender, body: replyTo.body, type: replyTo.type, mediaUrl: replyTo.mediaUrl } : null,
+      createdAt: new Date().toISOString(),
+      seenByPartner: false,
+    };
+    setMessages(prev => [...prev, optimistic]);
+    setReplyTo(null);
     setUploading(true);
     try {
       const url = await uploadMessageMedia(roomId, res.assets[0].uri, 'image');
-      const msg = await sendMessage(roomId, { type: 'image', mediaUrl: url });
-      setMessages(prev => [...prev, msg]);
+      const msg = await sendMessage(roomId, { type: 'image', mediaUrl: url, replyToId: replyTo?.id ?? null });
+      setMessages(prev => {
+        const withoutTemp = prev.filter(m => m.id !== tempId);
+        return prev.some(m => m.id === msg.id) ? withoutTemp : [...withoutTemp, msg];
+      });
       flatRef.current?.scrollToEnd({ animated: true });
     } catch { Alert.alert('Upload error', 'Upload failed. Please try again.'); }
     finally { setUploading(false); }
   }
 
   async function handleVoice(uri: string, duration: number) {
+    const tempId = `temp:${Date.now()}:${Math.random()}`;
+    const optimistic: ChatMessage = {
+      id: tempId,
+      sender: { userId: myId ?? 'me', name: 'You', avatarUrl: null },
+      type: 'voice',
+      body: null,
+      mediaUrl: uri,
+      durationSeconds: duration,
+      sharedPostId: null,
+      sharedPost: null,
+      replyToId: replyTo?.id ?? null,
+      replyTo: replyTo ? { id: replyTo.id, sender: replyTo.sender, body: replyTo.body, type: replyTo.type, mediaUrl: replyTo.mediaUrl } : null,
+      createdAt: new Date().toISOString(),
+      seenByPartner: false,
+    };
+    setMessages(prev => [...prev, optimistic]);
+    setReplyTo(null);
     setUploading(true);
     try {
       const url = await uploadMessageMedia(roomId, uri, 'voice');
-      const msg = await sendMessage(roomId, { type: 'voice', mediaUrl: url, durationSeconds: duration });
-      setMessages(prev => [...prev, msg]);
+      const msg = await sendMessage(roomId, { type: 'voice', mediaUrl: url, durationSeconds: duration, replyToId: replyTo?.id ?? null });
+      setMessages(prev => {
+        const withoutTemp = prev.filter(m => m.id !== tempId);
+        return prev.some(m => m.id === msg.id) ? withoutTemp : [...withoutTemp, msg];
+      });
       flatRef.current?.scrollToEnd({ animated: true });
     } catch { Alert.alert('Upload error', 'Upload failed. Please try again.'); }
     finally { setUploading(false); }
   }
 
-  if (loading) return <View style={{ flex: 1, backgroundColor: colors.parchment, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.gold} /></View>;
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.parchment, paddingTop: 20 }}>
+        <View style={{ paddingHorizontal: spacing.md, gap: 10 }}>
+          <MessageSkeleton isMine={false} />
+          <MessageSkeleton isMine={true} />
+          <MessageSkeleton isMine={false} />
+          <MessageSkeleton isMine={true} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#F2EDE0' }} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 80}>
@@ -325,10 +430,8 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
         renderItem={({ item: msg, index }) => {
           const isMine = msg.sender.userId === myId;
           const showAvatar = !isMine && (index === 0 || messages[index - 1]?.sender.userId !== msg.sender.userId);
-          // Seen indicator: message was sent before partner's last_read_at
-          const seenByPartner = isMine && partnerLastReadAt != null
-            && new Date(msg.createdAt) <= new Date(partnerLastReadAt);
-          return <Bubble msg={msg} isMine={isMine} showAvatar={showAvatar} seenByPartner={seenByPartner} />;
+          const seenByPartner = isMine && partnerLastReadAt != null && new Date(msg.createdAt) <= new Date(partnerLastReadAt);
+          return <Bubble msg={msg} isMine={isMine} showAvatar={showAvatar} seenByPartner={seenByPartner} onReply={setReplyTo} />;
         }}
         ListEmptyComponent={<View style={{ alignItems: 'center', paddingTop: 60 }}><Text style={{ fontSize: 40, marginBottom: 12 }}>💬</Text><Text style={{ color: colors.inkFaint, fontSize: 14 }}>No messages yet. Say hello!</Text></View>}
         onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: false })}
@@ -337,6 +440,15 @@ export default function ChatRoomScreen({ route, navigation }: Props) {
       {/* Input bar */}
       <View style={[inp.bar, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
         {uploading && <View style={inp.uploadingBanner}><ActivityIndicator size="small" color={colors.gold} /><Text style={inp.uploadingText}>Uploading…</Text></View>}
+        {replyTo && (
+          <View style={inp.replyBar}>
+            <View style={inp.replyHint}>
+              <Text style={inp.replyLabel}>Replying to {replyTo.sender.name}</Text>
+              <Text style={inp.replyPreview} numberOfLines={1}>{replyTo.body ?? (replyTo.type === 'image' ? 'Image' : replyTo.type === 'voice' ? 'Voice note' : 'Message')}</Text>
+            </View>
+            <Pressable onPress={() => setReplyTo(null)} hitSlop={8}><Ionicons name="close" size={18} color={colors.inkSoft} /></Pressable>
+          </View>
+        )}
         <View style={inp.row}>
           <Pressable style={inp.attachBtn} onPress={sendImage}>
             <Ionicons name="image-outline" size={22} color={colors.inkSoft} />
@@ -367,6 +479,10 @@ const inp = StyleSheet.create({
   bar: { backgroundColor: colors.white, borderTopWidth: 1, borderTopColor: colors.parchmentDark, paddingTop: spacing.sm, paddingHorizontal: spacing.md },
   uploadingBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: spacing.xs },
   uploadingText: { fontSize: 12, color: colors.inkFaint },
+  replyBar: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.parchment, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
+  replyHint: { flex: 1 },
+  replyLabel: { fontSize: 10, fontWeight: '700', color: colors.olive },
+  replyPreview: { fontSize: 12, color: colors.inkSoft },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
   attachBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   attachIcon: { fontSize: 22 },

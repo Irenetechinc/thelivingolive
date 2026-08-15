@@ -1185,31 +1185,31 @@ export default function BulletinScreen({ navigation }: Props) {
               <View style={styles.socialStripRow}>
                 {extras.social.website && (
                   <Pressable style={styles.socialPill} onPress={() => Linking.openURL(extras.social.website!)}>
-                    <Ionicons name="globe-outline" size={20} color="#A8D5A2" />
+                    <Ionicons name="globe-outline" size={18} color="#A8D5A2" />
                     <Text style={styles.socialPillText}>Website</Text>
                   </Pressable>
                 )}
                 {extras.social.facebook && (
                   <Pressable style={[styles.socialPill, { backgroundColor: "rgba(24,119,242,0.18)" }]} onPress={() => Linking.openURL(extras.social.facebook!)}>
-                    <Ionicons name="logo-facebook" size={20} color="#6BA3F5" />
+                    <Ionicons name="logo-facebook" size={18} color="#6BA3F5" />
                     <Text style={styles.socialPillText}>Facebook</Text>
                   </Pressable>
                 )}
                 {extras.social.instagram && (
                   <Pressable style={[styles.socialPill, { backgroundColor: "rgba(225,48,108,0.18)" }]} onPress={() => Linking.openURL(extras.social.instagram!)}>
-                    <Ionicons name="logo-instagram" size={20} color="#F06090" />
+                    <Ionicons name="logo-instagram" size={18} color="#F06090" />
                     <Text style={styles.socialPillText}>Instagram</Text>
                   </Pressable>
                 )}
                 {extras.social.twitter && (
                   <Pressable style={[styles.socialPill, { backgroundColor: "rgba(29,161,242,0.18)" }]} onPress={() => Linking.openURL(extras.social.twitter!)}>
-                    <Ionicons name="logo-twitter" size={20} color="#5BB8F5" />
+                    <Ionicons name="logo-twitter" size={18} color="#5BB8F5" />
                     <Text style={styles.socialPillText}>Twitter</Text>
                   </Pressable>
                 )}
                 {extras.social.youtube && (
                   <Pressable style={[styles.socialPill, { backgroundColor: "rgba(255,0,0,0.18)" }]} onPress={() => Linking.openURL(extras.social.youtube!)}>
-                    <Ionicons name="logo-youtube" size={20} color="#FF6060" />
+                    <Ionicons name="logo-youtube" size={18} color="#FF6060" />
                     <Text style={styles.socialPillText}>YouTube</Text>
                   </Pressable>
                 )}
@@ -1222,9 +1222,9 @@ export default function BulletinScreen({ navigation }: Props) {
         <View style={[styles.section, { marginBottom: 0 }]}>
           <Text style={styles.sectionLabel}>EXPLORE</Text>
           <View style={styles.exploreRow}>
-            <ExploreBtn icon="📖" label="Bible" onPress={() => navigation.navigate("BibleHome" as any)} />
-            <ExploreBtn icon="🙏" label="Prayer" onPress={() => navigation.navigate("Prayer" as any)} />
-            <ExploreBtn icon="🎵" label="Hymns" onPress={() => navigation.navigate("HymnsList" as any)} />
+            <ExploreBtn icon={<Ionicons name="book-outline" size={28} color={colors.olive} />} label="Bible" onPress={() => navigation.navigate("BibleHome" as any)} />
+            <ExploreBtn icon={<Ionicons name="sparkles-outline" size={28} color={colors.olive} />} label="Prayer" onPress={() => navigation.navigate("Prayer" as any)} />
+            <ExploreBtn icon={<Ionicons name="musical-notes-outline" size={28} color={colors.olive} />} label="Hymns" onPress={() => navigation.navigate("HymnsList" as any)} />
           </View>
         </View>
 
@@ -1245,10 +1245,10 @@ function SocialLink({ label, url }: { label: string; url: string }) {
   );
 }
 
-function ExploreBtn({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
+function ExploreBtn({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress: () => void }) {
   return (
     <Pressable style={({ pressed }) => [styles.exploreBtn, pressed && styles.pressed]} onPress={onPress}>
-      <Text style={{ fontSize: 30, marginBottom: 6 }}>{icon}</Text>
+      <View style={{ marginBottom: 6 }}>{icon}</View>
       <Text style={styles.exploreBtnLabel}>{label}</Text>
     </Pressable>
   );

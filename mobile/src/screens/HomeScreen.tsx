@@ -72,6 +72,14 @@ const CARDS: CardDef[] = [
     accent: "#6BAEC9",
   },
   {
+    key: "ConnectionRequests",
+    title: "Connections",
+    description: "Review and respond to connection requests",
+    symbol: "🤝",
+    gradient: ["#2F4A3C", "#5D7C64"],
+    accent: "#A9CFB1",
+  },
+  {
     key: "OliveChat",
     title: "Olive Chat",
     description: "Community feed, group chat & direct messages",

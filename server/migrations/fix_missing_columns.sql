@@ -82,6 +82,13 @@ CREATE POLICY "users_see_own_requests" ON public.message_requests
     auth.uid() = sender_id OR auth.uid() = receiver_id
   );
 
+-- ── chat_messages: reply support ────────────────────────────────────────────
+ALTER TABLE public.chat_messages
+  ADD COLUMN IF NOT EXISTS reply_to_id uuid REFERENCES public.chat_messages(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS chat_messages_reply_idx
+  ON public.chat_messages(room_id, reply_to_id, created_at DESC);
+
 -- ── bulletin_likes / bulletin_comments: ensure they exist ────────────────────
 CREATE TABLE IF NOT EXISTS public.bulletin_likes (
   bulletin_id uuid NOT NULL,

@@ -35,9 +35,32 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
     if (visible) {
       setQuery('');
       setResults([]);
+      setConnections({});
       setTimeout(() => inputRef.current?.focus(), 250);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!results.length) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        results.map(async (u) => {
+          if (u.id === myUserId) return [u.id, null] as const;
+          try {
+            const status = await getConnectionStatus(u.id);
+            return [u.id, status] as const;
+          } catch {
+            return [u.id, null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const next = Object.fromEntries(entries.filter(([, v]) => v));
+      setConnections(prev => ({ ...prev, ...next }));
+    })();
+    return () => { cancelled = true; };
+  }, [results, myUserId]);
 
   function onChangeText(text: string) {
     setQuery(text);
@@ -61,7 +84,19 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
   async function handleConnect(userId: string) {
     try {
       const c = await sendConnectionRequest(userId);
-      setConnections(prev => ({ ...prev, [userId]: c }));
+      setConnections(prev => ({
+        ...prev,
+        [userId]: {
+          ...prev[userId],
+          id: c.id || prev[userId]?.id || '',
+          userId,
+          name: c.name || prev[userId]?.name || 'Member',
+          avatarUrl: c.avatarUrl ?? prev[userId]?.avatarUrl ?? null,
+          status: c.status || 'pending',
+          requesterId: c.requesterId,
+          createdAt: c.createdAt,
+        },
+      }));
     } catch {
       // silent
     }
@@ -125,7 +160,13 @@ export default function PeopleSearch({ visible, myUserId, onClose, onViewProfile
                       <Text style={ps.youText}>You</Text>
                     </View>
                   ) : !isConnected && !isPending ? (
-                    <Pressable style={ps.connectBtn} onPress={() => handleConnect(u.id)}>
+                    <Pressable
+                      style={ps.connectBtn}
+                      onPress={(event) => {
+                        event?.stopPropagation?.();
+                        handleConnect(u.id);
+                      }}
+                    >
                       <Ionicons name="person-add-outline" size={14} color={colors.olive} />
                       <Text style={ps.connectBtnText}>Connect</Text>
                     </Pressable>

@@ -31,6 +31,12 @@ export type UserProfile = {
   education: string | null;
   gender: string | null;
   website: string | null;
+  facebookUrl: string | null;
+  instagramUrl: string | null;
+  twitterUrl: string | null;
+  youtubeUrl: string | null;
+  linkedinUrl: string | null;
+  tiktokUrl: string | null;
   dobPublic: boolean;
   connectionCount?: number;
 };
@@ -47,6 +53,32 @@ export type Story = {
   createdAt: string;
   viewCount: number;
   seenByMe: boolean;
+};
+
+export type CommunityReel = {
+  id: string;
+  userId: string;
+  author: Author;
+  caption: string | null;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  visibility: 'public' | 'friends' | 'private';
+  genre: string;
+  likeCount: number;
+  commentCount: number;
+  viewCount: number;
+  watchTimeSeconds: number;
+  trendingScore: number;
+  createdAt: string;
+  liked: boolean;
+};
+
+export type CommunityReelComment = {
+  id: string;
+  reelId: string;
+  author: Author;
+  body: string;
+  createdAt: string;
 };
 
 export type Connection = {
@@ -106,6 +138,14 @@ export type ChatMessage = {
   durationSeconds: number | null;
   sharedPostId: string | null;
   sharedPost: { id: string; body: string | null; thumbnailUrl: string | null } | null;
+  replyToId?: string | null;
+  replyTo?: {
+    id: string;
+    sender: Author;
+    body: string | null;
+    type: 'text' | 'image' | 'voice' | 'post_share';
+    mediaUrl: string | null;
+  } | null;
   createdAt: string;
   seenByPartner?: boolean;
 };
@@ -226,6 +266,12 @@ function mapProfile(p: any, extra?: { email?: string }): UserProfile {
     education: p.education ?? null,
     gender: p.gender ?? null,
     website: p.website ?? null,
+    facebookUrl: p.facebook_url ?? null,
+    instagramUrl: p.instagram_url ?? null,
+    twitterUrl: p.twitter_url ?? null,
+    youtubeUrl: p.youtube_url ?? null,
+    linkedinUrl: p.linkedin_url ?? null,
+    tiktokUrl: p.tiktok_url ?? null,
     dobPublic: p.dob_public ?? false,
     connectionCount: p.connectionCount ?? 0,
     postCount: p.postCount ?? undefined,
@@ -246,7 +292,8 @@ export async function updateProfile(updates: {
   displayName?: string; bio?: string; dateOfBirth?: string;
   username?: string; churchAffiliation?: string; location?: string;
   state?: string; country?: string; education?: string;
-  gender?: string; website?: string; dobPublic?: boolean;
+  gender?: string; website?: string; facebookUrl?: string; instagramUrl?: string;
+  twitterUrl?: string; youtubeUrl?: string; linkedinUrl?: string; tiktokUrl?: string; dobPublic?: boolean;
 }): Promise<void> {
   await apiCall('/api/community/profile', 'PUT', updates);
 }
@@ -338,7 +385,10 @@ export async function getRooms(): Promise<ChatRoom[]> {
 
 export async function getOrCreateDM(targetUserId: string): Promise<{ roomId: string; isNewRequest: boolean }> {
   const r = await apiCall<any>('/api/community/rooms/dm', 'POST', { targetUserId });
-  return { roomId: r.roomId as string, isNewRequest: r.isNewRequest ?? false };
+  return {
+    roomId: r.roomId as string,
+    isNewRequest: r.isNewRequest ?? r.requestPending ?? false,
+  };
 }
 
 export async function getRoomMessages(roomId: string, before?: string): Promise<ChatMessage[]> {
@@ -353,6 +403,14 @@ export async function getRoomMessages(roomId: string, before?: string): Promise<
     durationSeconds: m.duration_seconds ?? null,
     sharedPostId: m.shared_post_id ?? null,
     sharedPost: m.sharedPost ?? null,
+    replyToId: m.reply_to_id ?? m.replyToId ?? null,
+    replyTo: m.replyTo ? {
+      id: m.replyTo.id,
+      sender: { userId: m.replyTo.sender.userId, name: m.replyTo.sender.name, avatarUrl: m.replyTo.sender.avatarUrl ?? null },
+      body: m.replyTo.body ?? null,
+      type: m.replyTo.type,
+      mediaUrl: m.replyTo.mediaUrl ?? null,
+    } : null,
     createdAt: m.created_at,
   }));
 }
@@ -368,7 +426,7 @@ export async function getRoomPartnerLastRead(roomId: string): Promise<string | n
 
 export async function sendMessage(roomId: string, payload: {
   type: 'text' | 'image' | 'voice' | 'post_share';
-  body?: string; mediaUrl?: string; durationSeconds?: number; sharedPostId?: string;
+  body?: string; mediaUrl?: string; durationSeconds?: number; sharedPostId?: string; replyToId?: string | null;
 }): Promise<ChatMessage> {
   const r = await apiCall<any>(`/api/community/rooms/${roomId}/messages`, 'POST', payload);
   const m = r.message;
@@ -376,7 +434,16 @@ export async function sendMessage(roomId: string, payload: {
     id: m.id, sender: { userId: m.sender.userId, name: m.sender.name, avatarUrl: m.sender.avatarUrl ?? null },
     type: m.type, body: m.body ?? null, mediaUrl: m.media_url ?? null,
     durationSeconds: m.duration_seconds ?? null, sharedPostId: m.shared_post_id ?? null,
-    sharedPost: m.sharedPost ?? null, createdAt: m.created_at,
+    sharedPost: m.sharedPost ?? null,
+    replyToId: m.reply_to_id ?? m.replyToId ?? null,
+    replyTo: m.replyTo ? {
+      id: m.replyTo.id,
+      sender: { userId: m.replyTo.sender.userId, name: m.replyTo.sender.name, avatarUrl: m.replyTo.sender.avatarUrl ?? null },
+      body: m.replyTo.body ?? null,
+      type: m.replyTo.type,
+      mediaUrl: m.replyTo.mediaUrl ?? null,
+    } : null,
+    createdAt: m.created_at,
   };
 }
 
@@ -570,7 +637,7 @@ export function subscribeToMessageRequests(
         event: 'INSERT',
         schema: 'public',
         table: 'message_requests',
-        filter: `to_user_id=eq.${userId}`,
+        filter: `receiver_id=eq.${userId}`,
       },
       () => onRequest()
     )
@@ -617,6 +684,107 @@ export async function deleteStory(storyId: string): Promise<void> {
   await apiCall(`/api/community/stories/${storyId}`, 'DELETE');
 }
 
+// ── Reels ─────────────────────────────────────────────────────────────────────
+
+export async function getReels(): Promise<CommunityReel[]> {
+  const r = await apiCall<any>('/api/community/reels');
+  return (r.reels ?? []).map((reel: any): CommunityReel => ({
+    id: reel.id,
+    userId: reel.userId ?? reel.user_id,
+    author: {
+      userId: reel.author?.userId ?? reel.user_id,
+      name: reel.author?.name ?? reel.authorName ?? 'Member',
+      avatarUrl: reel.author?.avatarUrl ?? reel.authorAvatarUrl ?? null,
+    },
+    caption: reel.caption ?? null,
+    videoUrl: reel.videoUrl ?? reel.video_url,
+    thumbnailUrl: reel.thumbnailUrl ?? reel.thumbnail_url ?? null,
+    visibility: reel.visibility ?? 'public',
+    genre: reel.genre ?? 'general',
+    likeCount: reel.likeCount ?? reel.like_count ?? 0,
+    commentCount: reel.commentCount ?? reel.comment_count ?? 0,
+    viewCount: reel.viewCount ?? reel.view_count ?? 0,
+    watchTimeSeconds: reel.watchTimeSeconds ?? reel.watch_time_seconds ?? 0,
+    trendingScore: reel.trendingScore ?? reel.trending_score ?? 0,
+    createdAt: reel.createdAt ?? reel.created_at,
+    liked: reel.liked ?? false,
+  }));
+}
+
+export async function uploadReelMedia(uri: string, mimeType: string): Promise<{ url: string; thumbnailUrl?: string }> {
+  return uploadFileWithMeta('/api/community/reels/upload', uri, mimeType);
+}
+
+export async function createReel(payload: {
+  videoUrl: string;
+  thumbnailUrl?: string;
+  caption?: string;
+  visibility?: 'public' | 'friends' | 'private';
+  genre?: string;
+}): Promise<CommunityReel> {
+  const r = await apiCall<any>('/api/community/reels', 'POST', payload);
+  return {
+    id: r.reel.id,
+    userId: r.reel.userId ?? r.reel.user_id,
+    author: {
+      userId: r.reel.author?.userId ?? r.reel.userId ?? r.reel.user_id,
+      name: r.reel.author?.name ?? r.reel.authorName ?? 'Member',
+      avatarUrl: r.reel.author?.avatarUrl ?? r.reel.authorAvatarUrl ?? null,
+    },
+    caption: r.reel.caption ?? null,
+    videoUrl: r.reel.videoUrl ?? r.reel.video_url,
+    thumbnailUrl: r.reel.thumbnailUrl ?? r.reel.thumbnail_url ?? null,
+    visibility: r.reel.visibility ?? 'public',
+    genre: r.reel.genre ?? 'general',
+    likeCount: r.reel.likeCount ?? r.reel.like_count ?? 0,
+    commentCount: r.reel.commentCount ?? r.reel.comment_count ?? 0,
+    viewCount: r.reel.viewCount ?? r.reel.view_count ?? 0,
+    watchTimeSeconds: r.reel.watchTimeSeconds ?? r.reel.watch_time_seconds ?? 0,
+    trendingScore: r.reel.trendingScore ?? r.reel.trending_score ?? 0,
+    createdAt: r.reel.createdAt ?? r.reel.created_at,
+    liked: false,
+  };
+}
+
+export async function toggleReelLike(reelId: string): Promise<{ liked: boolean; likeCount: number }> {
+  const r = await apiCall<any>(`/api/community/reels/${reelId}/like`, 'POST');
+  return { liked: r.liked, likeCount: r.likeCount };
+}
+
+export async function markReelViewed(reelId: string, watchSeconds: number, completionRatio: number): Promise<void> {
+  await apiCall(`/api/community/reels/${reelId}/view`, 'POST', { watchSeconds, completionRatio });
+}
+
+export async function getReelComments(reelId: string): Promise<CommunityReelComment[]> {
+  const r = await apiCall<any>(`/api/community/reels/${reelId}/comments`);
+  return (r.comments ?? []).map((c: any): CommunityReelComment => ({
+    id: c.id,
+    reelId: c.reel_id ?? reelId,
+    author: {
+      userId: c.author?.userId ?? c.user_id,
+      name: c.author?.name ?? 'Member',
+      avatarUrl: c.author?.avatarUrl ?? null,
+    },
+    body: c.body,
+    createdAt: c.created_at,
+  }));
+}
+
+export async function addReelComment(reelId: string, body: string): Promise<CommunityReelComment> {
+  const r = await apiCall<any>(`/api/community/reels/${reelId}/comments`, 'POST', { body });
+  return {
+    id: r.comment.id,
+    reelId: reelId,
+    author: {
+      userId: r.comment.author?.userId ?? r.comment.user_id,
+      name: r.comment.author?.name ?? 'Member',
+      avatarUrl: r.comment.author?.avatarUrl ?? null,
+    },
+    body: r.comment.body,
+    createdAt: r.comment.created_at,
+  };
+}
+
 // ── Social graph ──────────────────────────────────────────────────────────────
 
 export async function searchUsers(q: string): Promise<UserProfile[]> {
@@ -636,7 +804,16 @@ export async function getConnectionRequests(): Promise<Connection[]> {
 
 export async function sendConnectionRequest(targetUserId: string): Promise<Connection> {
   const r = await apiCall<any>('/api/community/connections/request', 'POST', { targetUserId });
-  return r.connection as Connection;
+  const c = r.connection ?? {};
+  return {
+    id: c.id ?? '',
+    userId: c.userId ?? c.requester_id ?? c.addressee_id ?? targetUserId,
+    name: c.name ?? 'Member',
+    avatarUrl: c.avatarUrl ?? c.avatar_url ?? null,
+    status: c.status ?? 'pending',
+    requesterId: c.requester_id ?? c.requesterId,
+    createdAt: c.created_at ?? c.createdAt,
+  } as Connection;
 }
 
 export async function respondToConnection(connectionId: string, action: 'accept' | 'decline' | 'block'): Promise<void> {
@@ -649,7 +826,17 @@ export async function removeConnection(connectionId: string): Promise<void> {
 
 export async function getConnectionStatus(userId: string): Promise<Connection | null> {
   const r = await apiCall<any>(`/api/community/connections/status/${userId}`);
-  return r.connection ?? null;
+  const c = r.connection ?? null;
+  if (!c) return null;
+  return {
+    id: c.id ?? '',
+    userId: c.userId ?? c.requester_id === userId ? c.addressee_id : c.requester_id ?? userId,
+    name: c.name ?? 'Member',
+    avatarUrl: c.avatarUrl ?? c.avatar_url ?? null,
+    status: c.status ?? 'pending',
+    requesterId: c.requester_id ?? c.requesterId,
+    createdAt: c.created_at ?? c.createdAt,
+  } as Connection;
 }
 
 export async function getUserPosts(userId: string): Promise<CommunityPost[]> {

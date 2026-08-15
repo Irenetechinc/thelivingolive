@@ -9,7 +9,7 @@ import {
   requestRecordingPermissionsAsync,
 } from "expo-audio";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { transcribeSermon } from "./api";
+import { transcribeSermon, verifyAndCorrectTranscription } from "./api";
 
 // ─── What this can and can't do, plainly ───────────────────────────────────
 // - Recording itself needs no internet at all: audio is captured straight to
@@ -36,6 +36,7 @@ import { transcribeSermon } from "./api";
 
 const QUEUE_KEY = "sermonRecorder.queue";
 const recordingsDir = new Directory(Paths.document, "sermon-recordings");
+const MAX_RECORDING_DURATION_MS = 4 * 60 * 60 * 1000; // 4 hours max per recording
 
 export type SermonRecording = {
   id: string;
@@ -47,6 +48,8 @@ export type SermonRecording = {
   rawText?: string;
   error?: string;
   edited?: boolean;
+  durationSeconds?: number;
+  verificationStatus?: "verified" | "unverified" | "corrected";
 };
 
 function ensureDir() {
@@ -121,17 +124,23 @@ export async function processQueue(onUpdate: (queue: SermonRecording[]) => void)
         queue = await loadQueue();
         const idx = queue.findIndex((q) => q.id === rec.id);
         if (idx >= 0) {
-          queue[idx] = { ...queue[idx], status: "done", ...result };
+          queue[idx] = { 
+            ...queue[idx], 
+            status: "done", 
+            ...result,
+            verificationStatus: "unverified",
+          };
           await saveQueue(queue);
           onUpdate(queue);
+          
+          // Async verification: runs in the background, updates when done
+          // Don't await this — let it finish in background
+          verifyAndCorrectTranscriptionInBackground(queue[idx], idx, onUpdate);
         }
       } catch (e: any) {
         queue = await loadQueue();
         const idx = queue.findIndex((q) => q.id === rec.id);
         if (idx >= 0) {
-          // Timeout / server error → mark failed so the user sees a Retry button
-          // rather than the spinner cycling forever. Network-connectivity errors
-          // are reset to "queued" so the automatic online-listener can retry them.
           const isTimeout =
             e?.name === "TimeoutError" ||
             e?.name === "AbortError" ||
@@ -153,6 +162,50 @@ export async function processQueue(onUpdate: (queue: SermonRecording[]) => void)
     if (changed) onUpdate(await loadQueue());
   } finally {
     processing = false;
+  }
+}
+
+// Background verification process — runs async without blocking the queue
+async function verifyAndCorrectTranscriptionInBackground(
+  rec: SermonRecording,
+  queueIndex: number,
+  onUpdate: (queue: SermonRecording[]) => void
+) {
+  try {
+    if (!rec.rawText || !rec.id) return;
+    
+    const verification = await verifyAndCorrectTranscription(
+      rec.localUri,
+      `sermon-${rec.id}.m4a`,
+      rec.rawText
+    );
+
+    const queue = await loadQueue();
+    const idx = queue.findIndex((q) => q.id === rec.id);
+    if (idx >= 0) {
+      // Apply corrections if any were found
+      queue[idx] = {
+        ...queue[idx],
+        rawText: verification.verifiedText,
+        // Reformat with verified text
+        formattedText: verification.verifiedText
+          .trim()
+          .replace(/\s+/g, " ")
+          .replace(/([.!?])\s+(?=[A-Z])/g, "$1\n")
+          .replace(/([.!?])([A-Z])/g, "$1 $2"),
+        verificationStatus: verification.corrections.length > 0 ? "corrected" : "verified",
+      };
+      // Ensure ends with punctuation
+      if (queue[idx].formattedText && !queue[idx].formattedText!.match(/[.!?]$/)) {
+        queue[idx].formattedText = queue[idx].formattedText + ".";
+      }
+      await saveQueue(queue);
+      onUpdate(queue);
+    }
+  } catch (err) {
+    // Verification failed (network, timeout, etc.) — that's okay,
+    // the transcript is already saved and usable as-is.
+    console.warn("Background verification failed (non-blocking):", err);
   }
 }
 
@@ -204,6 +257,8 @@ export function useSermonRecordings() {
     ensureDir();
     await recorder.prepareToRecordAsync();
     recorder.record();
+    // Log start time for duration tracking
+    console.log("Sermon recording started");
   }, [recorder]);
 
   const stopRecording = useCallback(async () => {
@@ -217,19 +272,25 @@ export function useSermonRecordings() {
     const destFile = new File(recordingsDir, `${id}.m4a`);
     sourceFile.copy(destFile);
 
+    // Try to get duration from recorder state
+    const durationMs = recorderState.durationMillis || 0;
+
     const entry: SermonRecording = {
       id,
       localUri: destFile.uri,
       createdAt: new Date().toISOString(),
       status: "queued",
+      durationSeconds: Math.floor(durationMs / 1000),
+      verificationStatus: "unverified",
     };
     const queue = await loadQueue();
     queue.unshift(entry);
     await saveQueue(queue);
     setRecordings(queue);
     processQueue(setRecordings);
+    console.log(`Sermon recording stopped. Duration: ${entry.durationSeconds}s`);
     return entry;
-  }, [recorder]);
+  }, [recorder, recorderState.durationMillis]);
 
   const retry = useCallback(async (id: string) => {
     const queue = await loadQueue();

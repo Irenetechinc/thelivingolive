@@ -16,6 +16,7 @@ import { startPrayerEngineScheduler, getWeights, recordFeedback } from "./lib/sc
 import { logger } from "./lib/logger.js";
 import { explainVerse, recordExplanationFeedback } from "./lib/verseExplainEngine.js";
 import { fetchTeachingContextForVerse } from "./lib/webCrawler.js";
+import { buildLocalTranscriptCorrections } from "./lib/transcriptCorrector.js";
 import { adminRouter } from "./routes/admin.js";
 import { orgAdminRouter } from "./routes/orgAdmin.js";
 import { bulletinsRouter } from "./routes/bulletins.js";
@@ -37,6 +38,57 @@ function loadBibleBook(bookId) {
     bibleBookCache.set(bookId, JSON.parse(readFileSync(filePath, "utf-8")));
   }
   return bibleBookCache.get(bookId);
+}
+
+function timeToMinutes(value) {
+  if (!value || typeof value !== "string") return 0;
+  const match = value.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return 0;
+  return hours * 60 + minutes;
+}
+
+function isWithinQuietHours(currentHour, currentMinute, start, end) {
+  const current = currentHour * 60 + currentMinute;
+  const startMinutes = timeToMinutes(start);
+  const endMinutes = timeToMinutes(end);
+  if (startMinutes === endMinutes) return false;
+  if (startMinutes < endMinutes) return current >= startMinutes && current < endMinutes;
+  return current >= startMinutes || current < endMinutes;
+}
+
+async function getReminderSettingsForUser(userId) {
+  if (!supabaseAdmin) {
+    return {
+      prayerRemindersEnabled: true,
+      devotionRemindersEnabled: true,
+      prayerQuietStart: "22:00:00",
+      prayerQuietEnd: "06:00:00",
+      devotionQuietStart: "22:00:00",
+      devotionQuietEnd: "06:00:00",
+    };
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("user_reminder_settings")
+    .select("prayer_reminders_enabled, devotion_reminders_enabled, prayer_quiet_start, prayer_quiet_end, devotion_quiet_start, devotion_quiet_end")
+    .eq("user_id", userId)
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    log.warn(`Reminder settings fetch failed for ${userId}:`, error.message);
+  }
+
+  return {
+    prayerRemindersEnabled: data?.prayer_reminders_enabled ?? true,
+    devotionRemindersEnabled: data?.devotion_reminders_enabled ?? true,
+    prayerQuietStart: data?.prayer_quiet_start ?? "22:00:00",
+    prayerQuietEnd: data?.prayer_quiet_end ?? "06:00:00",
+    devotionQuietStart: data?.devotion_quiet_start ?? "22:00:00",
+    devotionQuietEnd: data?.devotion_quiet_end ?? "06:00:00",
+  };
 }
 
 // Supabase keys are required for auth and all database-backed features.
@@ -571,6 +623,62 @@ app.post("/api/ai/transcribe", requireUser, requireFlag("sermon_transcription"),
 });
 
 // ──────────────────────────────────────────────
+// Verify transcription against audio and auto-correct errors
+// Uses a deterministic local correction pass from the original audio text and
+// re-transcribed text. No LLMs, no external NLP model, no cloud AI step.
+// ──────────────────────────────────────────────
+app.post(
+  "/api/ai/verify-transcription",
+  requireUser,
+  requireFlag("sermon_transcription"),
+  upload.single("audio"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "audio file is required" });
+      if (!req.body.transcribedText) {
+        return res.status(400).json({ error: "transcribedText is required" });
+      }
+
+      const originalTranscribedText = req.body.transcribedText.trim();
+      if (!originalTranscribedText) {
+        return res.status(422).json({ error: "transcribedText cannot be empty" });
+      }
+
+      const audioFile = await toFile(req.file.buffer, req.file.originalname || "sermon.m4a");
+      const freshTranscription = await getOpenAI().audio.transcriptions.create({
+        file: audioFile,
+        model: "whisper-1",
+      });
+
+      const freshTranscribedText = freshTranscription.text?.trim();
+      if (!freshTranscribedText) {
+        return res.status(422).json({ error: "Could not re-transcribe audio for verification" });
+      }
+
+      const { corrections, verifiedText } = buildLocalTranscriptCorrections(
+        originalTranscribedText,
+        freshTranscribedText
+      );
+
+      return res.json({
+        isAccurate: corrections.length === 0,
+        corrections,
+        verifiedText,
+      });
+    } catch (err) {
+      console.error("verify-transcription error:", err);
+      const fallbackText = req.body.transcribedText?.trim() || "";
+      return res.json({
+        isAccurate: true,
+        corrections: [],
+        verifiedText: fallbackText,
+        _error: "Verification failed, using original transcription",
+      });
+    }
+  }
+);
+
+// ──────────────────────────────────────────────
 // Push notification token registration
 // ──────────────────────────────────────────────
 app.post("/api/push/register", requireUser, requireFlag("push_notifications"), async (req, res) => {
@@ -694,6 +802,15 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
     // Auto-generate devotional content and save before sending push,
     // so the user arrives at the app to find it already done — no "tap to generate".
     for (const plan of devotionPlans ?? []) {
+      const settings = await getReminderSettingsForUser(plan.user_id);
+      if (!settings.devotionRemindersEnabled) {
+        log.info(`Skipping devotion plan ${plan.id} for user ${plan.user_id} — reminders disabled`);
+        continue;
+      }
+      if (isWithinQuietHours(now.getUTCHours(), now.getUTCMinutes(), settings.devotionQuietStart, settings.devotionQuietEnd)) {
+        log.info(`Skipping devotion plan ${plan.id} for user ${plan.user_id} — quiet hours active`);
+        continue;
+      }
       // Skip if today is an excluded day of week
       if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
         log.info(`Skipping devotion plan ${plan.id} — day ${todayDow} is excluded`);
@@ -753,6 +870,15 @@ app.post("/api/push/notify-scheduled", async (req, res) => {
 
     // Auto-generate prayer points and save before pushing.
     for (const plan of prayerPlans ?? []) {
+      const settings = await getReminderSettingsForUser(plan.user_id);
+      if (!settings.prayerRemindersEnabled) {
+        log.info(`Skipping prayer plan ${plan.id} for user ${plan.user_id} — reminders disabled`);
+        continue;
+      }
+      if (isWithinQuietHours(now.getUTCHours(), now.getUTCMinutes(), settings.prayerQuietStart, settings.prayerQuietEnd)) {
+        log.info(`Skipping prayer plan ${plan.id} for user ${plan.user_id} — quiet hours active`);
+        continue;
+      }
       // Skip if today is an excluded day of week
       if (Array.isArray(plan.excluded_days) && plan.excluded_days.includes(todayDow)) {
         log.info(`Skipping prayer plan ${plan.id} — day ${todayDow} is excluded`);

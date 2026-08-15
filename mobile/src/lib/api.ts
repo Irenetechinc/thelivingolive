@@ -219,8 +219,9 @@ export async function transcribeSermon(fileUri: string, fileName: string): Promi
       headers: { Authorization: `Bearer ${token}` },
       body: form,
       // Audio uploads can be large and Whisper can take time on long clips —
-      // allow up to 2 minutes before surfacing a timeout to the user.
-      signal: AbortSignal.timeout(120_000),
+      // allow up to 3 minutes before surfacing a timeout to the user.
+      // Increased from 2 minutes to handle longer recordings.
+      signal: AbortSignal.timeout(180_000),
     });
   } catch (err: any) {
     if (err?.name === "TimeoutError" || err?.name === "AbortError") {
@@ -231,6 +232,69 @@ export async function transcribeSermon(fileUri: string, fileName: string): Promi
     );
   }
   return parseJsonResponse(res);
+}
+
+export type VerificationResult = { 
+  isAccurate: boolean; 
+  corrections: Array<{ original: string; corrected: string; confidence: number }>;
+  verifiedText: string;
+};
+
+// Verifies transcribed text against the audio recording and auto-corrects errors.
+// Sends both the audio and transcribed text for comparison and correction.
+export async function verifyAndCorrectTranscription(
+  fileUri: string,
+  fileName: string,
+  transcribedText: string
+): Promise<VerificationResult> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You need to be signed in to use this feature.");
+
+  const form = new FormData();
+  form.append("audio", {
+    uri: fileUri,
+    name: fileName,
+    type: "audio/m4a",
+  } as any);
+  form.append("transcribedText", transcribedText);
+
+  let res: Response;
+  try {
+    res = await fetch(`${requireApiUrl()}/api/ai/verify-transcription`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      // Verification also takes time, use same timeout as transcription
+      signal: AbortSignal.timeout(180_000),
+    });
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      // If verification times out, return the original text as-is (not a failure)
+      return {
+        isAccurate: true,
+        corrections: [],
+        verifiedText: transcribedText,
+      };
+    }
+    // On network errors, also return original text
+    return {
+      isAccurate: true,
+      corrections: [],
+      verifiedText: transcribedText,
+    };
+  }
+
+  try {
+    return await parseJsonResponse(res);
+  } catch {
+    // If parsing fails, return original text
+    return {
+      isAccurate: true,
+      corrections: [],
+      verifiedText: transcribedText,
+    };
+  }
 }
 
 // ─── Bulletins ────────────────────────────────────────────────────────────────

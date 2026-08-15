@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TextInput, Pressable, ScrollView,
-  ActivityIndicator, Animated, TouchableOpacity, Alert,
+  ActivityIndicator, Animated, TouchableOpacity, Alert, Switch,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,13 @@ import { supabase } from "../../lib/supabase";
 import { generateDevotion, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { consumePendingAlarm } from "../../lib/alarmState";
+import {
+  getReminderEnabled,
+  getReminderQuietWindow,
+  isWithinQuietHours,
+  setReminderEnabled,
+  setReminderQuietWindow,
+} from "../../lib/settings";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import NetworkErrorBanner from "../../components/NetworkErrorBanner";
 
@@ -221,6 +228,24 @@ export default function DevotionsScreen() {
   const [daysCount, setDaysCount] = useState<number | null>(null);
   const [excludedDays, setExcludedDays] = useState<number[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [reminderEnabled, setReminderEnabledState] = useState(true);
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("06:00");
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [enabled, quiet] = await Promise.all([
+        getReminderEnabled("devotion"),
+        getReminderQuietWindow("devotion"),
+      ]);
+      if (!mounted) return;
+      setReminderEnabledState(enabled);
+      setQuietStart(quiet.start);
+      setQuietEnd(quiet.end);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // Screen state
   const [busy, setBusy] = useState(false);
@@ -366,14 +391,20 @@ export default function DevotionsScreen() {
       const enriched: DevotionEntry = { ...entry, category: result.detectedCategory, sourceText: goal.trim() };
       setEntries((prev) => [enriched, ...prev]);
 
-      await scheduleRecurringReminder({
-        identifier: `devotion-${plan.id}`,
-        title: "Time for your devotion 🌿",
-        body: result.title,
-        hour: h, minute: m, frequency: duration,
-        sound: ringtone,
-        data: { type: "devotion", goal: goal.trim() },
-      });
+      if (reminderEnabled) {
+        const now = new Date();
+        const quietMatch = isWithinQuietHours(now.getHours(), now.getMinutes(), quietStart, quietEnd);
+        if (!quietMatch) {
+          await scheduleRecurringReminder({
+            identifier: `devotion-${plan.id}`,
+            title: "Time for your devotion 🌿",
+            body: result.title,
+            hour: h, minute: m, frequency: duration,
+            sound: ringtone,
+            data: { type: "devotion", goal: goal.trim() },
+          });
+        }
+      }
 
       setGoal("");
       setExcludedDays([]);
@@ -511,6 +542,48 @@ export default function DevotionsScreen() {
                     <Text style={[s.chipText, ringtone === r && s.chipTextActive]}>{r.charAt(0).toUpperCase() + r.slice(1)}</Text>
                   </Pressable>
                 ))}
+              </View>
+
+              <View style={[s.settingRow, { marginTop: spacing.md }]}> 
+                <Text style={s.settingLabel}>Devotion reminders</Text>
+                <Switch
+                  value={reminderEnabled}
+                  onValueChange={async (value) => {
+                    setReminderEnabledState(value);
+                    await setReminderEnabled("devotion", value);
+                  }}
+                  trackColor={{ false: colors.parchmentDark, true: colors.olive }}
+                  thumbColor={reminderEnabled ? colors.white : colors.inkFaint}
+                />
+              </View>
+
+              <View style={s.settingRow}> 
+                <Text style={s.settingLabel}>Quiet hours</Text>
+                <View style={s.quietTimeRow}>
+                  <TextInput
+                    style={s.quietTimeInput}
+                    value={quietStart}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/[^0-9:]/g, "").slice(0, 5);
+                      setQuietStart(cleaned);
+                      setReminderQuietWindow("devotion", cleaned, quietEnd).catch(() => {});
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="22:00"
+                  />
+                  <Text style={s.quietDash}>–</Text>
+                  <TextInput
+                    style={s.quietTimeInput}
+                    value={quietEnd}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/[^0-9:]/g, "").slice(0, 5);
+                      setQuietEnd(cleaned);
+                      setReminderQuietWindow("devotion", quietStart, cleaned).catch(() => {});
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="06:00"
+                  />
+                </View>
               </View>
             </>
           )}
@@ -753,4 +826,16 @@ const s = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { ...typography.subtitle, color: colors.ink, marginBottom: 8 },
   emptyDesc: { ...typography.bodySmall, color: colors.inkSoft, textAlign: "center", lineHeight: 22 },
+  settingRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: spacing.sm, gap: spacing.sm,
+  },
+  settingLabel: { ...typography.caption, color: colors.inkSoft, fontWeight: "700" },
+  quietTimeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  quietTimeInput: {
+    width: 72, backgroundColor: colors.parchment, borderRadius: radii.sm,
+    borderWidth: 1.5, borderColor: colors.parchmentDark,
+    paddingVertical: 8, paddingHorizontal: 10, color: colors.ink, fontSize: 12, fontWeight: "700", textAlign: "center",
+  },
+  quietDash: { color: colors.inkFaint, fontSize: 14, fontWeight: "700" },
 });

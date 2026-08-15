@@ -55,31 +55,26 @@ export default function UserProfileModal({ userId, myUserId, visible, onClose, o
 
   async function handleConnect() {
     if (!userId) return;
-    if (connection?.status === 'accepted') {
-      // Disconnect
-      Alert.alert('Remove Connection', `Remove ${profile?.displayName ?? 'this user'} from your connections?`, [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove', style: 'destructive', onPress: async () => {
-            setActionBusy(true);
-            try {
-              await removeConnection(connection.id);
-              setConnection(null);
-            } catch { Alert.alert('Error', 'Could not remove connection.'); }
-            finally { setActionBusy(false); }
-          },
-        },
-      ]);
+
+    if (connection?.status === 'accepted' || connection?.status === 'pending') {
+      setActionBusy(true);
+      try {
+        if (connection.id) await removeConnection(connection.id);
+        setConnection(null);
+      } catch {
+        // Non-blocking: the button reverts to the request state automatically.
+      } finally {
+        setActionBusy(false);
+      }
       return;
     }
-    if (connection?.status === 'pending') return; // already pending
 
     setActionBusy(true);
     try {
       const c = await sendConnectionRequest(userId);
-      setConnection(c);
+      setConnection({ ...c, status: c.status || 'pending' });
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not send connection request.');
+      // no popup: keep the action silent and let the user retry if needed
     } finally {
       setActionBusy(false);
     }
@@ -108,8 +103,8 @@ export default function UserProfileModal({ userId, myUserId, visible, onClose, o
   }
 
   const isOwnProfile = userId === myUserId;
-  const connLabel = !connection ? 'Connect' : connection.status === 'accepted' ? 'Connected' : connection.status === 'pending' ? 'Pending…' : 'Connect';
-  const connIcon = !connection ? 'person-add-outline' : connection.status === 'accepted' ? 'checkmark-circle-outline' : 'hourglass-outline';
+  const connLabel = !connection ? 'Connect' : connection.status === 'accepted' ? 'Connected' : connection.status === 'pending' ? 'Disconnect' : 'Connect';
+  const connIcon = !connection ? 'person-add-outline' : connection.status === 'accepted' ? 'checkmark-circle-outline' : connection.status === 'pending' ? 'close-circle-outline' : 'person-add-outline';
 
   return (
     <Modal

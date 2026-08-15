@@ -11,12 +11,12 @@
  *  - Notifications tab with unread badge
  *  - Delete own post
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   ScrollView, ActivityIndicator, Image, TouchableOpacity, Modal,
   KeyboardAvoidingView, Platform, Share, Alert, RefreshControl,
-  Animated, ViewToken, Keyboard, AppState,
+  Animated, ViewToken, Keyboard, AppState, Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -39,9 +39,11 @@ import {
   subscribeToTimeline, subscribeToNotifications, subscribeToMessageRequests,
   getStories, createStory, uploadStoryMedia, deleteStory,
   getConnections, getUserPosts,
+  getReels, uploadReelMedia, createReel, toggleReelLike, markReelViewed,
+  getReelComments,
   type UserProfile, type CommunityPost, type PostComment,
   type ChatRoom, type CommunityNotification, type MessageRequest, type Author,
-  type Story, type Connection,
+  type Story, type Connection, type CommunityReel,
 } from '../../lib/communityApi';
 import { supabase } from '../../lib/supabase';
 import OliveChatSplash from '../../components/OliveChatSplash';
@@ -55,7 +57,9 @@ import PeopleSearch from './PeopleSearch';
 const PIN_CACHE_KEY = 'olivechat.pinActive.v1';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-type Tab = 'feed' | 'chats' | 'profile' | 'notifications';
+type Tab = 'feed' | 'chats' | 'profile' | 'notifications' | 'reels';
+
+type ReelVideo = CommunityReel;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function relTime(iso: string) {
@@ -151,6 +155,192 @@ const vs = StyleSheet.create({
   hidden: { opacity: 0 },
   playBtn: { position: 'absolute', top: '50%', left: '50%', marginTop: -24, marginLeft: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   playIcon: { color: '#fff', fontSize: 20, marginLeft: 4 },
+});
+
+function ReelCard({
+  reel,
+  isActive,
+  onWatchCompletion,
+  rankedReels,
+  reelsListRef,
+  setActiveReelId,
+}: {
+  reel: CommunityReel;
+  isActive: boolean;
+  onWatchCompletion?: (genre: string) => void;
+  rankedReels: CommunityReel[];
+  reelsListRef: React.RefObject<import('react-native').FlatList<CommunityReel> | null>;
+  setActiveReelId: (id: string | null) => void;
+}) {
+  const [liked, setLiked] = useState(reel.liked);
+  const [likeCount, setLikeCount] = useState(reel.likeCount);
+  const [commentCount, setCommentCount] = useState(reel.commentCount);
+  const [showControls, setShowControls] = useState(false);
+  const [watchTime, setWatchTime] = useState(0);
+  const [fiftyPercentReported, setFiftyPercentReported] = useState(false);
+  const controlsOpacity = useRef(new Animated.Value(0)).current;
+  const player = useVideoPlayer({ uri: reel.videoUrl }, (p: any) => {
+    if (p) {
+      p.loop = true;
+      if (isActive) p.play();
+    }
+  });
+
+  // Autoplay when active with 50% watch detection for preference learning
+  useEffect(() => {
+    if (!player) return;
+    if (isActive) {
+      player.play();
+      setShowControls(false);
+      setWatchTime(0);
+      setFiftyPercentReported(false);
+      // Track watch time in 2-second intervals for smooth tracking
+      const interval = setInterval(() => {
+        setWatchTime(prev => {
+          const newTime = prev + 2;
+          // Report 50% watch detection for preference learning (15s = 50% of ~30s video)
+          if (!fiftyPercentReported && newTime >= 15 && onWatchCompletion) {
+            setFiftyPercentReported(true);
+            onWatchCompletion(reel.genre ?? 'general');
+          }
+          return newTime;
+        });
+      }, 2000);
+      return () => clearInterval(interval);
+    } else {
+      player.pause();
+      // Report watch time to server when moving away
+      if (watchTime > 0) {
+        const completionRatio = Math.min(1, watchTime / 30); // assume ~30s video
+        markReelViewed(reel.id, Math.floor(watchTime), completionRatio).catch(() => {});
+      }
+      setWatchTime(0);
+    }
+  }, [isActive, player, reel.id, onWatchCompletion, reel.genre, fiftyPercentReported]);
+
+  // Toggle controls with fade animation on screen tap
+  function toggleControls() {
+    const newShow = !showControls;
+    setShowControls(newShow);
+    Animated.timing(controlsOpacity, {
+      toValue: newShow ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    // Auto-hide controls after 3 seconds if shown
+    if (newShow) {
+      setTimeout(() => {
+        setShowControls(false);
+        Animated.timing(controlsOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      }, 3000);
+    }
+  }
+
+  async function handleLike() {
+    try {
+      const result = await toggleReelLike(reel.id);
+      setLiked(result.liked);
+      setLikeCount(result.likeCount);
+    } catch {
+      setLiked(v => !v);
+    }
+  }
+
+  return (
+    <Pressable style={reelStyles.card} onPress={toggleControls}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        nativeControls={false}
+      />
+      <View style={reelStyles.overlay} pointerEvents="none" />
+      
+      {/* Header (always visible) */}
+      <View style={reelStyles.headerRow}>
+        <View style={reelStyles.authorWrap}>
+          <Avatar url={reel.author.avatarUrl} name={reel.author.name} size={34} />
+          <Text style={reelStyles.authorName} numberOfLines={1}>{reel.author.name}</Text>
+        </View>
+        <View style={reelStyles.metaPill}>
+          <Ionicons name={reel.visibility === 'private' ? 'lock-closed-outline' : reel.visibility === 'friends' ? 'people-outline' : 'globe-outline'} size={12} color="#fff" />
+          <Text style={reelStyles.metaPillText}>{reel.visibility}</Text>
+        </View>
+      </View>
+
+      {/* Bottom section: Author info + caption (always visible) */}
+      <View style={reelStyles.bottomSection}>
+        <View style={reelStyles.authorBottomWrap}>
+          <Avatar url={reel.author.avatarUrl} name={reel.author.name} size={40} />
+          <View style={reelStyles.authorInfo}>
+            <Text style={reelStyles.authorNameBottom} numberOfLines={1}>{reel.author.name}</Text>
+            <Pressable style={reelStyles.connectBtn}>
+              <Text style={reelStyles.connectBtnText}>Connect</Text>
+            </Pressable>
+          </View>
+        </View>
+        <View style={reelStyles.captionBox}>
+          <Text style={reelStyles.caption} numberOfLines={3}>{reel.caption ?? 'Check out this reel'}</Text>
+        </View>
+      </View>
+
+      {/* Right rail with actions (hidden until tap, then fade in/out) */}
+      <Animated.View style={[reelStyles.rightRail, { opacity: controlsOpacity }]} pointerEvents={showControls ? 'auto' : 'none'}>
+        <Pressable style={reelStyles.actionButton} onPress={handleLike}>
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={28} color="#fff" />
+          <Text style={reelStyles.actionValue}>{likeCount}</Text>
+        </Pressable>
+        <Pressable style={reelStyles.actionButton} onPress={async () => {
+          try {
+            const comments = await getReelComments(reel.id);
+            setCommentCount(comments.length);
+          } catch {}
+        }}>
+          <Ionicons name='chatbubble-ellipses-outline' size={28} color="#fff" />
+          <Text style={reelStyles.actionValue}>{commentCount}</Text>
+        </Pressable>
+        <Pressable style={reelStyles.actionButton} onPress={() => {
+          const idx = rankedReels.findIndex(r => r.id === reel.id);
+          if (idx >= 0 && idx < rankedReels.length - 1) {
+            setActiveReelId(rankedReels[idx + 1].id);
+            reelsListRef.current?.scrollToIndex({ index: idx + 1, animated: true });
+          }
+        }}>
+          <Ionicons name='play-forward-outline' size={28} color="#fff" />
+          <Text style={reelStyles.actionValue}>Next</Text>
+        </Pressable>
+        <Pressable style={reelStyles.actionButton}>
+          <Ionicons name='share-social-outline' size={28} color="#fff" />
+          <Text style={reelStyles.actionValue}>Share</Text>
+        </Pressable>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+const reelStyles = StyleSheet.create({
+  card: { height: 620, marginBottom: spacing.sm, borderRadius: radii.lg, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
+  overlay: { position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.12)' },
+  headerRow: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 },
+  authorWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  authorName: { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1 },
+  metaPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.3)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  metaPillText: { color: '#fff', fontSize: 10, fontWeight: '600', textTransform: 'capitalize' },
+  bottomSection: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.35)', padding: 12, zIndex: 2 },
+  authorBottomWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  authorInfo: { flex: 1 },
+  authorNameBottom: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  connectBtn: { marginTop: 6, paddingHorizontal: 14, paddingVertical: 5, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6 },
+  connectBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  captionBox: { marginTop: 4 },
+  caption: { color: '#fff', fontSize: 13, fontWeight: '500', lineHeight: 18 },
+  rightRail: { position: 'absolute', right: 12, bottom: 130, zIndex: 3, alignItems: 'center', gap: 16 },
+  actionButton: { alignItems: 'center', justifyContent: 'center', gap: 4 },
+  actionValue: { color: '#fff', fontSize: 11, fontWeight: '700', textAlign: 'center' },
 });
 
 // ── Post body with @mention highlighting ──────────────────────────────────────
@@ -903,6 +1093,12 @@ function ProfileTab({
   const [education, setEducation] = useState('');
   const [gender, setGender] = useState('');
   const [website, setWebsite] = useState('');
+  const [facebookUrl, setFacebookUrl] = useState('');
+  const [instagramUrl, setInstagramUrl] = useState('');
+  const [twitterUrl, setTwitterUrl] = useState('');
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [tiktokUrl, setTiktokUrl] = useState('');
   const [dobPublic, setDobPublic] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -911,9 +1107,11 @@ function ProfileTab({
   const [settingPin, setSettingPin] = useState(false);
   const [pinSet, setPinSet] = useState(false);
   const [connectionCount, setConnectionCount] = useState(0);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [ownPosts, setOwnPosts] = useState<CommunityPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showConnections, setShowConnections] = useState(false);
 
   function restoreDraftFromProfile() {
     if (!profile) return;
@@ -922,6 +1120,9 @@ function ProfileTab({
     setLocation(profile.location ?? ''); setStateVal(profile.state ?? '');
     setCountry(profile.country ?? ''); setEducation(profile.education ?? '');
     setGender(profile.gender ?? ''); setWebsite(profile.website ?? '');
+    setFacebookUrl(profile.facebookUrl ?? ''); setInstagramUrl(profile.instagramUrl ?? '');
+    setTwitterUrl(profile.twitterUrl ?? ''); setYoutubeUrl(profile.youtubeUrl ?? '');
+    setLinkedinUrl(profile.linkedinUrl ?? ''); setTiktokUrl(profile.tiktokUrl ?? '');
     setDobPublic(profile.dobPublic ?? false);
   }
 
@@ -929,7 +1130,10 @@ function ProfileTab({
     if (profile) {
       restoreDraftFromProfile();
       getPinStatus().then(setPinSet).catch(() => {});
-      getConnections().then(cs => setConnectionCount(cs.length)).catch(() => {});
+      getConnections().then(cs => {
+        setConnections(cs);
+        setConnectionCount(cs.length);
+      }).catch(() => {});
       if (profile.id) {
         setLoadingPosts(true);
         // Load all posts (no slice limit) — display them as full feed cards
@@ -983,7 +1187,11 @@ function ProfileTab({
         username: username.trim() || undefined, churchAffiliation: church.trim() || undefined,
         location: location.trim() || undefined, state: stateVal.trim() || undefined,
         country: country.trim() || undefined, education: education.trim() || undefined,
-        gender: gender.trim() || undefined, website: website.trim() || undefined, dobPublic,
+        gender: gender.trim() || undefined, website: website.trim() || undefined,
+        facebookUrl: facebookUrl.trim() || undefined, instagramUrl: instagramUrl.trim() || undefined,
+        twitterUrl: twitterUrl.trim() || undefined, youtubeUrl: youtubeUrl.trim() || undefined,
+        linkedinUrl: linkedinUrl.trim() || undefined, tiktokUrl: tiktokUrl.trim() || undefined,
+        dobPublic,
       });
       onReload(); setEditing(false);
     } catch { Alert.alert('Error', 'Could not save profile. Please try again.'); }
@@ -1121,6 +1329,18 @@ function ProfileTab({
             <TextInput style={pf.fieldInput} value={gender} onChangeText={setGender} placeholder="Optional" placeholderTextColor={colors.inkFaint} />
             <Text style={pf.fieldLabel}>WEBSITE</Text>
             <TextInput style={pf.fieldInput} value={website} onChangeText={setWebsite} placeholder="https://…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>FACEBOOK</Text>
+            <TextInput style={pf.fieldInput} value={facebookUrl} onChangeText={setFacebookUrl} placeholder="https://facebook.com/…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>INSTAGRAM</Text>
+            <TextInput style={pf.fieldInput} value={instagramUrl} onChangeText={setInstagramUrl} placeholder="https://instagram.com/…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>X / TWITTER</Text>
+            <TextInput style={pf.fieldInput} value={twitterUrl} onChangeText={setTwitterUrl} placeholder="https://x.com/…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>YOUTUBE</Text>
+            <TextInput style={pf.fieldInput} value={youtubeUrl} onChangeText={setYoutubeUrl} placeholder="https://youtube.com/…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>LINKEDIN</Text>
+            <TextInput style={pf.fieldInput} value={linkedinUrl} onChangeText={setLinkedinUrl} placeholder="https://linkedin.com/in/…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
+            <Text style={pf.fieldLabel}>TIKTOK</Text>
+            <TextInput style={pf.fieldInput} value={tiktokUrl} onChangeText={setTiktokUrl} placeholder="https://tiktok.com/@…" placeholderTextColor={colors.inkFaint} keyboardType="url" autoCapitalize="none" />
             <Text style={pf.fieldLabel}>DATE OF BIRTH (YYYY-MM-DD)</Text>
             <TextInput style={pf.fieldInput} value={dob} onChangeText={setDob} placeholder="1990-01-01" placeholderTextColor={colors.inkFaint} />
             <View style={pf.toggleRow}>
@@ -1144,13 +1364,46 @@ function ProfileTab({
               </View>
               <View style={pf.statChip}>
                 <Text style={pf.statNum}>{loadingPosts ? '…' : ownPosts.length}</Text>
-                <Text style={pf.statLabel}>Posts & tagged</Text>
+                <Text style={pf.statLabel}>Posts</Text>
               </View>
             </View>
+            <Pressable style={pf.connectionsStrip} onPress={() => setShowConnections(true)}>
+              <Text style={pf.connectionsTitle}>Connected people</Text>
+              <View style={pf.connectionAvatars}>
+                {connections.slice(0, 5).map((connection) => (
+                  <View key={connection.userId} style={pf.connectionAvatarWrap}>
+                    <Avatar url={connection.avatarUrl} name={connection.name} size={28} />
+                  </View>
+                ))}
+                {connectionCount > 5 && <View style={pf.connectionOverflow}><Text style={pf.connectionOverflowText}>...more</Text></View>}
+              </View>
+            </Pressable>
             {profile.churchAffiliation ? <View style={pf.detailRow}><Ionicons name="business-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.churchAffiliation}</Text></View> : null}
             {(profile.location || profile.state || profile.country) ? <View style={pf.detailRow}><Ionicons name="location-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{[profile.location, profile.state, profile.country].filter(Boolean).join(', ')}</Text></View> : null}
             {profile.education ? <View style={pf.detailRow}><Ionicons name="school-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.education}</Text></View> : null}
             {profile.website ? <View style={pf.detailRow}><Ionicons name="globe-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>{profile.website}</Text></View> : null}
+            {profile.facebookUrl || profile.instagramUrl || profile.twitterUrl || profile.youtubeUrl || profile.linkedinUrl || profile.tiktokUrl ? (
+              <View style={pf.socialRow}>
+                {[
+                  { key: 'facebook', value: profile.facebookUrl, icon: 'logo-facebook', color: '#1877F2' },
+                  { key: 'instagram', value: profile.instagramUrl, icon: 'logo-instagram', color: '#E1306C' },
+                  { key: 'twitter', value: profile.twitterUrl, icon: 'logo-twitter', color: '#1DA1F2' },
+                  { key: 'youtube', value: profile.youtubeUrl, icon: 'logo-youtube', color: '#FF0000' },
+                  { key: 'linkedin', value: profile.linkedinUrl, icon: 'logo-linkedin', color: '#0A66C2' },
+                  { key: 'tiktok', value: profile.tiktokUrl, icon: 'logo-tiktok', color: '#000000' },
+                ]
+                  .filter(item => !!item.value)
+                  .map((item) => (
+                    <Pressable
+                      key={item.key}
+                      style={[pf.socialPill, { backgroundColor: `${item.color}1A` }]}
+                      onPress={() => Linking.openURL(item.value!)}
+                    >
+                      <Ionicons name={item.icon as any} size={14} color={item.color} />
+                    </Pressable>
+                  ))}
+              </View>
+            ) : null}
             {profile.dobPublic && age ? <View style={pf.detailRow}><Ionicons name="calendar-outline" size={14} color={colors.inkFaint} /><Text style={pf.detailText}>Age {age}</Text></View> : null}
           </>
         )}
@@ -1160,7 +1413,7 @@ function ProfileTab({
         <View style={{ marginTop: spacing.sm }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark }}>
             <Ionicons name="grid-outline" size={16} color={colors.olive} style={{ marginRight: 6 }} />
-            <Text style={pf.sectionTitle}>POSTS & TAGGED</Text>
+            <Text style={pf.sectionTitle}>POSTS</Text>
           </View>
           {loadingPosts ? (
             <PostSkeleton />
@@ -1199,6 +1452,33 @@ function ProfileTab({
               <Ionicons name="lock-closed-outline" size={20} color={colors.olive} />
               <Text style={pf.profileMenuText}>{pinSet ? 'Change or remove PIN' : 'Set PIN'}</Text>
             </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+      <Modal visible={showConnections} transparent animationType="slide" onRequestClose={() => setShowConnections(false)}>
+        <Pressable style={pf.modalBackdrop} onPress={() => setShowConnections(false)}>
+          <View style={pf.connectionsModal}>
+            <View style={pf.connectionsHeader}>
+              <Text style={pf.connectionsHeaderText}>Connections</Text>
+              <Pressable onPress={() => setShowConnections(false)}>
+                <Ionicons name="close" size={20} color={colors.inkSoft} />
+              </Pressable>
+            </View>
+            <FlatList
+              data={connections}
+              keyExtractor={(item) => item.userId}
+              contentContainerStyle={{ padding: spacing.md }}
+              renderItem={({ item }) => (
+                <View style={pf.connectionRow}>
+                  <Avatar url={item.avatarUrl} name={item.name} size={40} />
+                  <Text style={pf.connectionName}>{item.name}</Text>
+                  <Pressable style={pf.connectionAction} onPress={() => {}}>
+                    <Text style={pf.connectionActionText}>{item.status === 'accepted' ? 'Connected' : 'Add'}</Text>
+                  </Pressable>
+                </View>
+              )}
+              ListEmptyComponent={<Text style={pf.emptyConnections}>No connections yet.</Text>}
+            />
           </View>
         </Pressable>
       </Modal>
@@ -1248,8 +1528,25 @@ const pf = StyleSheet.create({
   statChip: { alignItems: 'center' },
   statNum: { fontSize: 18, fontWeight: '700', color: colors.ink },
   statLabel: { fontSize: 11, color: colors.inkFaint, marginTop: 1 },
+  connectionsStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.parchment, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: spacing.sm },
+  connectionsTitle: { fontSize: 12, color: colors.inkSoft, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+  connectionAvatars: { flexDirection: 'row', alignItems: 'center', marginLeft: spacing.sm },
+  connectionAvatarWrap: { marginLeft: -8, borderWidth: 2, borderColor: colors.white, borderRadius: 20 },
+  connectionOverflow: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.olive, marginLeft: -8, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.white },
+  connectionOverflowText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  connectionsModal: { backgroundColor: colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%' },
+  connectionsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.parchmentDark },
+  connectionsHeaderText: { fontSize: 18, fontWeight: '700', color: colors.ink },
+  connectionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
+  connectionName: { flex: 1, fontSize: 14, color: colors.ink, fontWeight: '600' },
+  connectionAction: { paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.parchment },
+  connectionActionText: { fontSize: 12, color: colors.olive, fontWeight: '700' },
+  emptyConnections: { textAlign: 'center', color: colors.inkFaint, paddingVertical: spacing.xl },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4 },
   detailText: { fontSize: 13, color: colors.inkSoft },
+  socialRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.xs },
+  socialPill: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
   fieldLabel: { ...typography.micro, color: colors.inkFaint, letterSpacing: 2, marginBottom: spacing.xs, marginTop: spacing.sm },
   fieldInput: { backgroundColor: colors.parchment, borderWidth: 1.5, borderColor: colors.parchmentDark, borderRadius: radii.md, padding: spacing.md, fontSize: 15, color: colors.ink, marginBottom: spacing.sm },
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm },
@@ -1427,6 +1724,7 @@ export default function OliveChatScreen() {
   const [notMember, setNotMember] = useState(false);
   const [commentPost, setCommentPost] = useState<CommunityPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
   const [messageRequests, setMessageRequests] = useState<MessageRequest[]>([]);
   const [showRequestsModal, setShowRequestsModal] = useState(false);
   const [respondingId, setRespondingId] = useState<string | null>(null);
@@ -1447,10 +1745,18 @@ export default function OliveChatScreen() {
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   // Stories + people search
   const [stories, setStories] = useState<Story[]>([]);
+  const [reels, setReels] = useState<CommunityReel[]>([]);
+  const [reelsBuffer, setReelsBuffer] = useState<CommunityReel[]>([]);
+  const reelsListRef = useRef<import('react-native').FlatList<CommunityReel>>(null);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
   const [storyViewerStart, setStoryViewerStart] = useState(0);
   const [showPeopleSearch, setShowPeopleSearch] = useState(false);
+  const [activeReelId, setActiveReelId] = useState<string | null>(null);
+  const [loadingReels, setLoadingReels] = useState(true);
+  const [watchPreference, setWatchPreference] = useState<Record<string, number>>({});
+  const [userGenrePreference, setUserGenrePreference] = useState<Record<string, number>>({});
   const [viewProfileUserId, setViewProfileUserId] = useState<string | null>(null);
+  const reelsLoadOffsetRef = useRef(0);
 
   // Pending realtime posts — queued here instead of auto-prepended so the
   // user sees a "N new posts" banner they can tap rather than having the feed
@@ -1556,6 +1862,7 @@ export default function OliveChatScreen() {
 
         // ── Stories ───────────────────────────────────────────────────────────
         getStories().then(s => { if (active) setStories(s); }).catch(() => {});
+        await loadReels();
 
         // ── Real-time subscriptions (set up once per mount) ──────────────────
         if (active && !timelineUnsubRef.current) {
@@ -1676,6 +1983,75 @@ export default function OliveChatScreen() {
     setRefreshing(false);
   }
 
+  async function loadReels() {
+    setLoadingReels(true);
+    try {
+      const initial = await getReels();
+      setReels(initial);
+      // Background batch load of 10 more for smooth scrolling
+      await loadMoreReelsInBackground(initial.length);
+    } catch (e: any) {
+      console.warn('Failed to load reels', e?.message ?? e);
+    } finally {
+      setLoadingReels(false);
+    }
+  }
+
+  async function loadMoreReelsInBackground(offset: number) {
+    try {
+      // Simulate pagination/offset for more reels
+      const more = await getReels();
+      const newReels = more.slice(0, 10).filter(r => !reels.some(x => x.id === r.id) && !reelsBuffer.some(x => x.id === r.id));
+      setReelsBuffer(prev => [...prev, ...newReels]);
+      reelsLoadOffsetRef.current = offset + 10;
+    } catch (e: any) {
+      console.warn('Background reel load failed', e?.message ?? e);
+    }
+  }
+
+  // Production-grade ranking algorithm for reels
+  function computeReelScore(reel: CommunityReel, prefs: Record<string, number>, genrePrefs: Record<string, number>): number {
+    // Engagement score: likes, comments, shares
+    const engagement = (reel.likeCount ?? 0) * 3.5 + (reel.commentCount ?? 0) * 4.2 + (reel.viewCount ?? 0) * 1.8;
+    
+    // Watch time score: people completing videos indicates quality
+    const watchScore = (reel.watchTimeSeconds ?? 0) * 0.12;
+    
+    // Trending score: already computed server-side based on recent engagement
+    const trendingScore = (reel.trendingScore ?? 0) * 0.8;
+    
+    // Author preference: users who watch more videos from an author get more from that author
+    const authorPreference = prefs[reel.author.name] ?? 0;
+    
+    // Genre preference: users who watch 50% of a genre get more of that genre, but blended with exploration
+    const genrePreference = genrePrefs[reel.genre ?? 'general'] ?? 0;
+    
+    // Recency bonus: newer content gets a small boost (but not overwhelming)
+    const hoursSince = Math.floor((Date.now() - new Date(reel.createdAt).getTime()) / 3600000);
+    const recency = Math.max(0, 100 - Math.floor(hoursSince * 2)); // decay over time
+    
+    // Combined score balances multiple factors
+    return engagement + watchScore + trendingScore + (authorPreference * 8) + (genrePreference * 12) + (recency * 0.3);
+  }
+
+  // Production-grade ranking algorithm for posts
+  function computePostScore(post: CommunityPost, prefs: Record<string, number>, genrePrefs: Record<string, number>): number {
+    // Engagement score for posts
+    const engagement = (post.likeCount * 3.5) + (post.commentCount * 4.2);
+    
+    // Author preference
+    const authorPreference = prefs[post.author.name] ?? 0;
+    
+    // Genre preference: apply to feed posts
+    const genrePreference = genrePrefs['feed'] ?? 0;
+    
+    // Recency bonus for posts
+    const hoursSince = Math.floor((Date.now() - new Date(post.createdAt).getTime()) / 3600000);
+    const recency = Math.max(0, 100 - Math.floor(hoursSince * 3)); // Posts decay faster than reels
+    
+    return engagement + (authorPreference * 8) + (genrePreference * 12) + (recency * 0.3);
+  }
+
   async function refreshRooms() {
     try { const r = await getRooms(); setRooms(r); setLoadError(null); } catch (e: any) {
       setLoadError(e?.message ?? 'Could not connect to the server.');
@@ -1777,6 +2153,31 @@ export default function OliveChatScreen() {
     }
   }
 
+  async function handleAddReel() {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'] as any,
+      quality: 0.9,
+      videoMaxDuration: 120,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
+    try {
+      const mimeType = (asset as any).mimeType ?? 'video/mp4';
+      const { url, thumbnailUrl } = await uploadReelMedia(asset.uri, mimeType);
+      const reel = await createReel({
+        videoUrl: url,
+        thumbnailUrl: thumbnailUrl ?? undefined,
+        caption: 'New reel',
+        visibility: 'public',
+        genre: 'general',
+      });
+      setReels(prev => [reel, ...prev]);
+      setTab('reels');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not upload reel. Please try again.');
+    }
+  }
+
   // Keep the main tree mounted while the splash runs, but do not allow it to
   // receive touches. Once the server-backed check and splash are both done,
   // the PIN gate becomes the only visible screen.
@@ -1794,14 +2195,33 @@ export default function OliveChatScreen() {
     </View>
   );
 
+  // Count unread messages from rooms with unread messages
+  const unreadMessageCount = rooms.filter(r => r.unreadCount && r.unreadCount > 0).length;
+  const totalChatBadge = (messageRequests.length > 0 ? 1 : 0) + (unreadMessageCount > 0 ? unreadMessageCount : 0);
+
   const TABS: { key: Tab; ionIcon: string; activeIonIcon: string; badge?: number }[] = [
     { key: 'feed',          ionIcon: 'leaf-outline',                 activeIonIcon: 'leaf' },
     { key: 'chats',         ionIcon: 'chatbubble-ellipses-outline',  activeIonIcon: 'chatbubble-ellipses', badge: messageRequests.length },
+    { key: 'reels',         ionIcon: 'videocam-outline',             activeIonIcon: 'videocam' },
     { key: 'notifications', ionIcon: 'notifications-outline',        activeIonIcon: 'notifications',       badge: unreadNotifCount },
     { key: 'profile',       ionIcon: 'person-outline',               activeIonIcon: 'person' },
   ];
 
   const pendingRequestCount = messageRequests.length;
+  const headerUnreadBadge = unreadMessageCount > 0 ? unreadMessageCount : 0;
+  const rankedPosts = useMemo(() => {
+    return [...posts].sort((a, b) => computePostScore(b, watchPreference, userGenrePreference) - computePostScore(a, watchPreference, userGenrePreference));
+  }, [posts, watchPreference, userGenrePreference]);
+
+  const rankedReels = useMemo(() => {
+    // Start with current reels + buffer, remove duplicates
+    const allReels = [...reels, ...reelsBuffer].reduce((unique, reel) => {
+      if (!unique.find(r => r.id === reel.id)) unique.push(reel);
+      return unique;
+    }, [] as CommunityReel[]);
+
+    return allReels.sort((a, b) => computeReelScore(b, watchPreference, userGenrePreference) - computeReelScore(a, watchPreference, userGenrePreference));
+  }, [reels, reelsBuffer, watchPreference, userGenrePreference]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.parchment }}>
@@ -1811,16 +2231,47 @@ export default function OliveChatScreen() {
           <Text style={main.headerTitle}>🫒 Olive Chat</Text>
           <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
             {tab === 'chats' && (
-              <Pressable style={main.headerIconBtn} onPress={() => navigation.navigate('CommunityMembers' as any)} hitSlop={8}>
-                <Ionicons name="create-outline" size={22} color="#fff" />
-              </Pressable>
+              <>
+                <Pressable style={main.headerIconBtn} onPress={() => navigation.navigate('ConnectionRequests' as any)} hitSlop={8}>
+                  <Ionicons name="people-outline" size={22} color="#fff" />
+                </Pressable>
+                <Pressable style={main.headerIconBtn} onPress={() => navigation.navigate('CommunityMembers' as any)} hitSlop={8}>
+                  <Ionicons name="create-outline" size={22} color="#fff" />
+                </Pressable>
+                <Pressable style={main.headerIconBtn} onPress={() => setTab('reels')} hitSlop={8}>
+                  <Ionicons name="videocam-outline" size={22} color="#fff" />
+                </Pressable>
+              </>
+            )}
+            {tab !== 'chats' && (
+              <>
+                <Pressable style={{ position: 'relative' }} onPress={() => navigation.navigate('ConnectionRequests' as any)} hitSlop={8}>
+                  <Ionicons name="people-outline" size={22} color="#fff" />
+                  {pendingRequestCount > 0 && (
+                    <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#E05252', borderRadius: 9, width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{pendingRequestCount > 9 ? '9+' : pendingRequestCount}</Text>
+                    </View>
+                  )}
+                </Pressable>
+                <Pressable style={{ position: 'relative' }} onPress={() => setTab('chats')} hitSlop={8}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={22} color="#fff" />
+                  {unreadMessageCount > 0 && (
+                    <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#E05252', borderRadius: 9, width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </>
             )}
             {tab === 'feed' && (
               <>
                 <Pressable style={main.headerIconBtn} onPress={() => setShowPeopleSearch(true)} hitSlop={8}>
                   <Ionicons name="search-outline" size={22} color="#fff" />
                 </Pressable>
-                <Pressable style={main.headerIconBtn} onPress={() => setShowCreate(true)} hitSlop={8}>
+                <Pressable style={main.headerIconBtn} onPress={() => setTab('reels')} hitSlop={8}>
+                  <Ionicons name="videocam-outline" size={22} color="#fff" />
+                </Pressable>
+                <Pressable style={main.headerIconBtn} onPress={() => setShowCreateMenu(true)} hitSlop={8}>
                   <Ionicons name="add-circle-outline" size={22} color="#fff" />
                 </Pressable>
               </>
@@ -1890,7 +2341,7 @@ export default function OliveChatScreen() {
             <FlatList
               key="feed-real"
               ref={feedListRef}
-              data={posts}
+              data={rankedPosts}
               keyExtractor={p => p.id}
               ListHeaderComponent={
                 <>
@@ -1998,6 +2449,58 @@ export default function OliveChatScreen() {
           )
       )}
 
+      {/* Reels */}
+      {tab === 'reels' && (
+        loadingReels ? (
+          <FlatList data={[1,2,3]} keyExtractor={i => String(i)} renderItem={() => <PostSkeleton />} contentContainerStyle={{ paddingTop: 8 }} />
+        ) : (
+          <FlatList
+            data={rankedReels}
+            keyExtractor={item => item.id}
+            renderItem={({ item }) => (
+              <ReelCard
+                reel={item}
+                isActive={activeReelId === item.id}
+                rankedReels={rankedReels}
+                reelsListRef={reelsListRef}
+                setActiveReelId={setActiveReelId}
+                onWatchCompletion={(genre) => {
+                  setUserGenrePreference(prev => ({ ...prev, [genre]: (prev[genre] ?? 0) + 0.3 }));
+                  if (Math.random() < 0.1) {
+                    const otherGenres = ['music', 'sports', 'comedy', 'education', 'lifestyle'];
+                    const random = otherGenres[Math.floor(Math.random() * otherGenres.length)];
+                    setUserGenrePreference(prev => ({ ...prev, [random]: (prev[random] ?? 0) + 0.05 }));
+                  }
+                }}
+              />
+            )}
+            contentContainerStyle={{ padding: 8, paddingBottom: 90 + insets.bottom }}
+            onViewableItemsChanged={({ viewableItems }) => {
+              const next = viewableItems[0]?.item?.id ?? null;
+              setActiveReelId(next);
+              if (next) {
+                const reel = viewableItems[0]?.item as CommunityReel | undefined;
+                if (reel) {
+                  setWatchPreference(prev => ({ ...prev, [reel.author.name]: (prev[reel.author.name] ?? 0) + 0.05 }));
+                  if (reelsBuffer.length < 5 && reelsLoadOffsetRef.current >= 0) {
+                    loadMoreReelsInBackground(reels.length + reelsBuffer.length);
+                  }
+                }
+              }
+            }}
+            viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={main.empty}>
+                <Ionicons name="videocam-outline" size={48} color={colors.inkFaint} style={{ marginBottom: 16 }} />
+                <Text style={main.emptyTitle}>No reels yet</Text>
+                <Text style={main.emptyDesc}>When someone shares a reel, it appears here.</Text>
+              </View>
+            }
+          />
+        )
+      )}
+
       {/* Notifications */}
       {tab === 'notifications' && <NotificationsTab userId={myUserId} />}
 
@@ -2027,6 +2530,24 @@ export default function OliveChatScreen() {
           ));
         }}
       />
+      <Modal visible={showCreateMenu} transparent animationType="fade" onRequestClose={() => setShowCreateMenu(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.16)' }} onPress={() => setShowCreateMenu(false)}>
+          <View style={{ position: 'absolute', top: 92, right: spacing.lg, backgroundColor: '#fff', borderRadius: 18, padding: 10, width: 180, ...shadows.card }}>
+            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 }} onPress={() => { setShowCreateMenu(false); setShowCreate(true); }}>
+              <Ionicons name="create-outline" size={20} color={colors.olive} />
+              <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '600' }}>Post</Text>
+            </Pressable>
+            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 }} onPress={async () => { setShowCreateMenu(false); await handleAddStory(); }}>
+              <Ionicons name="image-outline" size={20} color={colors.olive} />
+              <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '600' }}>Story</Text>
+            </Pressable>
+            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 }} onPress={async () => { setShowCreateMenu(false); await handleAddReel(); }}>
+              <Ionicons name="videocam-outline" size={20} color={colors.olive} />
+              <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '600' }}>Reels</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
       <CreatePostModal visible={showCreate} onClose={() => setShowCreate(false)} onCreated={p => {
         // Immediately prepend own new post and remove it from pendingPosts if
         // the realtime subscription happened to queue it before onCreated fired.

@@ -46,9 +46,11 @@ export default function MembersScreen({ navigation }: Props) {
   async function startDM(member: Author) {
     setStartingDm(member.userId);
     try {
-      const roomId = await getOrCreateDM(member.userId);
+      const { roomId } = await getOrCreateDM(member.userId);
       navigation.replace('ChatRoom' as any, { roomId, roomName: member.name });
     } catch (e: any) {
+      setStartingDm(null);
+    } finally {
       setStartingDm(null);
     }
   }

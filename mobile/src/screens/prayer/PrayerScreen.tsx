@@ -11,6 +11,13 @@ import { supabase } from "../../lib/supabase";
 import { generatePrayer, submitGenerationFeedback } from "../../lib/api";
 import { scheduleRecurringReminder } from "../../lib/notifications";
 import { consumePendingAlarm } from "../../lib/alarmState";
+import {
+  getReminderEnabled,
+  getReminderQuietWindow,
+  isWithinQuietHours,
+  setReminderEnabled,
+  setReminderQuietWindow,
+} from "../../lib/settings";
 import { colors, radii, spacing, typography, shadows } from "../../theme/theme";
 import NetworkErrorBanner from "../../components/NetworkErrorBanner";
 
@@ -206,6 +213,24 @@ export default function PrayerScreen() {
   const [daysCount, setDaysCount] = useState<number | null>(null);
   const [excludedDays, setExcludedDays] = useState<number[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [reminderEnabled, setReminderEnabledState] = useState(true);
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("06:00");
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [enabled, quiet] = await Promise.all([
+        getReminderEnabled("prayer"),
+        getReminderQuietWindow("prayer"),
+      ]);
+      if (!mounted) return;
+      setReminderEnabledState(enabled);
+      setQuietStart(quiet.start);
+      setQuietEnd(quiet.end);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // Manual prayer state
   const [showManualForm, setShowManualForm] = useState(false);
@@ -390,14 +415,20 @@ export default function PrayerScreen() {
       }));
       setEntries((prev) => [...withMeta, ...prev]);
 
-      await scheduleRecurringReminder({
-        identifier: `prayer-${plan.id}`,
-        title: "Time to pray 🙏",
-        body: `${type} prayer points are ready`,
-        hour: h, minute: m, frequency: "daily",
-        sound: ringtone,
-        data: { type: "prayer", desires: desiresText },
-      });
+      if (reminderEnabled) {
+        const now = new Date();
+        const quietMatch = isWithinQuietHours(now.getHours(), now.getMinutes(), quietStart, quietEnd);
+        if (!quietMatch) {
+          await scheduleRecurringReminder({
+            identifier: `prayer-${plan.id}`,
+            title: "Time to pray 🙏",
+            body: `${type} prayer points are ready`,
+            hour: h, minute: m, frequency: "daily",
+            sound: ringtone,
+            data: { type: "prayer", desires: desiresText },
+          });
+        }
+      }
 
       setDesires("");
       setExcludedDays([]);
@@ -634,6 +665,48 @@ export default function PrayerScreen() {
                     <Text style={[s.chipText, ringtone === r && s.chipTextActive]}>{r.charAt(0).toUpperCase() + r.slice(1)}</Text>
                   </Pressable>
                 ))}
+              </View>
+
+              <View style={[s.settingRow, { marginTop: spacing.md }]}> 
+                <Text style={s.settingLabel}>Prayer reminders</Text>
+                <Switch
+                  value={reminderEnabled}
+                  onValueChange={async (value) => {
+                    setReminderEnabledState(value);
+                    await setReminderEnabled("prayer", value);
+                  }}
+                  trackColor={{ false: colors.parchmentDark, true: colors.olive }}
+                  thumbColor={reminderEnabled ? colors.white : colors.inkFaint}
+                />
+              </View>
+
+              <View style={s.settingRow}> 
+                <Text style={s.settingLabel}>Quiet hours</Text>
+                <View style={s.quietTimeRow}>
+                  <TextInput
+                    style={s.quietTimeInput}
+                    value={quietStart}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/[^0-9:]/g, "").slice(0, 5);
+                      setQuietStart(cleaned);
+                      setReminderQuietWindow("prayer", cleaned, quietEnd).catch(() => {});
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="22:00"
+                  />
+                  <Text style={s.quietDash}>–</Text>
+                  <TextInput
+                    style={s.quietTimeInput}
+                    value={quietEnd}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/[^0-9:]/g, "").slice(0, 5);
+                      setQuietEnd(cleaned);
+                      setReminderQuietWindow("prayer", quietStart, cleaned).catch(() => {});
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="06:00"
+                  />
+                </View>
               </View>
             </>
           )}
@@ -1030,6 +1103,18 @@ const s = StyleSheet.create({
     flexDirection: "row", alignItems: "center",
     marginBottom: spacing.sm, gap: spacing.sm,
   },
+  settingRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: spacing.sm, gap: spacing.sm,
+  },
+  settingLabel: { ...typography.caption, color: colors.inkSoft, fontWeight: "700" },
+  quietTimeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  quietTimeInput: {
+    width: 72, backgroundColor: colors.parchment, borderRadius: radii.sm,
+    borderWidth: 1.5, borderColor: colors.parchmentDark,
+    paddingVertical: 8, paddingHorizontal: 10, color: colors.ink, fontSize: 12, fontWeight: "700", textAlign: "center",
+  },
+  quietDash: { color: colors.inkFaint, fontSize: 14, fontWeight: "700" },
   manualBtnRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
   manualCancelBtn: {
     flex: 1, alignItems: "center", paddingVertical: spacing.sm + 2,

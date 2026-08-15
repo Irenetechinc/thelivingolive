@@ -141,7 +141,7 @@ router.get('/profile/:userId', async (req, res) => {
     // Select only base guaranteed columns first — extended columns (church_affiliation etc.)
     // may not exist in production yet. We'll try extended fields separately.
     supabase.from('user_profiles')
-      .select('id, display_name, bio, avatar_url, cover_url, date_of_birth')
+      .select('id, display_name, bio, avatar_url, cover_url, date_of_birth, website, facebook_url, instagram_url, twitter_url, youtube_url, linkedin_url, tiktok_url')
       .eq('id', them).maybeSingle(),
     supabase.from('user_connections')
       .select('id, status, requester_id, addressee_id, created_at')
@@ -156,7 +156,7 @@ router.get('/profile/:userId', async (req, res) => {
   // Try to fetch extended profile fields (added via migration). If columns don't exist yet, skip gracefully.
   try {
     const { data: ext } = await supabase.from('user_profiles')
-      .select('username, church_affiliation, location, state, country, education, gender, website, dob_public')
+      .select('username, church_affiliation, location, state, country, education, gender, website, facebook_url, instagram_url, twitter_url, youtube_url, linkedin_url, tiktok_url, dob_public')
       .eq('id', them).maybeSingle();
     if (ext) p = { ...p, ...ext };
   } catch {}
@@ -168,7 +168,7 @@ router.put('/profile', async (req, res) => {
   const {
     displayName, bio, dateOfBirth,
     username, churchAffiliation, location, state, country,
-    education, gender, website, dobPublic,
+    education, gender, website, facebookUrl, instagramUrl, twitterUrl, youtubeUrl, linkedinUrl, tiktokUrl, dobPublic,
   } = req.body;
   const updates = { updated_at: new Date().toISOString() };
   if (displayName !== undefined) updates.display_name = String(displayName).slice(0, 60).trim() || null;
@@ -182,6 +182,12 @@ router.put('/profile', async (req, res) => {
   if (education !== undefined) updates.education = String(education).slice(0, 120).trim() || null;
   if (gender !== undefined) updates.gender = String(gender).slice(0, 40).trim() || null;
   if (website !== undefined) updates.website = String(website).slice(0, 200).trim() || null;
+  if (facebookUrl !== undefined) updates.facebook_url = String(facebookUrl).slice(0, 200).trim() || null;
+  if (instagramUrl !== undefined) updates.instagram_url = String(instagramUrl).slice(0, 200).trim() || null;
+  if (twitterUrl !== undefined) updates.twitter_url = String(twitterUrl).slice(0, 200).trim() || null;
+  if (youtubeUrl !== undefined) updates.youtube_url = String(youtubeUrl).slice(0, 200).trim() || null;
+  if (linkedinUrl !== undefined) updates.linkedin_url = String(linkedinUrl).slice(0, 200).trim() || null;
+  if (tiktokUrl !== undefined) updates.tiktok_url = String(tiktokUrl).slice(0, 200).trim() || null;
   if (dobPublic !== undefined) updates.dob_public = Boolean(dobPublic);
   let { error } = await supabase.from('user_profiles').upsert({ id: req.user.id, ...updates }, { onConflict: 'id' });
 
@@ -457,7 +463,15 @@ router.post('/rooms/dm', async (req, res) => {
   const shared = (theirRooms ?? []).find(r => myIds.has(r.room_id));
   if (shared) {
     const { data: room } = await supabase.from('chat_rooms').select('id,name,type').eq('id', shared.room_id).eq('type', 'dm').maybeSingle();
-    if (room) return res.json({ ok: true, roomId: room.id });
+    if (room) {
+      const { data: existingRequest } = await supabase
+        .from('message_requests')
+        .select('id, status')
+        .eq('sender_id', req.user.id)
+        .eq('receiver_id', targetUserId)
+        .maybeSingle();
+      return res.json({ ok: true, roomId: room.id, isNewRequest: !existingRequest, requestPending: existingRequest?.status === 'pending' || !existingRequest });
+    }
   }
 
   // Create the DM room
@@ -477,7 +491,7 @@ router.post('/rooms/dm', async (req, res) => {
     status: 'pending',
   });
 
-  res.json({ ok: true, roomId: room.id, requestPending: true });
+  res.json({ ok: true, roomId: room.id, isNewRequest: true, requestPending: true });
 });
 
 router.get('/rooms/:roomId/messages', async (req, res) => {
@@ -491,7 +505,7 @@ router.get('/rooms/:roomId/messages', async (req, res) => {
   if (!membership) return res.status(403).json({ error: 'Not a member of this room' });
 
   let q = supabase.from('chat_messages')
-    .select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, created_at')
+    .select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, reply_to_id, created_at')
     .eq('room_id', roomId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -500,7 +514,6 @@ router.get('/rooms/:roomId/messages', async (req, res) => {
   const { data: msgs, error } = await q;
   if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
-  // Enrich shared posts with a body preview
   const sharedPostIds = (msgs ?? []).filter(m => m.shared_post_id).map(m => m.shared_post_id);
   let sharedPostMap = {};
   if (sharedPostIds.length) {
@@ -511,6 +524,19 @@ router.get('/rooms/:roomId/messages', async (req, res) => {
     sharedPostMap = Object.fromEntries((sharedPosts ?? []).map(p => [p.id, p]));
   }
 
+  const replyIds = (msgs ?? []).filter(m => m.reply_to_id).map(m => m.reply_to_id);
+  const replyMap = replyIds.length
+    ? (await supabase.from('chat_messages').select('id, user_id, type, body, media_url').in('id', replyIds)).data ?? []
+    : [];
+  const replyNameMap = replyMap.length ? await resolveDisplayNames(supabase, replyMap.map(m => m.user_id)) : {};
+  const replyById = Object.fromEntries(replyMap.map(m => [m.id, {
+    id: m.id,
+    sender: { userId: m.user_id, ...replyNameMap[m.user_id] },
+    type: m.type,
+    body: m.body ?? null,
+    mediaUrl: m.media_url ?? null,
+  }]));
+
   const nameMap = await resolveDisplayNames(supabase, (msgs ?? []).map(m => m.user_id));
   const messages = (msgs ?? []).reverse().map(m => {
     const sp = m.shared_post_id ? sharedPostMap[m.shared_post_id] : null;
@@ -518,6 +544,7 @@ router.get('/rooms/:roomId/messages', async (req, res) => {
       ...m,
       sender: { userId: m.user_id, ...nameMap[m.user_id] },
       sharedPost: sp ? { id: sp.id, body: sp.body, thumbnailUrl: sp.video_thumbnail_url ?? sp.image_url } : null,
+      replyTo: m.reply_to_id ? replyById[m.reply_to_id] ?? null : null,
     };
   });
   res.json({ ok: true, messages });
@@ -527,7 +554,7 @@ router.post('/rooms/:roomId/messages', async (req, res) => {
   const supabase = req.app.locals.supabaseAdmin;
   const expo = getExpo();
   const { roomId } = req.params;
-  const { type = 'text', body, mediaUrl, durationSeconds, sharedPostId } = req.body;
+  const { type = 'text', body, mediaUrl, durationSeconds, sharedPostId, replyToId } = req.body;
 
   if (!['text', 'image', 'voice', 'post_share'].includes(type)) return res.status(400).json({ error: 'Invalid type' });
   if (type === 'text' && !body?.trim()) return res.status(400).json({ error: 'body is required for text messages' });
@@ -537,11 +564,22 @@ router.post('/rooms/:roomId/messages', async (req, res) => {
     .select('room_id').eq('room_id', roomId).eq('user_id', req.user.id).maybeSingle();
   if (!membership) return res.status(403).json({ error: 'Not a member' });
 
+  let safeReplyToId = replyToId ?? null;
+  if (safeReplyToId) {
+    const { data: replyRecord } = await supabase.from('chat_messages')
+      .select('id, room_id')
+      .eq('id', safeReplyToId)
+      .eq('room_id', roomId)
+      .maybeSingle();
+    if (!replyRecord) safeReplyToId = null;
+  }
+
   const { data: msg, error } = await supabase.from('chat_messages').insert({
     room_id: roomId, user_id: req.user.id, type,
     body: body?.trim() ?? null, media_url: mediaUrl ?? null,
     duration_seconds: durationSeconds ?? null, shared_post_id: sharedPostId ?? null,
-  }).select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, created_at').single();
+    reply_to_id: safeReplyToId,
+  }).select('id, user_id, type, body, media_url, duration_seconds, shared_post_id, reply_to_id, created_at').single();
   if (error) { log.error('db error:', error.message); return res.status(500).json({ error: 'Something went wrong. Please try again.' }); }
 
   const nameMap = await resolveDisplayNames(supabase, [req.user.id]);
@@ -1383,12 +1421,26 @@ router.post('/stories/upload', withJsonError(storyUpload.single('file')), async 
         gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
       }[ext] ?? req.file.mimetype)
     : req.file.mimetype;
-  const path = `stories/${req.user.id}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from('community').upload(path, req.file.buffer, { contentType: resolvedMime, upsert: true });
+
+  const isVideo = resolvedMime.startsWith('video/');
+  const ts = Date.now();
+  const uid = req.user.id;
+  let mediaBuffer = req.file.buffer;
+
+  if (isVideo) {
+    try {
+      const { videoBuffer } = await compressVideo(req.file.buffer);
+      mediaBuffer = videoBuffer;
+    } catch (err) {
+      log.warn('Story video compression failed, using original:', err.message);
+    }
+  }
+
+  const path = `stories/${uid}/${ts}.${ext}`;
+  const { error } = await supabase.storage.from('community').upload(path, mediaBuffer, { contentType: resolvedMime, upsert: true });
   if (error) { log.error('story upload error:', error.message); return res.status(500).json({ error: `Story media upload failed: ${error.message}` }); }
   const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
-  const mediaType = resolvedMime.startsWith('video/') ? 'video' : 'photo';
-  res.json({ ok: true, url: publicUrl, mediaType });
+  res.json({ ok: true, url: publicUrl, mediaType: isVideo ? 'video' : 'photo' });
 });
 
 router.post('/stories', async (req, res) => {
@@ -1444,6 +1496,237 @@ router.delete('/stories/:id', async (req, res) => {
   await removeCommunityMedia(supabase, story.media_url);
   await supabase.from('community_stories').delete().eq('id', req.params.id);
   res.json({ ok: true });
+});
+
+// ── Reels (separate from stories) ─────────────────────────────────────────────
+const reelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES }, fileFilter: mimeFilter(ALLOWED_POST_TYPES) });
+
+function makeReelScore(row) {
+  const secondsAgo = Math.max(1, (Date.now() - new Date(row.created_at).getTime()) / 1000);
+  const recencyBoost = Math.min(1200, 1800 / Math.log2(secondsAgo + 2));
+  const engagement = (row.like_count ?? 0) * 3 + (row.comment_count ?? 0) * 5 + (row.view_count ?? 0) * 1.2;
+  const watchScore = (row.watch_time_seconds ?? 0) * 0.08;
+  const novelty = row.trending_score ?? 0;
+  return engagement + watchScore + recencyBoost + novelty;
+}
+
+async function getReelAuthorMap(supabase, reelRows) {
+  const authorIds = [...new Set((reelRows ?? []).map(r => r.user_id))];
+  return authorIds.length ? await resolveDisplayNames(supabase, authorIds) : {};
+}
+
+router.get('/reels', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const me = req.user.id;
+  const { data: reels, error } = await supabase
+    .from('community_reels')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(40);
+
+  if (error) {
+    if (isMissingCommunityTable(error, 'community_reels')) return res.json({ ok: true, reels: [] });
+    log.error('reels fetch error:', error.message);
+    return res.status(500).json({ error: 'Could not load reels.' });
+  }
+
+  const ids = (reels ?? []).map(r => r.id);
+  const [{ data: views }, { data: likes }, { data: comments }] = await Promise.all([
+    ids.length ? supabase.from('reel_views').select('reel_id, viewer_id, completion_ratio, watch_seconds').in('reel_id', ids) : { data: [] },
+    ids.length ? supabase.from('reel_likes').select('reel_id').in('reel_id', ids).eq('user_id', me) : { data: [] },
+    ids.length ? supabase.from('reel_comments').select('id, reel_id').in('reel_id', ids) : { data: [] },
+  ]);
+
+  const authorMap = await getReelAuthorMap(supabase, reels ?? []);
+  const likeSet = new Set((likes ?? []).map(l => l.reel_id));
+  const commentCountMap = {};
+  for (const c of (comments ?? [])) commentCountMap[c.reel_id] = (commentCountMap[c.reel_id] ?? 0) + 1;
+  const viewCountMap = {};
+  const watchMap = {};
+  for (const v of (views ?? [])) {
+    viewCountMap[v.reel_id] = (viewCountMap[v.reel_id] ?? 0) + 1;
+    watchMap[v.reel_id] = (watchMap[v.reel_id] ?? 0) + (v.watch_seconds ?? 0);
+  }
+
+  const normalized = (reels ?? []).map(row => ({
+    id: row.id,
+    userId: row.user_id,
+    authorName: authorMap[row.user_id]?.name ?? 'Member',
+    authorAvatarUrl: authorMap[row.user_id]?.avatarUrl ?? null,
+    caption: row.caption ?? null,
+    videoUrl: row.video_url,
+    thumbnailUrl: row.thumbnail_url ?? null,
+    visibility: row.visibility ?? 'public',
+    genre: row.genre ?? 'general',
+    likeCount: row.like_count ?? 0,
+    commentCount: commentCountMap[row.id] ?? row.comment_count ?? 0,
+    viewCount: viewCountMap[row.id] ?? row.view_count ?? 0,
+    watchTimeSeconds: watchMap[row.id] ?? row.watch_time_seconds ?? 0,
+    trendingScore: row.trending_score ?? 0,
+    createdAt: row.created_at,
+    liked: likeSet.has(row.id),
+    score: makeReelScore(row),
+  })).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+  res.json({ ok: true, reels: normalized.map(r => ({
+    id: r.id,
+    userId: r.userId,
+    author: { userId: r.userId, name: r.authorName, avatarUrl: r.authorAvatarUrl },
+    caption: r.caption,
+    videoUrl: r.videoUrl,
+    thumbnailUrl: r.thumbnailUrl,
+    visibility: r.visibility,
+    genre: r.genre,
+    likeCount: r.likeCount,
+    commentCount: r.commentCount,
+    viewCount: r.viewCount,
+    watchTimeSeconds: r.watchTimeSeconds,
+    trendingScore: r.trendingScore,
+    createdAt: r.createdAt,
+    liked: r.liked,
+  })) });
+});
+
+router.post('/reels/upload', withJsonError(reelUpload.single('file')), async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  await ensurePublicBucket(supabase, 'community');
+  const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'mp4';
+  const ts = Date.now();
+  const uid = req.user.id;
+  let videoBuffer = req.file.buffer;
+  let thumbBuffer = null;
+
+  try {
+    ({ videoBuffer, thumbBuffer } = await compressVideo(req.file.buffer));
+  } catch (err) {
+    log.warn('Reel video compression failed, using original:', err.message);
+  }
+
+  const path = `reels/${uid}/${ts}.mp4`;
+  const thumbPath = `reels/${uid}/${ts}_thumb.jpg`;
+  const { error: videoError } = await supabase.storage.from('community').upload(path, videoBuffer, { contentType: 'video/mp4', upsert: true });
+  if (videoError) return res.status(500).json({ error: `Could not upload reel: ${videoError.message}` });
+  
+  const { data: { publicUrl } } = supabase.storage.from('community').getPublicUrl(path);
+  let thumbnailUrl = null;
+  if (thumbBuffer) {
+    const thumbUp = await supabase.storage.from('community').upload(thumbPath, thumbBuffer, { contentType: 'image/jpeg', upsert: true });
+    if (!thumbUp.error) {
+      thumbnailUrl = supabase.storage.from('community').getPublicUrl(thumbPath).data.publicUrl;
+    } else {
+      log.warn('reel thumbnail upload failed (non-fatal):', thumbUp.error.message);
+    }
+  }
+  res.json({ ok: true, url: publicUrl, thumbnailUrl });
+});
+
+router.post('/reels', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { videoUrl, thumbnailUrl, caption, visibility = 'public', genre = 'general' } = req.body;
+  if (!videoUrl) return res.status(400).json({ error: 'videoUrl required' });
+  const { data: row, error } = await supabase.from('community_reels').insert({
+    user_id: req.user.id,
+    video_url: videoUrl,
+    thumbnail_url: thumbnailUrl ?? null,
+    caption: String(caption ?? '').slice(0, 220).trim() || null,
+    visibility,
+    genre,
+    like_count: 0,
+    comment_count: 0,
+    view_count: 0,
+    watch_time_seconds: 0,
+    trending_score: 0,
+  }).select().single();
+  if (error) {
+    if (isMissingCommunityTable(error, 'community_reels')) return res.status(503).json({ error: 'Reels table is not enabled yet. Apply the community reels migration.' });
+    log.error('create reel error:', error.message);
+    return res.status(500).json({ error: 'Could not create reel.' });
+  }
+  const names = await resolveDisplayNames(supabase, [req.user.id]);
+  res.json({ ok: true, reel: { ...row, userId: row.user_id, authorName: names[req.user.id]?.name ?? 'Member', authorAvatarUrl: names[req.user.id]?.avatarUrl ?? null } });
+});
+
+router.post('/reels/:id/like', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { id } = req.params;
+  const { data: existing } = await supabase.from('reel_likes').select('id').eq('reel_id', id).eq('user_id', req.user.id).maybeSingle();
+  if (existing) {
+    await supabase.from('reel_likes').delete().eq('id', existing.id);
+    const { count } = await supabase.from('reel_likes').select('*', { count: 'exact', head: true }).eq('reel_id', id);
+    await supabase.from('community_reels').update({ like_count: count ?? 0 }).eq('id', id);
+    return res.json({ ok: true, liked: false, likeCount: count ?? 0 });
+  }
+  await supabase.from('reel_likes').insert({ reel_id: id, user_id: req.user.id });
+  const { count } = await supabase.from('reel_likes').select('*', { count: 'exact', head: true }).eq('reel_id', id);
+  await supabase.from('community_reels').update({ like_count: count ?? 0 }).eq('id', id);
+  res.json({ ok: true, liked: true, likeCount: count ?? 0 });
+});
+
+router.post('/reels/:id/view', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { watchSeconds = 0, completionRatio = 0 } = req.body ?? {};
+  const { data: reel } = await supabase.from('community_reels').select('id, user_id, watch_time_seconds, view_count, trending_score').eq('id', req.params.id).maybeSingle();
+  if (!reel) return res.status(404).json({ error: 'Reel not found' });
+  const watchSecondsValue = Number(watchSeconds) || 0;
+  const completionValue = Number(completionRatio) || 0;
+  const nextViewCount = (reel.view_count ?? 0) + 1;
+  const nextWatchTime = (reel.watch_time_seconds ?? 0) + watchSecondsValue;
+  const nextTrending = Math.max(0, (reel.trending_score ?? 0) + watchSecondsValue * 0.3 + completionValue * 10);
+  await supabase.from('reel_views').upsert({
+    reel_id: req.params.id,
+    viewer_id: req.user.id,
+    watch_seconds: watchSecondsValue,
+    completion_ratio: completionValue,
+  }, { onConflict: 'reel_id,viewer_id' });
+  await supabase.from('community_reels').update({
+    view_count: nextViewCount,
+    watch_time_seconds: nextWatchTime,
+    trending_score: nextTrending,
+  }).eq('id', req.params.id);
+  res.json({ ok: true });
+});
+
+router.get('/reels/:id/comments', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { data: comments, error } = await supabase.from('reel_comments').select('*').eq('reel_id', req.params.id).order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: 'Could not load comments' });
+  const authorIds = [...new Set((comments ?? []).map(c => c.user_id))];
+  const authorMap = authorIds.length ? await resolveDisplayNames(supabase, authorIds) : {};
+  res.json({ ok: true, comments: (comments ?? []).map(c => ({
+    id: c.id,
+    reel_id: c.reel_id,
+    user_id: c.user_id,
+    body: c.body,
+    created_at: c.created_at,
+    author: { userId: c.user_id, name: authorMap[c.user_id]?.name ?? 'Member', avatarUrl: authorMap[c.user_id]?.avatarUrl ?? null },
+  })) });
+});
+
+router.post('/reels/:id/comments', async (req, res) => {
+  const supabase = req.app.locals.supabaseAdmin;
+  const { body } = req.body;
+  if (!body?.trim()) return res.status(400).json({ error: 'Comment required' });
+  const { data, error } = await supabase.from('reel_comments').insert({
+    reel_id: req.params.id,
+    user_id: req.user.id,
+    body: String(body).trim().slice(0, 1000),
+  }).select().single();
+  if (error) {
+    log.error('reel comment insert error:', error.message);
+    return res.status(500).json({ error: 'Could not add comment.' });
+  }
+  const { count } = await supabase.from('reel_comments').select('*', { count: 'exact', head: true }).eq('reel_id', req.params.id);
+  await supabase.from('community_reels').update({ comment_count: count ?? 0 }).eq('id', req.params.id);
+  const names = await resolveDisplayNames(supabase, [req.user.id]);
+  res.json({ ok: true, comment: {
+    id: data.id,
+    reel_id: data.reel_id,
+    user_id: data.user_id,
+    body: data.body,
+    created_at: data.created_at,
+    author: { userId: req.user.id, name: names[req.user.id]?.name ?? 'Member', avatarUrl: names[req.user.id]?.avatarUrl ?? null },
+  } });
 });
 
 export { router as communityRouter };

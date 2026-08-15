@@ -18,6 +18,7 @@ import {
   Alert, Animated, TouchableOpacity, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
@@ -28,6 +29,7 @@ import {
   type ShopChurch, type ShopCategory, type ShopProduct, type ShopOrder,
 } from '../../lib/shopApi';
 import { colors, radii, spacing, typography, shadows } from '../../theme/theme';
+import { SkeletonBox } from '../../components/SkeletonCard';
 
 // ── Shop colour tokens (warm amber, distinct from main olive palette) ─────────
 const S = {
@@ -190,8 +192,8 @@ const cs = StyleSheet.create({
 });
 
 // ── Product card ──────────────────────────────────────────────────────────────
-function ProductCard({ product, onPress, delay = 0 }: {
-  product: ShopProduct; onPress: () => void; delay?: number;
+function ProductCard({ product, onPress, onAddToCart, delay = 0 }: {
+  product: ShopProduct; onPress: () => void; onAddToCart?: () => void; delay?: number;
 }) {
   const fadeAnim  = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -212,7 +214,7 @@ function ProductCard({ product, onPress, delay = 0 }: {
     ? 'FREE'
     : `${product.currency === 'NGN' ? '₦' : product.currency}${Number(product.price).toLocaleString()}`;
 
-  const typeIcon = { physical: '📦', digital: '📱', media: '🎵' }[product.product_type] ?? '📦';
+  const typeIcon: 'cube-outline' | 'download-outline' | 'musical-notes-outline' = { physical: 'cube-outline', digital: 'download-outline', media: 'musical-notes-outline' }[product.product_type] as any ?? 'cube-outline';
 
   return (
     <Animated.View style={{
@@ -226,13 +228,24 @@ function ProductCard({ product, onPress, delay = 0 }: {
           {product.thumbnail_url
             ? <Image source={{ uri: product.thumbnail_url }} style={pc.image} resizeMode="cover" />
             : <LinearGradient colors={[S.mid, S.dark]} style={pc.image}>
-                <Text style={{ fontSize: 40 }}>{typeIcon}</Text>
+                <Ionicons name={typeIcon} size={40} color={S.goldLight} />
               </LinearGradient>}
           <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} style={pc.gradient} />
           <View style={[pc.priceBadge, product.is_free && { backgroundColor: '#2E7D32' }]}>
             <Text style={pc.priceText}>{priceLabel}</Text>
           </View>
-          <View style={pc.typeBadge}><Text style={{ fontSize: 10 }}>{typeIcon}</Text></View>
+          <View style={pc.typeBadge}><Ionicons name={typeIcon} size={10} color="#fff" /></View>
+          {onAddToCart && (
+            <Pressable
+              style={pc.cartMiniBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onAddToCart();
+              }}
+            >
+              <Ionicons name="cart-outline" size={14} color="#fff" />
+            </Pressable>
+          )}
         </View>
         <View style={pc.info}>
           <Text style={pc.title} numberOfLines={2}>{product.title}</Text>
@@ -243,14 +256,15 @@ function ProductCard({ product, onPress, delay = 0 }: {
   );
 }
 const pc = StyleSheet.create({
-  card: { width: 158, marginRight: spacing.sm, backgroundColor: '#fff', borderRadius: radii.lg, overflow: 'hidden', ...shadows.card },
+  card: { width: 158, height: 250, marginRight: spacing.sm, backgroundColor: '#fff', borderRadius: radii.lg, overflow: 'hidden', ...shadows.card },
   imageWrap: { width: '100%', height: 160, position: 'relative', backgroundColor: S.parchment, alignItems: 'center', justifyContent: 'center' },
   image: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   gradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 },
   priceBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: S.gold, borderRadius: radii.pill, paddingHorizontal: 8, paddingVertical: 3 },
   priceText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   typeBadge: { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radii.pill, paddingHorizontal: 6, paddingVertical: 2 },
-  info: { padding: spacing.sm },
+  cartMiniBtn: { position: 'absolute', right: 8, bottom: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(44, 62, 32, 0.9)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  info: { flex: 1, padding: spacing.sm, justifyContent: 'center' },
   title: { fontSize: 13, fontWeight: '700', color: colors.ink, lineHeight: 18, marginBottom: 4 },
   church: { fontSize: 10, color: colors.inkFaint },
 });
@@ -285,10 +299,11 @@ const pill = StyleSheet.create({
 });
 
 // ── Category section (header + horizontal product row) ────────────────────────
-function CategorySection({ category, products, onProductPress }: {
+function CategorySection({ category, products, onProductPress, onAddToCart }: {
   category: { name: string; icon: string };
   products: ShopProduct[];
   onProductPress: (p: ShopProduct) => void;
+  onAddToCart: (p: ShopProduct) => void;
 }) {
   if (!products.length) return null;
   return (
@@ -303,7 +318,12 @@ function CategorySection({ category, products, onProductPress }: {
         keyExtractor={p => p.id}
         contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}
         renderItem={({ item, index }) => (
-          <ProductCard product={item} delay={index * 60} onPress={() => onProductPress(item)} />
+          <ProductCard
+            product={item}
+            delay={index * 60}
+            onPress={() => onProductPress(item)}
+            onAddToCart={() => onAddToCart(item)}
+          />
         )}
       />
     </View>
@@ -317,14 +337,14 @@ const catsec = StyleSheet.create({
 });
 
 // ── Product detail sheet ──────────────────────────────────────────────────────
-function ProductDetailSheet({ product, relatedProducts, onClose, onBuy, onGetFree, onAddToCart, onRelated, loading, wishlisted, onToggleWishlist }: {
+function ProductDetailSheet({ product, relatedProducts, onClose, onBuy, onGetFree, onAddToCart, onRelated, loading, wishlisted, onToggleWishlist, cartCount, insets }: {
   product: ShopProduct; onClose: () => void;
   relatedProducts: ShopProduct[];
   onBuy: (options: { quantity: number; selectedColor: string | null; selectedSize: string | null }) => void;
   onGetFree: (options: { quantity: number; selectedColor: string | null; selectedSize: string | null }) => void;
   onAddToCart: (options: { quantity: number; selectedColor: string | null; selectedSize: string | null }) => void;
   onRelated: (product: ShopProduct) => void;
-  loading: boolean; wishlisted: boolean; onToggleWishlist: () => void;
+  loading: boolean; wishlisted: boolean; onToggleWishlist: () => void; cartCount: number; insets?: { bottom: number };
 }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const [quantity, setQuantity] = useState(1);
@@ -338,7 +358,7 @@ function ProductDetailSheet({ product, relatedProducts, onClose, onBuy, onGetFre
   }, []);
 
   const typeLabel = { physical: 'Physical Product', digital: 'Digital Download', media: 'Media / Audio' }[product.product_type];
-  const typeIcon  = { physical: '📦', digital: '💾', media: '🎵' }[product.product_type];
+  const typeIcon: 'cube-outline' | 'download-outline' | 'musical-notes-outline' = { physical: 'cube-outline', digital: 'download-outline', media: 'musical-notes-outline' }[product.product_type] as any ?? 'cube-outline';
   const priceLabel = product.is_free
     ? 'FREE'
     : `${product.currency === 'NGN' ? '₦' : product.currency}${Number(product.price).toLocaleString()}`;
@@ -365,19 +385,23 @@ function ProductDetailSheet({ product, relatedProducts, onClose, onBuy, onGetFre
               renderItem={({ item: uri }) => <Image source={{ uri }} style={ds.image} resizeMode="cover" />}
             />
           : <LinearGradient colors={[S.mid, S.dark]} style={ds.image}>
-              <Text style={{ fontSize: 80 }}>{typeIcon}</Text>
+              <Ionicons name={typeIcon} size={60} color={S.goldLight} />
             </LinearGradient>}
         <LinearGradient colors={['transparent', 'rgba(0,0,0,0.5)']} style={ds.imgGrad} pointerEvents="none" />
         <View style={ds.pricePill}><Text style={ds.priceText}>{priceLabel}</Text></View>
         <Pressable style={ds.wishBtn} onPress={onToggleWishlist}>
           <Text style={{ fontSize: 22 }}>{wishlisted ? '♥' : '♡'}</Text>
         </Pressable>
+        <Pressable style={ds.cartTopBtn} onPress={() => onAddToCart(options)}>
+          <Ionicons name="cart-outline" size={18} color="#fff" />
+          {cartCount > 0 && <View style={ds.cartTopBadge}><Text style={ds.cartTopBadgeText}>{cartCount}</Text></View>}
+        </Pressable>
       </View>
 
       {/* Info */}
       <View style={ds.body}>
         <View style={ds.typeBadge}>
-          <Text style={ds.typeIcon}>{typeIcon}</Text>
+          <Ionicons name={typeIcon} size={14} color={S.gold} />
           <Text style={ds.typeLabel}>{typeLabel}</Text>
         </View>
         <Text style={ds.title}>{product.title}</Text>
@@ -420,9 +444,12 @@ function ProductDetailSheet({ product, relatedProducts, onClose, onBuy, onGetFre
       </View>
 
       {/* CTA */}
-      <View style={{ paddingHorizontal: spacing.lg, paddingBottom: 40 }}>
+      <View style={{ paddingHorizontal: spacing.lg, paddingBottom: 40 + (insets?.bottom ?? 0) }}>
         {product.product_type === 'physical' && <Pressable style={ds.cartBtn} onPress={() => onAddToCart(options)} disabled={loading}>
-          <Text style={ds.cartText}>🛒 Add to cart</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="cart-outline" size={16} color={S.gold} />
+            <Text style={ds.cartText}>Add to cart</Text>
+          </View>
         </Pressable>}
         <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
           <Pressable
@@ -474,6 +501,9 @@ const ds = StyleSheet.create({
   pricePill: { position: 'absolute', bottom: 16, right: 16, backgroundColor: S.gold, borderRadius: radii.pill, paddingHorizontal: 14, paddingVertical: 6 },
   priceText: { color: '#fff', fontSize: 15, fontWeight: '900' },
   wishBtn: { position: 'absolute', top: 16, left: 16, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' },
+  cartTopBtn: { position: 'absolute', top: 16, right: 16, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(33,35,25,0.72)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  cartTopBadge: { position: 'absolute', right: -3, top: -3, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: S.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  cartTopBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   body: { padding: spacing.lg },
   typeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
   typeIcon: { fontSize: 14 },
@@ -636,6 +666,7 @@ export default function OliveShopScreen() {
   const [categories, setCategories]     = useState<ShopCategory[]>([]);
   const [products, setProducts]         = useState<ShopProduct[]>([]);
   const [selectedCat, setSelectedCat]   = useState<string | null>(null); // null = all
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [loading, setLoading]           = useState(false);
   const [refreshing, setRefreshing]     = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ShopProduct | null>(null);
@@ -807,7 +838,16 @@ export default function OliveShopScreen() {
         const without = prev.filter(x => x.id !== item.id);
         return [...without, { ...item, shop_products: selectedProduct }];
       });
-      Alert.alert('Added to cart', `${selectedProduct.title} was added to your cart.`);
+    } catch (e: any) { Alert.alert('Cart Error', e.message ?? 'Could not add item'); }
+  }
+
+  async function quickAddToCart(product: ShopProduct) {
+    try {
+      const item = await addShopCartItem({ productId: product.id, quantity: 1, selectedColor: null, selectedSize: null });
+      setCartItems(prev => {
+        const without = prev.filter(x => x.id !== item.id);
+        return [...without, { ...item, shop_products: product }];
+      });
     } catch (e: any) { Alert.alert('Cart Error', e.message ?? 'Could not add item'); }
   }
 
@@ -973,39 +1013,41 @@ export default function OliveShopScreen() {
             <Text style={main.ordersBtnText}>My Orders</Text>
           </Pressable>
           <Pressable style={main.cartBtn} onPress={openCart}>
-            <Text style={main.cartBtnText}>🛒 {cartItems.length ? cartItems.length : ''}</Text>
+            <Ionicons name="cart-outline" size={15} color="#fff" />
+            {cartItems.length > 0 && <Text style={main.cartBtnText}>{cartItems.length}</Text>}
           </Pressable>
         </View>
 
         {/* Category pills */}
         {categories.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.md, paddingTop: spacing.sm }}>
-            {allCats.map((c, i) => (
-              <CategoryPill
-                key={c.id}
-                cat={c as any}
-                isActive={selectedCat === null ? c.id === 'all' : selectedCat === c.id}
-                onPress={() => setSelectedCat(c.id === 'all' ? null : c.id)}
-                delay={i * 70}
-              />
-            ))}
-          </ScrollView>
+          <View style={main.categoryRow}>
+            <Pressable style={main.menuButton} onPress={() => setShowCategoryMenu(true)}>
+              <Ionicons name="menu-outline" size={18} color={S.goldLight} />
+              <Text style={main.menuButtonText}>Categories</Text>
+            </Pressable>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: spacing.sm }}>
+              {allCats.map((c, i) => (
+                <CategoryPill
+                  key={c.id}
+                  cat={c as any}
+                  isActive={selectedCat === null ? c.id === 'all' : selectedCat === c.id}
+                  onPress={() => setSelectedCat(c.id === 'all' ? null : c.id)}
+                  delay={i * 70}
+                />
+              ))}
+            </ScrollView>
+          </View>
         )}
       </LinearGradient>
 
-      {/* Body */}
-      {!membership && !loading ? (
-        <View style={main.empty}>
-          <Text style={{ fontSize: 48, marginBottom: 12 }}>🛍</Text>
-          <Text style={main.emptyTitle}>Join a church to start shopping</Text>
-          <Text style={main.emptyDesc}>Browse and purchase items from your church community.</Text>
-          <Pressable style={main.selectBtn} onPress={() => setShowChurchSelect(true)}>
-            <Text style={main.selectBtnText}>Select Church</Text>
-          </Pressable>
-        </View>
-      ) : loading ? (
-        <ActivityIndicator color={S.gold} style={{ marginTop: 60 }} />
+      {loading ? (
+        <ScrollView contentContainerStyle={{ paddingTop: spacing.lg, paddingHorizontal: spacing.lg, gap: spacing.md }}>
+          {[1,2,3,4].map(i => (
+            <View key={i} style={{ gap: spacing.sm }}>
+              <SkeletonBox height={200} borderRadius={radii.lg} />
+            </View>
+          ))}
+        </ScrollView>
       ) : products.length === 0 ? (
         <View style={main.empty}>
           <Text style={{ fontSize: 48, marginBottom: 12 }}>🛒</Text>
@@ -1023,10 +1065,32 @@ export default function OliveShopScreen() {
               category={section}
               products={section.items}
               onProductPress={openProduct}
+              onAddToCart={quickAddToCart}
             />
           ))}
         </ScrollView>
       )}
+
+      <Modal visible={showCategoryMenu} animationType="slide" transparent onRequestClose={() => setShowCategoryMenu(false)}>
+        <Pressable style={main.categoryMenuBackdrop} onPress={() => setShowCategoryMenu(false)}>
+          <View style={main.categoryMenuCard}>
+            <Text style={main.categoryMenuTitle}>Shop Categories</Text>
+            {allCats.map((cat) => (
+              <Pressable
+                key={cat.id}
+                style={[main.categoryMenuRow, (selectedCat === null && cat.id === 'all') || selectedCat === cat.id ? main.categoryMenuRowActive : null]}
+                onPress={() => {
+                  setSelectedCat(cat.id === 'all' ? null : cat.id);
+                  setShowCategoryMenu(false);
+                }}
+              >
+                <Text style={main.categoryMenuIcon}>{cat.icon}</Text>
+                <Text style={main.categoryMenuLabel}>{cat.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Church select modal */}
       <ChurchSelectModal
@@ -1049,6 +1113,7 @@ export default function OliveShopScreen() {
             loading={purchasing}
             wishlisted={wishlistIds.has(selectedProduct.id)}
             onToggleWishlist={() => toggleWishlist(selectedProduct.id)}
+            cartCount={cartItems.length}
           />
         )}
       </Modal>
@@ -1175,8 +1240,18 @@ const main = StyleSheet.create({
   churchBadge: { fontSize: 11, color: 'rgba(245,214,128,0.7)', marginTop: 2 },
   ordersBtn: { backgroundColor: 'rgba(196,134,10,0.25)', borderRadius: radii.pill, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: S.gold },
   ordersBtnText: { color: S.goldLight, fontSize: 12, fontWeight: '700' },
-  cartBtn: { backgroundColor: S.gold, borderRadius: radii.pill, paddingHorizontal: 9, paddingVertical: 6, marginLeft: 6 },
+  cartBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: S.gold, borderRadius: radii.pill, paddingHorizontal: 10, paddingVertical: 6, marginLeft: 6 },
   cartBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  categoryRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.sm },
+  menuButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radii.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', backgroundColor: 'rgba(255,255,255,0.08)' },
+  menuButtonText: { color: S.goldLight, fontSize: 12, fontWeight: '700' },
+  categoryMenuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.28)', justifyContent: 'center', paddingHorizontal: spacing.lg },
+  categoryMenuCard: { backgroundColor: '#fff', borderRadius: radii.xl, padding: spacing.md },
+  categoryMenuTitle: { fontSize: 16, fontWeight: '800', color: colors.ink, marginBottom: spacing.sm },
+  categoryMenuRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: spacing.sm, paddingHorizontal: spacing.xs },
+  categoryMenuRowActive: { backgroundColor: '#f4e6b4', borderRadius: radii.md },
+  categoryMenuIcon: { fontSize: 18 },
+  categoryMenuLabel: { fontSize: 14, color: colors.ink, fontWeight: '700' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.ink, textAlign: 'center', marginBottom: 8 },
   emptyDesc: { fontSize: 14, color: colors.inkSoft, textAlign: 'center', lineHeight: 21, marginBottom: spacing.lg },

@@ -294,7 +294,7 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
         <h3 style="margin-bottom:20px" id="catModalTitle">Add Category</h3>
         <div class="form-group"><label>Category Name *</label><input type="text" id="catName" placeholder="e.g. Books, Music, Clothing…"></div>
         <div class="form-row">
-          <div class="form-group"><label>Icon (emoji)</label><input type="text" id="catIcon" placeholder="📚" maxlength="4" style="font-size:20px"></div>
+          <div class="form-group"><label>Icon</label><input type="text" id="catIcon" placeholder="book-outline" maxlength="32"></div>
         <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="openIconPicker()">Choose icon…</button></div>
           <div class="form-group"><label>Sort Order</label><input type="number" id="catSort" value="0" min="0"></div>
         </div>
@@ -320,9 +320,9 @@ textarea{min-height:200px;resize:vertical;line-height:1.6}
             <div class="form-group">
               <label>Type</label>
               <select id="prodType">
-                <option value="physical">📦 Physical</option>
-                <option value="digital">💾 Digital Download</option>
-                <option value="media">🎵 Media / Audio</option>
+                <option value="physical">📦 Physical Product</option>
+                <option value="digital">⬇ Digital Download</option>
+                <option value="media">♫ Media / Audio</option>
               </select>
             </div>
           </div>
@@ -1153,7 +1153,7 @@ function openCatModal(id) {
   const c = id ? shopCategories.find(x=>x.id===id) : null;
   document.getElementById('catModalTitle').textContent = c ? 'Edit Category' : 'Add Category';
   document.getElementById('catName').value = c?.name ?? '';
-  document.getElementById('catIcon').value = c?.icon ?? '🛍';
+  document.getElementById('catIcon').value = c?.icon ?? 'bag-outline';
   document.getElementById('catSort').value = c?.sort_order ?? 0;
   document.getElementById('catModal').style.display = 'flex';
 }
@@ -1162,7 +1162,7 @@ function closeCatModal() { document.getElementById('catModal').style.display = '
 async function saveCat() {
   const name = document.getElementById('catName').value.trim();
   if (!name) { toast('Category name is required','error'); return; }
-  const body = { name, icon: document.getElementById('catIcon').value.trim()||'🛍', sortOrder: parseInt(document.getElementById('catSort').value)||0 };
+  const body = { name, icon: document.getElementById('catIcon').value.trim()||'bag-outline', sortOrder: parseInt(document.getElementById('catSort').value)||0 };
   try {
     if (editingCatId) await api('/api/shop/categories/'+editingCatId,'PUT',body);
     else              await api('/api/shop/categories','POST',body);
@@ -1395,7 +1395,7 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 <div id="iconPicker" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:250;align-items:center;justify-content:center">
   <div style="background:var(--surface);border-radius:12px;padding:16px;width:min(680px,96vw);max-height:80vh;overflow:auto">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <input id="iconSearch" placeholder="Search icons or emojis…" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px" oninput="renderIconGrid()">
+      <input id="iconSearch" placeholder="Search icon names…" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px" oninput="renderIconGrid()">
       <button class="btn btn-ghost btn-sm" onclick="closeIconPicker()">Close</button>
     </div>
     <div id="iconGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:8px"></div>
@@ -1419,8 +1419,8 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 </div>
 
 <script>
-// Simple curated icon set (emoji + common symbols) — searchable
-const ICONS = ['📚','🛍','🎵','🎧','📦','👕','👟','👜','📗','📘','📖','✝️','⛪','🕊️','🎁','🧥','👗','🛒','📱','💾','🎶','🖼️','🧸','🍞','☕','⚒️','🛠️','🏺','🧾','🔖','📎','🔔','⭐','❤️','🔑','📌','🧾','🧭','🧭','📦'];
+// Line icon names for categories (Ionicons style)
+const ICONS = ['book-outline','bag-outline','musical-notes-outline','headset-outline','cube-outline','shirt-outline','shoe-outline','bag-outline','book-outline','book-outline','book-outline','heart-outline','location-outline','dove-outline','gift-outline','shirt-outline','woman-outline','cart-outline','phone-portrait-outline','download-outline','musical-notes-outline','image-outline','toy-outline','bread-outline','cafe-outline','hammer-outline','hammer-outline','pricetag-outline','pricetag-outline','bookmark-outline','link-outline','notifications-outline','star-outline','heart-outline','key-outline','pin-outline','link-outline','compass-outline','compass-outline','cube-outline'];
 
 function openIconPicker() {
   document.getElementById('iconPicker').style.display = 'flex';
@@ -1432,7 +1432,13 @@ function renderIconGrid() {
   const grid = document.getElementById('iconGrid'); grid.innerHTML = '';
   const list = ICONS.filter(i => !q || i.includes(q) || i.toLowerCase().includes(q));
   for (const ic of list) {
-    const btn = document.createElement('button'); btn.className = 'btn btn-ghost'; btn.style.padding='10px'; btn.style.fontSize='20px'; btn.textContent = ic;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost';
+    btn.style.padding = '8px';
+    btn.style.fontSize = '12px';
+    btn.style.wordBreak = 'break-word';
+    btn.textContent = ic;
+    btn.title = ic;
     btn.onclick = () => { document.getElementById('catIcon').value = ic; closeIconPicker(); };
     grid.appendChild(btn);
   }

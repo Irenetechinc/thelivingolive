@@ -95,6 +95,25 @@ create table if not exists public.push_tokens (
 );
 create index if not exists push_tokens_user_idx on public.push_tokens(user_id);
 
+-- Per-user reminder preferences for prayer/devotion notifications.
+create table if not exists public.user_reminder_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  prayer_reminders_enabled boolean not null default true,
+  devotion_reminders_enabled boolean not null default true,
+  prayer_quiet_start time not null default '22:00:00',
+  prayer_quiet_end time not null default '06:00:00',
+  devotion_quiet_start time not null default '22:00:00',
+  devotion_quiet_end time not null default '06:00:00',
+  updated_at timestamptz not null default now()
+);
+
+alter table public.user_reminder_settings enable row level security;
+
+create policy "users_manage_own_reminder_settings" on public.user_reminder_settings
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 -- ──────────────────────────────────────────────────────────────
 -- Church bulletin system
 -- ──────────────────────────────────────────────────────────────

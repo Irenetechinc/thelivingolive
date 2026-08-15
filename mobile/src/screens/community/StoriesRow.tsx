@@ -99,11 +99,17 @@ export default function StoriesRow({
             onPress={() => onViewStory(flatIndexMap[index])}
           >
             <View style={[s.ring, g.hasUnseen ? s.ringUnseen : s.ringSeen]}>
-              {g.avatarUrl
-                ? <Image source={{ uri: g.avatarUrl }} style={s.avatar} />
-                : <View style={[s.avatar, s.avatarPlaceholder]}>
-                    <Text style={s.initials}>{(g.name ?? '?').slice(0, 1).toUpperCase()}</Text>
-                  </View>}
+              {g.stories[0]?.mediaUrl
+                ? <Image 
+                    source={{ uri: g.stories[0].mediaUrl }} 
+                    style={s.avatar}
+                    resizeMode="cover"
+                  />
+                : g.avatarUrl
+                  ? <Image source={{ uri: g.avatarUrl }} style={s.avatar} />
+                  : <View style={[s.avatar, s.avatarPlaceholder]}>
+                      <Text style={s.initials}>{(g.name ?? '?').slice(0, 1).toUpperCase()}</Text>
+                    </View>}
             </View>
             <Text style={s.label} numberOfLines={1}>{g.name.split(' ')[0]}</Text>
           </Pressable>
